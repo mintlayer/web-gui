@@ -18,7 +18,11 @@ Browser → Astro web GUI (port 4321)
 
 Optional (--profile indexer):
   node-daemon → api-blockchain-scanner-daemon → postgres → api-web-server :3000
+              ▲
+        web-gui reads the REST API to power Token Management and Trading pages
 ```
+
+> **Without the indexer:** the Token Management and Trading pages are hidden. All other features (balance, send, receive, staking, address management) work without it.
 
 ## Prerequisites
 
@@ -34,7 +38,25 @@ Optional (--profile indexer):
 ./init.sh
 ```
 
-The script walks you through every option (network, wallet, passwords, ports, indexer), writes `.env`, and starts the stack. That's all you need for a first run.
+The script walks you through every option (network, wallet, passwords, ports, indexer, Pinata JWT), writes `.env`, and starts the stack. That's all you need for a first run.
+
+---
+
+### Using Make
+
+A `Makefile` wraps the most common Docker Compose commands:
+
+| Target | What it does |
+|---|---|
+| `make up` | Start all services |
+| `make down` | Stop and remove all containers (all profiles + orphans) |
+| `make restart-gui` | Rebuild and restart only the web-gui container |
+| `make build` | Rebuild all images without starting |
+| `make logs` | Tail logs for all services |
+| `make dev` | Start web-gui in dev mode with HMR (node + wallet use prod images) |
+| `make dev-indexer` | Dev mode + full indexer stack |
+| `make dev-build` | Rebuild the dev image (run after adding npm packages) |
+| `make wallet-cli` | Open an interactive wallet-cli session |
 
 ---
 
@@ -116,17 +138,17 @@ The REST API is available at <http://localhost:3000> (configurable via `API_WEB_
 
 ```bash
 # Start everything
-docker compose up -d
+make up                        # or: docker compose up -d
 
 # Stop everything
-docker compose down
+make down                      # or: docker compose --profile indexer down --remove-orphans
 
 # Watch logs
 docker compose logs -f
 docker compose logs -f wallet-rpc-daemon
 
 # Interactive wallet CLI (connects to the running daemon)
-docker compose run --rm wallet-cli
+make wallet-cli                # or: docker compose --profile wallet_cli run --rm wallet-cli
 
 # Restart after changing .env
 docker compose restart
@@ -142,10 +164,19 @@ docker compose pull && docker compose up -d
 | Page | URL | Description |
 |---|---|---|
 | Dashboard | `/` | Balance, sync status, staking state |
-| Addresses | `/addresses` | List and generate receive addresses |
+| Balances | `/balances` | Detailed balance breakdown |
+| Management | `/management` | Wallet management overview |
+| → Addresses | `/management/addresses` | List and generate receive addresses |
+| → Transactions | `/management/transactions` | Transaction history |
+| → UTXOs | `/management/utxos` | UTXO list |
+| → Wallet | `/management/wallet` | Wallet settings and info |
 | Send | `/send` | Send ML to an address |
 | Staking | `/staking` | Staking status and instructions |
+| Token Management | `/token-management` | Issue and manage tokens — **requires indexer** |
+| Trading | `/trading` | DEX trading — **requires indexer** |
 | Wallet setup | `/setup` | Create or open a wallet |
+
+> **Token Management** and **Trading** are hidden when `INDEXER_ENABLED=false` in `.env`.
 
 ---
 

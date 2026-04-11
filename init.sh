@@ -95,21 +95,102 @@ rand_pass() {
   fi
 }
 
+# ── Detect OS ─────────────────────────────────────────────────────────────────
+detect_os() {
+  case "$(uname -s)" in
+    Darwin) echo "macos" ;;
+    Linux)
+      if grep -qi microsoft /proc/version 2>/dev/null; then
+        echo "wsl"
+      else
+        echo "linux"
+      fi
+      ;;
+    MINGW*|MSYS*|CYGWIN*) echo "windows" ;;
+    *) echo "unknown" ;;
+  esac
+}
+
+# ── Docker install instructions ───────────────────────────────────────────────
+docker_install_hint() {
+  local os
+  os=$(detect_os)
+  printf "\n"
+  case "$os" in
+    macos)
+      printf "${BOLD}  Install Docker Desktop for Mac:${RESET}\n"
+      printf "  1. Download from https://docs.docker.com/desktop/install/mac-install/\n"
+      printf "  2. Open the .dmg and drag Docker to Applications\n"
+      printf "  3. Launch Docker Desktop and wait for the whale icon to stop animating\n"
+      printf "  4. Re-run this script\n"
+      ;;
+    wsl)
+      printf "${BOLD}  Install Docker Desktop for Windows (with WSL 2 backend):${RESET}\n"
+      printf "  1. Download from https://docs.docker.com/desktop/install/windows-install/\n"
+      printf "  2. Enable 'Use the WSL 2 based engine' in Docker Desktop settings\n"
+      printf "  3. Ensure your WSL distro is enabled under Resources → WSL Integration\n"
+      printf "  4. Re-run this script inside WSL\n"
+      ;;
+    windows)
+      printf "${BOLD}  Install Docker Desktop for Windows:${RESET}\n"
+      printf "  1. Download from https://docs.docker.com/desktop/install/windows-install/\n"
+      printf "  2. Run the installer and follow the prompts\n"
+      printf "  3. Re-run this script\n"
+      ;;
+    linux)
+      printf "${BOLD}  Install Docker Engine on Linux:${RESET}\n"
+      printf "  Ubuntu/Debian:\n"
+      printf "    curl -fsSL https://get.docker.com | sh\n"
+      printf "    sudo usermod -aG docker \$USER   # then log out and back in\n"
+      printf "\n"
+      printf "  Or follow the official guide for your distro:\n"
+      printf "  https://docs.docker.com/engine/install/\n"
+      printf "\n"
+      printf "  After installing, re-run this script.\n"
+      ;;
+    *)
+      printf "  Visit https://docs.docker.com/get-docker/ for installation instructions.\n"
+      ;;
+  esac
+  printf "\n"
+}
+
 # ── Prerequisite checks ───────────────────────────────────────────────────────
 check_prereqs() {
-  local missing=()
-  command -v docker  &>/dev/null || missing+=("docker")
-  # Accept both "docker compose" (v2) and "docker-compose" (v1)
-  if ! docker compose version &>/dev/null 2>&1 && ! command -v docker-compose &>/dev/null; then
-    missing+=("docker compose")
-  fi
-  command -v node &>/dev/null || missing+=("node (v18+ required for password hashing)")
-
-  if [[ ${#missing[@]} -gt 0 ]]; then
-    err "Missing required tools: ${missing[*]}"
-    err "Install them and re-run this script."
+  # Check Docker first — give OS-specific install instructions if missing
+  if ! command -v docker &>/dev/null; then
+    err "Docker is not installed or not in PATH."
+    docker_install_hint
     exit 1
   fi
+
+  # Docker found — make sure the daemon is actually running
+  if ! docker info &>/dev/null 2>&1; then
+    err "Docker is installed but the daemon is not running."
+    local os
+    os=$(detect_os)
+    case "$os" in
+      macos|windows) printf "  ${YELLOW}▲${RESET}  Start Docker Desktop and wait for it to finish loading, then re-run this script.\n\n" ;;
+      wsl)           printf "  ${YELLOW}▲${RESET}  Start Docker Desktop on Windows (WSL backend), then re-run this script.\n\n" ;;
+      linux)         printf "  ${YELLOW}▲${RESET}  Run: ${GRAY}sudo systemctl start docker${RESET}\n\n" ;;
+    esac
+    exit 1
+  fi
+
+  # Accept both "docker compose" (v2) and "docker-compose" (v1)
+  if ! docker compose version &>/dev/null 2>&1 && ! command -v docker-compose &>/dev/null; then
+    err "Docker Compose is not available."
+    printf "  Docker Compose v2 ships with Docker Desktop.\n"
+    printf "  On Linux, install it with: ${GRAY}sudo apt install docker-compose-plugin${RESET}\n"
+    printf "  Or see: https://docs.docker.com/compose/install/\n\n"
+    exit 1
+  fi
+
+  command -v node &>/dev/null || {
+    err "Node.js is not installed (required for password hashing)."
+    printf "  Install Node.js v18+ from https://nodejs.org or via your package manager.\n\n"
+    exit 1
+  }
 }
 
 # ── Determine compose command ─────────────────────────────────────────────────
@@ -350,7 +431,35 @@ done
 divider
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 6 — Indexer (optional)
+# Step 6 — Pinata JWT (IPFS uploads, optional)
+# ─────────────────────────────────────────────────────────────────────────────
+step "Pinata JWT (optional)"
+hint "Token Management can upload images/metadata to IPFS via Pinata."
+hint "Without this, token icon uploads are disabled — all other features still work."
+hint "Get a free JWT at https://app.pinata.cloud (free tier is sufficient)."
+hint ""
+
+PINATA_JWT=""
+WANT_PINATA="no"
+confirm WANT_PINATA "Do you have a Pinata JWT to configure?" "N"
+
+if [[ "$WANT_PINATA" == "yes" ]]; then
+  ask "Pinata JWT"
+  hint "Paste your JWT — it will be stored in .env and never sent to the browser."
+  prompt_secret PINATA_JWT "JWT:"
+  while [[ -z "$PINATA_JWT" ]]; do
+    printf "${CYAN}│${RESET}  ${RED}JWT cannot be empty${RESET}\n"
+    prompt_secret PINATA_JWT "JWT:"
+  done
+  ok "Pinata JWT saved"
+else
+  hint "Skipping — you can add PINATA_JWT to .env later."
+fi
+
+divider
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 7 — Indexer (optional)
 # ─────────────────────────────────────────────────────────────────────────────
 step "Indexer stack (optional)"
 hint "Adds: PostgreSQL + api-blockchain-scanner-daemon + api-web-server"
@@ -402,6 +511,7 @@ printf "${CYAN}│${RESET}  %-22s ${wallet_summary}\n" "Wallet:"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Passwords:"  "${BOLD}$([ "$USE_RANDOM_PASSWORDS" == "yes" ] && echo "randomly generated" || echo "custom")${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Web UI auth:"  "${BOLD}password + TOTP 2FA${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Web GUI:"    "${BOLD}http://localhost:${WEB_GUI_PORT}${RESET}"
+printf "${CYAN}│${RESET}  %-22s %s\n" "Pinata JWT:" "${BOLD}$([ -n "$PINATA_JWT" ] && echo "configured" || echo "not set — token icon uploads disabled")${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Indexer:"    "${BOLD}$([ "$ENABLE_INDEXER" == "yes" ] && echo "enabled (port ${API_WEB_SERVER_PORT}) — Token Management + Trading active" || echo "disabled — Token Management + Trading hidden")${RESET}"
 printf "${CYAN}│${RESET}\n"
 
@@ -477,6 +587,10 @@ INDEXER_ENABLED=${INDEXER_ENABLED}
 UI_PASSWORD_HASH=${UI_PASSWORD_HASH}
 UI_TOTP_SECRET=${UI_TOTP_SECRET}
 SESSION_SECRET=${SESSION_SECRET}
+
+# Pinata JWT for IPFS uploads (token metadata images, NFT media).
+# Get one at https://app.pinata.cloud — the free tier is sufficient.
+PINATA_JWT=${PINATA_JWT}
 
 # Rust log level
 RUST_LOG=info
