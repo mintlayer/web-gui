@@ -1,6 +1,6 @@
 ---
 import ManagementLayout from '@/layouts/ManagementLayout.astro';
-import { listTransactions, listPendingTransactions, getTransactionSignedRaw, WalletRpcError, type TransactionInfo } from '@/lib/wallet-rpc';
+import { listTransactions, listPendingTransactions, getTransactionSignedRaw, isWalletNotOpenError, WalletRpcError, type TransactionInfo } from '@/lib/wallet-rpc';
 import { decodeSignedTransaction, outputVariant, isTransferOutput, outputValueLabel, type DecodedTransaction } from '@/lib/tx-decoder';
 
 const EXPLORER_BASE =
@@ -25,6 +25,9 @@ try {
     details.set(transactions[i].id, decodeSignedTransaction(hex));
   });
 } catch (err) {
+  if (isWalletNotOpenError(err)) {
+    return new Response(null, { status: 302, headers: { Location: '/' } });
+  }
   error = err instanceof WalletRpcError ? err.message : (err as Error).message;
 }
 

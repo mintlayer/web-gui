@@ -1,6 +1,6 @@
 ---
 import ManagementLayout from '@/layouts/ManagementLayout.astro';
-import { listUtxos, WalletRpcError, type UtxoEntry, type UtxoOutput } from '@/lib/wallet-rpc';
+import { listUtxos, isWalletNotOpenError, WalletRpcError, type UtxoEntry, type UtxoOutput } from '@/lib/wallet-rpc';
 
 let utxos: UtxoEntry[] = [];
 let error: string | null = null;
@@ -8,6 +8,9 @@ let error: string | null = null;
 try {
   utxos = await listUtxos(0);
 } catch (err) {
+  if (isWalletNotOpenError(err)) {
+    return new Response(null, { status: 302, headers: { Location: '/' } });
+  }
   error = err instanceof WalletRpcError ? err.message : (err as Error).message;
 }
 

@@ -200,6 +200,37 @@ if (isLocked === null) {
     </div>
   )}
 
+  <!-- Wallet file backup -->
+  <div class="rounded-xl border border-gray-800 bg-gray-900 p-5 mb-6">
+    <div class="flex items-start justify-between gap-4">
+      <div>
+        <h2 class="text-sm font-medium text-gray-200 mb-1">Wallet File Backup</h2>
+        <p class="text-xs text-gray-500 mb-3">
+          Download a copy of your wallet file to keep as an offline backup.
+        </p>
+        <div class="rounded-lg border border-red-800/60 bg-red-900/20 px-3 py-2 flex items-start gap-2">
+          <svg class="w-3.5 h-3.5 text-red-400 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+          </svg>
+          <p class="text-xs text-red-400 leading-relaxed">
+            <strong class="font-semibold">Never share this file with anyone.</strong>{' '}
+            No one will ever legitimately ask for your wallet file — anyone who does is attempting to steal your funds.
+          </p>
+        </div>
+      </div>
+      <a
+        href="/api/wallet-download"
+        class="shrink-0 inline-flex items-center gap-2 rounded-lg bg-gray-700 hover:bg-gray-600 px-4 py-2 text-sm font-medium text-gray-100 transition-colors"
+        download
+      >
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+        </svg>
+        Download backup
+      </a>
+    </div>
+  </div>
+
   <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
     <!-- Show seed phrase -->
     <div class="rounded-xl border border-gray-800 bg-gray-900 p-5">

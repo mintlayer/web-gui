@@ -1,7 +1,7 @@
 ---
 import Layout from '@/layouts/Layout.astro';
 import ReceiveModal from '@/components/ReceiveModal';
-import { getBalance, getTokensInfo, type TokenInfo } from '@/lib/wallet-rpc';
+import { getBalance, getTokensInfo, isWalletNotOpenError, type TokenInfo } from '@/lib/wallet-rpc';
 import { hexToText } from '@/lib/token-utils';
 import { INDEXER_START_CMD } from '@/lib/indexer';
 
@@ -25,6 +25,9 @@ try {
     }
   }
 } catch (err) {
+  if (isWalletNotOpenError(err)) {
+    return new Response(null, { status: 302, headers: { Location: '/' } });
+  }
   loadError = (err as Error).message;
 }
 

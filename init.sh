@@ -249,6 +249,9 @@ step "Wallet"
 hint "The wallet-rpc-daemon opens one wallet file at a time."
 hint "Wallet files live in ./mintlayer-data/ (mapped to /home/mintlayer/ inside containers)."
 hint ""
+hint "If you only have a seed phrase to recover, choose No — you will be"
+hint "asked to enter your seed phrase when creating a wallet via the web UI."
+hint ""
 
 WALLET_CHOICE=""
 choose WALLET_CHOICE "Do you have an existing wallet file to load?" \

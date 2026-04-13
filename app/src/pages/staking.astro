@@ -5,7 +5,7 @@ import DelegationPanel from '@/components/DelegationPanel';
 import { CreatePoolModal, DecommissionButton } from '@/components/PoolActions';
 import {
   getStakingStatus, listPools, listCreatedBlocks, listDelegations,
-  newAddress, showAddresses,
+  newAddress, showAddresses, isWalletNotOpenError,
   type PoolInfo, type CreatedBlock, type DelegationInfo,
 } from '@/lib/wallet-rpc';
 
@@ -30,6 +30,9 @@ try {
     ? unusedAddr.address
     : (await newAddress(0)).address;
 } catch (err) {
+  if (isWalletNotOpenError(err)) {
+    return new Response(null, { status: 302, headers: { Location: '/' } });
+  }
   loadError = (err as Error).message;
 }
 

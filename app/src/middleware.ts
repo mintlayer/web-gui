@@ -24,12 +24,18 @@ export const onRequest = defineMiddleware(async (context, next) => {
   const token = match?.[1] ?? '';
 
   if (!verifySessionToken(token)) {
-    // Redirect to login, preserving the original URL so we can redirect back after login
-    const loginUrl = new URL('/login', context.request.url);
-    if (pathname !== '/' && !pathname.startsWith('/api/')) {
-      loginUrl.searchParams.set('next', pathname);
-    }
-    return context.redirect(loginUrl.toString(), 302);
+    // Return a raw Response so the Location header is a plain relative path.
+    // context.redirect() resolves relative URLs against context.request.url which
+    // can drop the port when the Node adapter builds the URL from a Host header
+    // that omits it (e.g. "localhost" instead of "localhost:4322").
+    const nextParam =
+      pathname !== '/' && !pathname.startsWith('/api/')
+        ? `?next=${encodeURIComponent(pathname)}`
+        : '';
+    return new Response(null, {
+      status: 302,
+      headers: { Location: `/login${nextParam}` },
+    });
   }
 
   // Valid session — proceed

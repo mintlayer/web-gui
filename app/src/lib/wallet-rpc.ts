@@ -128,6 +128,53 @@ export async function openWallet(path: string, password?: string) {
   });
 }
 
+export type WalletOpenResult =
+  | { status: 'ok' }
+  | { status: 'needs_password' }
+  | { status: 'not_found' }
+  | { status: 'error'; message: string };
+
+/**
+ * Returns true if the error indicates no wallet is currently open.
+ * Used to gate auto-open attempts so we don't loop on unrelated errors.
+ */
+export function isWalletNotOpenError(err: unknown): boolean {
+  const msg = ((err as Error)?.message ?? '').toLowerCase();
+  return (
+    msg.includes('no wallet') ||
+    msg.includes('wallet is not open') ||
+    msg.includes('wallet not open') ||
+    msg.includes('wallet not loaded')
+  );
+}
+
+/**
+ * Attempt to auto-open /home/mintlayer/mintlayer.wallet.
+ * Only call this after confirming the error is a wallet-not-open error
+ * (use isWalletNotOpenError first) — otherwise you risk redirect loops.
+ * Logs all outcomes to the server console for diagnostics.
+ */
+export async function ensureWalletOpen(walletPath = '/home/mintlayer/mintlayer.wallet'): Promise<WalletOpenResult> {
+  try {
+    await openWallet(walletPath);
+    console.log(`[wallet] auto-opened ${walletPath}`);
+    return { status: 'ok' };
+  } catch (err) {
+    const msg = (err as Error).message;
+    const lower = msg.toLowerCase();
+    if (lower.includes('password') || lower.includes('passphrase') || lower.includes('encrypted')) {
+      console.log(`[wallet] auto-open: wallet is encrypted, password required (${walletPath})`);
+      return { status: 'needs_password' };
+    }
+    if (lower.includes('not found') || lower.includes('no such file') || lower.includes('does not exist')) {
+      console.log(`[wallet] auto-open: wallet file not found at ${walletPath}`);
+      return { status: 'not_found' };
+    }
+    console.error(`[wallet] auto-open failed for ${walletPath}: ${msg}`);
+    return { status: 'error', message: msg };
+  }
+}
+
 /**
  * Create a new wallet file.
  * `path` is the full path inside the container, e.g. /home/mintlayer/wallet
@@ -136,12 +183,13 @@ export async function createWallet(
   path: string,
   storeSeedPhrase: boolean = true,
   mnemonic?: string,
+  passphrase?: string,
 ): Promise<CreateWalletResult> {
   return rpcCall<CreateWalletResult>('wallet_create', {
     path,
     store_seed_phrase: storeSeedPhrase,
     mnemonic: mnemonic ?? null,
-    passphrase: null,
+    passphrase: passphrase ?? null,
     hardware_wallet: null,
   });
 }

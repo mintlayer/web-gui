@@ -1,6 +1,6 @@
 ---
 import ManagementLayout from '@/layouts/ManagementLayout.astro';
-import { showAddresses, newAddress, WalletRpcError, type AddressEntry } from '@/lib/wallet-rpc';
+import { showAddresses, newAddress, isWalletNotOpenError, WalletRpcError, type AddressEntry } from '@/lib/wallet-rpc';
 
 let addresses: AddressEntry[] = [];
 let error: string | null = null;
@@ -25,11 +25,10 @@ if (Astro.request.method === 'POST') {
 try {
   addresses = await showAddresses(0, true);
 } catch (err) {
-  if (err instanceof WalletRpcError) {
-    error = err.message;
-  } else {
-    error = (err as Error).message;
+  if (isWalletNotOpenError(err)) {
+    return new Response(null, { status: 302, headers: { Location: '/' } });
   }
+  error = err instanceof WalletRpcError ? err.message : (err as Error).message;
 }
 ---
 

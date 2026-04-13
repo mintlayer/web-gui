@@ -17,6 +17,7 @@ services:
       # Mount source into container; keep node_modules from the image
       - ./app/src:/app/src
       - ./app/public:/app/public
+      - ./app/wasm-wrappers:/app/wasm-wrappers:ro
       - ./app/astro.config.mjs:/app/astro.config.mjs
       - ./app/tailwind.config.mjs:/app/tailwind.config.mjs
       - ./app/tsconfig.json:/app/tsconfig.json

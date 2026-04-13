@@ -1,45 +1,86 @@
 ---
 import Layout from '@/layouts/Layout.astro';
 import { openWallet, createWallet } from '@/lib/wallet-rpc';
+import SeedBackupStep from '@/components/SeedBackupStep';
 
-let successAction: 'open' | 'create' | null = null;
-let successMnemonic: string | undefined;
-let errorMessage: string | null = null;
+const WALLET_PATH = '/home/mintlayer/mintlayer.wallet';
+
+// ── Server result discriminated union ─────────────────────────────────────────
+
+type SetupResult =
+  | { action: 'none' }
+  | { action: 'error'; message: string }
+  | { action: 'create_success'; mnemonic: string; walletPath: string }
+  | { action: 'import_success' }
+  | { action: 'upload_success' };
+
+let result: SetupResult = { action: 'none' };
+
+// ── POST handlers ─────────────────────────────────────────────────────────────
 
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
   const action = form.get('action') as string;
 
-  if (action === 'open') {
-    const walletPath = (form.get('wallet_path') as string | null)?.trim() ?? '';
-    const password   = (form.get('password')    as string | null)?.trim() || undefined;
+  // ── Create new wallet (generate seed) ──────────────────────────────────────
+  if (action === 'create') {
+    const storeSeed         = form.get('store_seed') !== null;
+    const noPassword        = form.get('no_password') === 'yes';
+    const passphrase        = form.get('passphrase')?.toString() || undefined;
+    const passphraseConfirm = form.get('passphrase_confirm')?.toString() || undefined;
 
-    if (!walletPath) {
-      errorMessage = 'Wallet path is required.';
+    if (!noPassword && !passphrase) {
+      result = { action: 'error', message: 'Set a password or check the box to confirm you accept the risks of an unencrypted wallet.' };
+    } else if (!noPassword && passphrase !== passphraseConfirm) {
+      result = { action: 'error', message: 'Passwords do not match.' };
     } else {
       try {
-        await openWallet(walletPath, password);
-        successAction = 'open';
+        const res = await createWallet(WALLET_PATH, storeSeed, undefined, noPassword ? undefined : passphrase);
+        const mnemonicStr =
+          res.mnemonic.type === 'NewlyGenerated' ? res.mnemonic.content.mnemonic : '';
+        result = { action: 'create_success', mnemonic: mnemonicStr, walletPath: WALLET_PATH };
       } catch (err) {
-        errorMessage = (err as Error).message;
+        result = { action: 'error', message: (err as Error).message };
       }
     }
-  } else if (action === 'create') {
-    const walletPath = (form.get('wallet_path') as string | null)?.trim() ?? '';
-    const storeSeed  = form.get('store_seed') === 'yes';
-    const mnemonic   = (form.get('mnemonic') as string | null)?.trim() || undefined;
 
-    if (!walletPath) {
-      errorMessage = 'Wallet path is required.';
+  // ── Import from existing seed phrase ────────────────────────────────────────
+  } else if (action === 'import') {
+    const mnemonic   = form.get('mnemonic')?.toString().trim() || '';
+    const storeSeed  = form.get('store_seed') !== null;
+    const passphrase = form.get('passphrase')?.toString().trim() || undefined;
+
+    if (!mnemonic) {
+      result = { action: 'error', message: 'Seed phrase is required.' };
     } else {
       try {
-        const res = await createWallet(walletPath, storeSeed, mnemonic);
-        successAction = 'create';
-        if (res.mnemonic.type === 'NewlyGenerated') {
-          successMnemonic = res.mnemonic.content.mnemonic;
-        }
+        await createWallet(WALLET_PATH, storeSeed, mnemonic, passphrase);
+        result = { action: 'import_success' };
       } catch (err) {
-        errorMessage = (err as Error).message;
+        result = { action: 'error', message: (err as Error).message };
+      }
+    }
+
+  // ── Upload existing wallet file ─────────────────────────────────────────────
+  } else if (action === 'upload') {
+    const fileField = form.get('wallet_file');
+    const password  = form.get('password')?.toString().trim() || undefined;
+
+    if (!(fileField instanceof File) || fileField.size === 0) {
+      result = { action: 'error', message: 'Please select a wallet file.' };
+    } else if (fileField.size > 50 * 1024 * 1024) {
+      result = { action: 'error', message: 'Wallet file too large (max 50 MB).' };
+    } else {
+      try {
+        const uploadDir = '/app/uploads';
+        const { writeFile, mkdir } = await import('node:fs/promises');
+        await mkdir(uploadDir, { recursive: true });
+        // Write directly as mintlayer.wallet, overwriting any existing file
+        await writeFile(`${uploadDir}/mintlayer.wallet`, Buffer.from(await fileField.arrayBuffer()));
+        await openWallet(WALLET_PATH, password);
+        result = { action: 'upload_success' };
+      } catch (err) {
+        result = { action: 'error', message: (err as Error).message };
       }
     }
   }
@@ -47,141 +88,333 @@ if (Astro.request.method === 'POST') {
 ---
 
 <Layout title="Wallet Setup" activeNav="setup">
-  <h1 class="text-2xl font-bold text-gray-100 mb-2">Wallet Setup</h1>
-  <p class="text-sm text-gray-400 mb-8 max-w-xl">
-    The <code class="bg-gray-800 px-1 rounded">wallet-rpc-daemon</code> manages one wallet file at a time.
-    Paths are inside the container: wallet files live in <code class="bg-gray-800 px-1 rounded">/home/mintlayer/</code>,
-    which maps to <code class="bg-gray-800 px-1 rounded">./mintlayer-data/</code> on your host.
-  </p>
 
-  <!-- Result banner -->
-  {errorMessage && (
-    <div class="rounded-lg border border-red-700 bg-red-900/30 p-4 mb-6 text-red-300 text-sm">
-      <strong class="font-semibold">Error:</strong> {errorMessage}
-    </div>
-  )}
+  {/* When create succeeds, show ONLY the seed backup wizard — nothing else */}
+  {result.action === 'create_success' ? (
+    <>
+      <h1 class="text-2xl font-bold text-gray-100 mb-6">New Wallet Created</h1>
+      <SeedBackupStep
+        client:load
+        mnemonic={result.mnemonic}
+        walletPath={result.walletPath}
+      />
+    </>
+  ) : (
+    <>
+      <div class="flex items-center justify-between mb-6 max-w-5xl">
+        <h1 class="text-2xl font-bold text-gray-100">Wallet Setup</h1>
+        <button
+          type="button"
+          onclick="document.getElementById('upload-modal').showModal()"
+          class="shrink-0 ml-4 rounded-lg border border-gray-700 bg-gray-800 hover:bg-gray-700
+                 px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200 transition-colors flex items-center gap-1.5"
+        >
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+          </svg>
+          Upload existing wallet file
+        </button>
+      </div>
 
-  {successAction === 'open' && (
-    <div class="rounded-lg border border-mint-700 bg-mint-900/30 p-4 mb-6 text-mint-300 text-sm">
-      <strong class="font-semibold">Wallet opened successfully.</strong>
-      {' '}<a href="/" class="underline hover:text-mint-100">Go to dashboard →</a>
-    </div>
-  )}
-
-  {successAction === 'create' && (
-    <div class="rounded-lg border border-mint-700 bg-mint-900/30 p-5 mb-6">
-      <p class="text-mint-300 font-semibold text-sm mb-2">Wallet created successfully!</p>
-      {successMnemonic && (
-        <>
-          <p class="text-xs text-yellow-400 mb-1 font-semibold">
-            Write down your seed phrase and store it safely. It will not be shown again.
-          </p>
-          <pre class="text-xs font-mono text-mint-200 bg-gray-950 rounded-lg p-3 break-words whitespace-pre-wrap">{successMnemonic}</pre>
-        </>
+      {/* Error banner */}
+      {result.action === 'error' && (
+        <div class="rounded-lg border border-red-700 bg-red-900/30 p-4 mb-6 text-red-300 text-sm max-w-5xl">
+          <strong class="font-semibold">Error:</strong> {result.message}
+        </div>
       )}
-      <a href="/" class="inline-block mt-3 text-sm underline text-mint-400 hover:text-mint-300">
-        Go to dashboard →
-      </a>
-    </div>
+
+      {/* Import success banner */}
+      {result.action === 'import_success' && (
+        <div class="rounded-lg border border-mint-700 bg-mint-900/30 p-4 mb-6 text-mint-300 text-sm max-w-5xl">
+          <strong class="font-semibold">Wallet imported successfully.</strong>
+          {' '}<a href="/" class="underline hover:text-mint-100">Go to dashboard →</a>
+        </div>
+      )}
+
+      {/* Upload success banner */}
+      {result.action === 'upload_success' && (
+        <div class="rounded-lg border border-mint-700 bg-mint-900/30 p-4 mb-6 text-mint-300 text-sm max-w-5xl">
+          <strong class="font-semibold">Wallet opened successfully.</strong>
+          {' '}<a href="/" class="underline hover:text-mint-100">Go to dashboard →</a>
+        </div>
+      )}
+
+      {/* ── Two side-by-side cards ──────────────────────────────────────────── */}
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-5xl">
+
+        {/* ── Create new wallet ───────────────────────────────────────────── */}
+        <div class="rounded-xl bg-gray-900 border border-mint-700/40 p-6 flex flex-col">
+          <div class="flex items-start justify-between mb-1">
+            <h2 class="text-base font-semibold text-gray-100">Create new wallet</h2>
+            <span class="text-xs rounded-full bg-mint-900/50 text-mint-400 px-2 py-0.5 border border-mint-700/50 ml-2 shrink-0">
+              New
+            </span>
+          </div>
+          <p class="text-xs text-gray-400 mb-5">Generate a fresh seed phrase and wallet file.</p>
+
+          <form method="POST" class="space-y-4 flex flex-col flex-1">
+            <input type="hidden" name="action" value="create" />
+
+            {/* Password — required by default */}
+            <div id="create-pw-section" class="space-y-3">
+              <div>
+                <label for="create-passphrase" class="block text-xs text-gray-400 mb-1">Password</label>
+                <input
+                  id="create-passphrase"
+                  name="passphrase"
+                  type="password"
+                  required
+                  placeholder="••••••••"
+                  class="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600
+                         px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-mint-600"
+                />
+              </div>
+              <div>
+                <label for="create-passphrase-confirm" class="block text-xs text-gray-400 mb-1">Confirm password</label>
+                <input
+                  id="create-passphrase-confirm"
+                  name="passphrase_confirm"
+                  type="password"
+                  required
+                  placeholder="••••••••"
+                  class="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600
+                         px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-mint-600"
+                  oninput="
+                    const pw = document.getElementById('create-passphrase').value;
+                    this.setCustomValidity(this.value && this.value !== pw ? 'Passwords do not match' : '');
+                  "
+                />
+              </div>
+              <p class="text-xs text-gray-500">
+                Remember this password — losing it will lock you out of your wallet permanently.
+              </p>
+            </div>
+
+            {/* Opt-out checkbox */}
+            <div class="rounded-lg border border-yellow-700/50 bg-yellow-900/10 px-3 py-2.5">
+              <label class="flex items-start gap-2 cursor-pointer">
+                <input
+                  id="create-no-password"
+                  name="no_password"
+                  type="checkbox"
+                  value="yes"
+                  class="accent-yellow-500 w-4 h-4 mt-0.5 shrink-0"
+                  onchange="
+                    const section = document.getElementById('create-pw-section');
+                    const inputs = section.querySelectorAll('input');
+                    const skip = this.checked;
+                    inputs.forEach(i => { i.disabled = skip; i.required = !skip; if (skip) i.value = ''; });
+                    section.style.opacity = skip ? '0.35' : '1';
+                    section.style.pointerEvents = skip ? 'none' : '';
+                  "
+                />
+                <span class="text-xs text-yellow-400 leading-relaxed">
+                  I understand the risks and I don't want to set a password
+                </span>
+              </label>
+            </div>
+
+            <details class="group">
+              <summary class="cursor-pointer text-xs text-gray-500 hover:text-gray-300 select-none list-none flex items-center gap-1.5">
+                <svg class="w-3 h-3 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                </svg>
+                Advanced options
+              </summary>
+              <div class="mt-3 space-y-1 pl-4 border-l border-gray-800">
+                <div class="flex items-center gap-2">
+                  <input
+                    id="create-store-seed"
+                    name="store_seed"
+                    type="checkbox"
+                    value="yes"
+                    checked
+                    class="accent-mint-500 w-4 h-4"
+                    onchange="document.getElementById('create-seed-warn').hidden = this.checked"
+                  />
+                  <label for="create-store-seed" class="text-xs text-gray-400">
+                    Store seed phrase in wallet file
+                  </label>
+                </div>
+                <p id="create-seed-warn" class="text-xs text-yellow-400 pl-6" hidden>
+                  Without storing the seed phrase, wallet recovery is impossible if the file is lost.
+                </p>
+              </div>
+            </details>
+
+            <div class="flex-1"></div>
+
+            <button
+              type="submit"
+              class="w-full rounded-lg bg-mint-700 hover:bg-mint-600 px-4 py-2 text-sm font-semibold text-white transition-colors"
+            >
+              Create Wallet
+            </button>
+          </form>
+        </div>
+
+        {/* ── Import from seed phrase ─────────────────────────────────────── */}
+        <div class="rounded-xl bg-gray-900 border border-gray-800 p-6 flex flex-col">
+          <h2 class="text-base font-semibold text-gray-200 mb-1">Import from seed phrase</h2>
+          <p class="text-xs text-gray-400 mb-5">Restore an existing wallet using your 24-word mnemonic.</p>
+
+          <form method="POST" class="space-y-4 flex flex-col flex-1">
+            <input type="hidden" name="action" value="import" />
+
+            <div>
+              <label for="import-mnemonic" class="block text-xs text-gray-400 mb-1">Seed phrase</label>
+              <textarea
+                id="import-mnemonic"
+                name="mnemonic"
+                rows="4"
+                required
+                placeholder="word1 word2 word3 … word24"
+                class="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600
+                       px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-mint-600 resize-none"
+              />
+            </div>
+
+            <details class="group">
+              <summary class="cursor-pointer text-xs text-gray-500 hover:text-gray-300 select-none list-none flex items-center gap-1.5">
+                <svg class="w-3 h-3 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                </svg>
+                Advanced options
+              </summary>
+              <div class="mt-3 space-y-3 pl-4 border-l border-gray-800">
+                <div>
+                  <label for="import-passphrase" class="block text-xs text-gray-400 mb-1">
+                    Password <span class="text-gray-600">(optional)</span>
+                  </label>
+                  <input
+                    id="import-passphrase"
+                    name="passphrase"
+                    type="password"
+                    placeholder="••••••••"
+                    class="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600
+                           px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-mint-600"
+                  />
+                </div>
+                <div class="space-y-1">
+                  <div class="flex items-center gap-2">
+                    <input
+                      id="import-store-seed"
+                      name="store_seed"
+                      type="checkbox"
+                      value="yes"
+                      checked
+                      class="accent-mint-500 w-4 h-4"
+                      onchange="document.getElementById('import-seed-warn').hidden = this.checked"
+                    />
+                    <label for="import-store-seed" class="text-xs text-gray-400">
+                      Store seed phrase in wallet file
+                    </label>
+                  </div>
+                  <p id="import-seed-warn" class="text-xs text-yellow-400 pl-6" hidden>
+                    Without storing the seed phrase, wallet recovery is impossible if the file is lost.
+                  </p>
+                </div>
+              </div>
+            </details>
+
+            <div class="flex-1"></div>
+
+            <button
+              type="submit"
+              class="w-full rounded-lg bg-gray-700 hover:bg-gray-600 px-4 py-2 text-sm font-medium text-gray-100 transition-colors"
+            >
+              Import Wallet
+            </button>
+          </form>
+        </div>
+
+      </div>
+
+      {/* ── Upload modal ────────────────────────────────────────────────────── */}
+      <dialog
+        id="upload-modal"
+        class="rounded-xl bg-gray-900 border border-gray-700 p-0 shadow-2xl backdrop:bg-black/60 max-w-md w-full"
+      >
+        <div class="flex items-center justify-between px-6 pt-5 pb-4 border-b border-gray-800">
+          <h2 class="text-sm font-semibold text-gray-200">Upload existing wallet file</h2>
+          <button
+            type="button"
+            onclick="document.getElementById('upload-modal').close()"
+            class="text-gray-500 hover:text-gray-300 transition-colors"
+            aria-label="Close"
+          >
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <form method="POST" enctype="multipart/form-data" class="px-6 py-5 space-y-4">
+          <input type="hidden" name="action" value="upload" />
+
+          <p class="text-xs text-gray-500">
+            Upload a wallet binary exported from another Mintlayer client.
+          </p>
+
+          <div>
+            <label for="upload-file" class="block text-xs text-gray-400 mb-1">Wallet file</label>
+            <input
+              id="upload-file"
+              name="wallet_file"
+              type="file"
+              required
+              class="w-full text-xs text-gray-400 file:mr-3 file:rounded file:border-0
+                     file:bg-gray-700 file:text-gray-300 file:px-3 file:py-1.5
+                     hover:file:bg-gray-600 file:cursor-pointer cursor-pointer"
+            />
+          </div>
+
+          <div>
+            <label for="upload-password" class="block text-xs text-gray-400 mb-1">
+              Password <span class="text-gray-600">(if encrypted)</span>
+            </label>
+            <input
+              id="upload-password"
+              name="password"
+              type="password"
+              placeholder="••••••••"
+              class="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600
+                     px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-mint-600"
+            />
+          </div>
+
+          <div class="flex items-center justify-end gap-3 pt-1">
+            <button
+              type="button"
+              onclick="document.getElementById('upload-modal').close()"
+              class="rounded-lg px-4 py-2 text-sm text-gray-400 hover:text-gray-200 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              class="rounded-lg bg-gray-700 hover:bg-gray-600 px-4 py-2 text-sm font-medium text-gray-100 transition-colors"
+            >
+              Upload &amp; Open
+            </button>
+          </div>
+        </form>
+      </dialog>
+
+      <style>
+        dialog[open] { animation: dialog-in 0.15s ease; }
+        @keyframes dialog-in {
+          from { opacity: 0; transform: scale(0.97) translateY(-4px); }
+          to   { opacity: 1; transform: scale(1)    translateY(0); }
+        }
+      </style>
+
+      <script>
+        document.getElementById('upload-modal')?.addEventListener('click', function (e) {
+          if (e.target === this) this.close();
+        });
+      </script>
+    </>
   )}
 
-  <div class="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-3xl">
-    <!-- Open existing wallet -->
-    <div class="rounded-xl bg-gray-900 border border-gray-800 p-6">
-      <h2 class="text-base font-semibold text-gray-200 mb-4">Open existing wallet</h2>
-      <form method="POST" class="space-y-4">
-        <input type="hidden" name="action" value="open" />
-
-        <div>
-          <label for="open-path" class="block text-xs text-gray-400 mb-1">Wallet file path</label>
-          <input
-            id="open-path"
-            name="wallet_path"
-            type="text"
-            required
-            placeholder="/home/mintlayer/my_wallet"
-            class="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600
-                   px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-mint-600"
-          />
-        </div>
-
-        <div>
-          <label for="open-password" class="block text-xs text-gray-400 mb-1">
-            Password <span class="text-gray-600">(leave blank if unencrypted)</span>
-          </label>
-          <input
-            id="open-password"
-            name="password"
-            type="password"
-            placeholder="••••••••"
-            class="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600
-                   px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-mint-600"
-          />
-        </div>
-
-        <button
-          type="submit"
-          class="w-full rounded-lg bg-gray-700 hover:bg-gray-600 px-4 py-2 text-sm font-medium text-gray-100 transition-colors"
-        >
-          Open Wallet
-        </button>
-      </form>
-    </div>
-
-    <!-- Create new wallet -->
-    <div class="rounded-xl bg-gray-900 border border-gray-800 p-6">
-      <h2 class="text-base font-semibold text-gray-200 mb-4">Create new wallet</h2>
-      <form method="POST" class="space-y-4">
-        <input type="hidden" name="action" value="create" />
-
-        <div>
-          <label for="create-path" class="block text-xs text-gray-400 mb-1">Wallet file path</label>
-          <input
-            id="create-path"
-            name="wallet_path"
-            type="text"
-            required
-            placeholder="/home/mintlayer/my_wallet"
-            class="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600
-                   px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-mint-600"
-          />
-        </div>
-
-        <div>
-          <label for="create-mnemonic" class="block text-xs text-gray-400 mb-1">
-            Mnemonic <span class="text-gray-600">(leave blank to generate a new one)</span>
-          </label>
-          <textarea
-            id="create-mnemonic"
-            name="mnemonic"
-            rows="2"
-            placeholder="word1 word2 word3 … word12"
-            class="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600
-                   px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-mint-600 resize-none"
-          />
-        </div>
-
-        <div class="flex items-center gap-2">
-          <input
-            id="store-seed"
-            name="store_seed"
-            type="checkbox"
-            value="yes"
-            checked
-            class="accent-mint-500 w-4 h-4"
-          />
-          <label for="store-seed" class="text-xs text-gray-400">
-            Store seed phrase in wallet file
-          </label>
-        </div>
-
-        <button
-          type="submit"
-          class="w-full rounded-lg bg-mint-700 hover:bg-mint-600 px-4 py-2 text-sm font-semibold text-white transition-colors"
-        >
-          Create Wallet
-        </button>
-      </form>
-    </div>
-  </div>
 </Layout>

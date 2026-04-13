@@ -75,6 +75,12 @@ services:
       dockerfile: Dockerfile
     depends_on:
       - wallet-rpc-daemon
+    volumes:
+      # Read-only access to wallet data for file backup download
+      - "./mintlayer-data:/app/mintlayer-data:ro"
+      # Shared with wallet-rpc-daemon's /home/mintlayer/ so uploaded wallet files
+      # are accessible to the daemon at /home/mintlayer/uploads/<filename>
+      - "./mintlayer-data/uploads:/app/uploads"
     ports:
       - "${WEB_GUI_PORT:-4321}:4321"
     environment:
@@ -90,6 +96,7 @@ services:
       UI_PASSWORD_HASH: "${UI_PASSWORD_HASH}"
       UI_TOTP_SECRET: "${UI_TOTP_SECRET}"
       SESSION_SECRET: "${SESSION_SECRET}"
+      WALLET_RPC_CMD: "${WALLET_RPC_CMD:-}"
       INDEXER_ENABLED: "${INDEXER_ENABLED:-false}"
       HOST: "0.0.0.0"
       PORT: "4321"

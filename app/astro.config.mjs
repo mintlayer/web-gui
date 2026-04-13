@@ -18,4 +18,18 @@ export default defineConfig({
     host: process.env.HOST || '0.0.0.0',
     port: parseInt(process.env.PORT || '4321'),
   },
+  vite: {
+    server: {
+      hmr: {
+        // When running inside Docker, the HMR WebSocket must use the
+        // host-side address — not the container's internal hostname.
+        host: 'localhost',
+        port: parseInt(process.env.PORT || '4321'),
+      },
+    },
+    optimizeDeps: {
+      // msw is test-only; exclude it so Vite doesn't try to pre-bundle it
+      exclude: ['msw'],
+    },
+  },
 });

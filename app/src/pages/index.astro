@@ -2,9 +2,34 @@
 import Layout from '@/layouts/Layout.astro';
 import SyncStatus from '@/components/SyncStatus';
 import ReceiveModal from '@/components/ReceiveModal';
-import { getBalance, walletBestBlock, getStakingStatus, listCreatedBlocks, nodeChainstateInfo, getTokensInfo, WalletRpcError, type BlockInfo, type ChainstateInfo } from '@/lib/wallet-rpc';
+import {
+  getBalance, walletBestBlock, getStakingStatus, listCreatedBlocks,
+  nodeChainstateInfo, getTokensInfo, openWallet, isWalletNotOpenError, WalletRpcError,
+  type BlockInfo, type ChainstateInfo,
+} from '@/lib/wallet-rpc';
 
-// ── Fetch data from wallet-rpc-daemon ────────────────────────────────────────
+const WALLET_PATH = '/home/mintlayer/mintlayer.wallet';
+
+// ── Handle password form POST ─────────────────────────────────────────────────
+
+let passwordError: string | null = null;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  if (form.get('action') === 'open_with_password') {
+    const password = form.get('password')?.toString() || undefined;
+    try {
+      await openWallet(WALLET_PATH, password);
+      // Redirect to GET so a refresh doesn't re-POST
+      return new Response(null, { status: 302, headers: { Location: '/' } });
+    } catch (err) {
+      passwordError = (err as Error).message;
+    }
+  }
+}
+
+// ── Fetch wallet data ─────────────────────────────────────────────────────────
+
 let balance: Awaited<ReturnType<typeof getBalance>> | null = null;
 let blockInfo: BlockInfo | null = null;
 let chainstate: ChainstateInfo | null = null;
@@ -12,6 +37,7 @@ let stakingStatus: string | null = null;
 let blocksFound: number | null = null;
 let walletError: string | null = null;
 let daemonOffline = false;
+let needsPassword = false;
 let fungibleCount = 0;
 let nftCount = 0;
 
@@ -24,7 +50,6 @@ try {
   ]);
   blocksFound = await listCreatedBlocks(0).then(b => b.length).catch(() => null);
 
-  // Classify tokens into fungible vs NFT
   if (balance && Object.keys(balance.tokens).length > 0) {
     const tokenIds = Object.keys(balance.tokens);
     const infos = await Promise.all(
@@ -37,12 +62,10 @@ try {
     }
   }
 } catch (err) {
-  if (err instanceof WalletRpcError) {
-    if (err.code === -32000 || err.message.includes('Cannot reach')) {
-      daemonOffline = true;
-    } else {
-      walletError = err.message;
-    }
+  if (isWalletNotOpenError(err)) {
+    // fall through — the client-side opening screen handles it
+  } else if (err instanceof WalletRpcError && (err.message.includes('Cannot reach') || err.code === -32000)) {
+    daemonOffline = true;
   } else {
     walletError = (err as Error).message;
   }
@@ -59,7 +82,16 @@ const indexerEnabled = process.env.INDEXER_ENABLED === 'true';
     <ReceiveModal client:load />
   </div>
 
-  <!-- Offline / setup banner -->
+  <!-- Wallet opening screen (shown client-side when no wallet is open yet) -->
+  {!balance && !daemonOffline && !walletError && !needsPassword && (
+    <div id="wallet-opening-screen" class="rounded-lg border border-gray-700 bg-gray-900 p-8 mb-6 text-center">
+      <div class="inline-block w-6 h-6 border-2 border-mint-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+      <p class="text-gray-300 font-medium mb-1">Opening wallet…</p>
+      <p id="wallet-opening-msg" class="text-sm text-gray-500">Connecting to mintlayer.wallet</p>
+    </div>
+  )}
+
+  <!-- Offline banner -->
   {daemonOffline && (
     <div class="rounded-lg border border-yellow-700 bg-yellow-900/30 p-4 mb-6 text-yellow-300 text-sm">
       <strong class="font-semibold">Wallet daemon unreachable.</strong>
@@ -75,7 +107,7 @@ const indexerEnabled = process.env.INDEXER_ENABLED === 'true';
     </div>
   )}
 
-  <!-- Live sync status (React island) -->
+  <!-- Live sync status -->
   {blockInfo && chainstate && (
     <SyncStatus
       client:load
@@ -88,7 +120,6 @@ const indexerEnabled = process.env.INDEXER_ENABLED === 'true';
 
   <!-- Stats grid -->
   <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-    <!-- Balance -->
     <div class="rounded-xl bg-gray-900 border border-gray-800 p-5">
       <p class="text-xs text-gray-500 uppercase tracking-wider mb-1">Balance (confirmed)</p>
       {balance ? (
@@ -109,7 +140,6 @@ const indexerEnabled = process.env.INDEXER_ENABLED === 'true';
       )}
     </div>
 
-    <!-- Wallet block height -->
     <div class="rounded-xl bg-gray-900 border border-gray-800 p-5">
       <p class="text-xs text-gray-500 uppercase tracking-wider mb-1">Wallet Block</p>
       {blockInfo ? (
@@ -124,7 +154,6 @@ const indexerEnabled = process.env.INDEXER_ENABLED === 'true';
       )}
     </div>
 
-    <!-- Staking -->
     <div class="rounded-xl bg-gray-900 border border-gray-800 p-5">
       <p class="text-xs text-gray-500 uppercase tracking-wider mb-1">Staking (account 0)</p>
       {stakingStatus ? (
@@ -145,7 +174,6 @@ const indexerEnabled = process.env.INDEXER_ENABLED === 'true';
       )}
     </div>
 
-    <!-- Blocks found -->
     <div class="rounded-xl bg-gray-900 border border-gray-800 p-5">
       <p class="text-xs text-gray-500 uppercase tracking-wider mb-1">Blocks Found</p>
       {blocksFound !== null ? (
@@ -156,7 +184,6 @@ const indexerEnabled = process.env.INDEXER_ENABLED === 'true';
     </div>
   </div>
 
-  <!-- Block ID -->
   {blockInfo && (
     <div class="rounded-xl bg-gray-900 border border-gray-800 p-5 mb-4">
       <p class="text-xs text-gray-500 uppercase tracking-wider mb-2">Wallet Best Block ID</p>
@@ -174,4 +201,85 @@ const indexerEnabled = process.env.INDEXER_ENABLED === 'true';
     </div>
   )}
 
+  {/* ── Password modal — auto-opens when wallet file exists but is encrypted ── */}
+  {(needsPassword || passwordError) && (
+    <dialog
+      id="wallet-password-modal"
+      class="rounded-xl bg-gray-900 border border-gray-700 p-0 shadow-2xl backdrop:bg-black/70 max-w-sm w-full"
+    >
+      <div class="px-6 pt-6 pb-5">
+        <div class="flex items-center gap-3 mb-4">
+          <svg class="w-5 h-5 text-mint-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+          <h2 class="text-sm font-semibold text-gray-200">Wallet is locked</h2>
+        </div>
+        <p class="text-xs text-gray-500 mb-5">Enter your password to unlock the wallet.</p>
+
+        {passwordError && (
+          <div class="rounded-lg border border-red-700 bg-red-900/30 px-3 py-2 mb-4 text-red-300 text-xs">
+            {passwordError}
+          </div>
+        )}
+
+        <form method="POST" class="space-y-4">
+          <input type="hidden" name="action" value="open_with_password" />
+          <div>
+            <label for="wallet-password" class="block text-xs text-gray-400 mb-1">Password</label>
+            <input
+              id="wallet-password"
+              name="password"
+              type="password"
+              required
+              autofocus
+              placeholder="••••••••"
+              class="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600
+                     px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-mint-600"
+            />
+          </div>
+          <button
+            type="submit"
+            class="w-full rounded-lg bg-mint-700 hover:bg-mint-600 px-4 py-2 text-sm font-semibold text-white transition-colors"
+          >
+            Unlock
+          </button>
+        </form>
+      </div>
+    </dialog>
+  )}
+
 </Layout>
+
+<script>
+  // Auto-open the password modal on page load if rendered
+  const modal = document.getElementById('wallet-password-modal') as HTMLDialogElement | null;
+  modal?.showModal();
+
+  // If the wallet-opening screen is visible, call the open API then reload
+  const openingScreen = document.getElementById('wallet-opening-screen');
+  const openingMsg = document.getElementById('wallet-opening-msg');
+  if (openingScreen) {
+    (async () => {
+      try {
+        const res = await fetch('/api/wallet-open', { method: 'POST' });
+        const data = await res.json() as { ok: boolean; status: string; message?: string };
+        if (data.ok) {
+          window.location.reload();
+        } else if (data.status === 'needs_password') {
+          window.location.reload(); // reload so server renders the password modal
+        } else if (data.status === 'not_found') {
+          window.location.href = '/setup';
+        } else {
+          if (openingMsg) openingMsg.textContent = data.message ?? 'Failed to open wallet.';
+          openingScreen.classList.remove('border-gray-700');
+          openingScreen.classList.add('border-red-700', 'bg-red-900/20');
+          const spinner = openingScreen.querySelector('.animate-spin') as HTMLElement | null;
+          if (spinner) spinner.style.display = 'none';
+        }
+      } catch {
+        if (openingMsg) openingMsg.textContent = 'Could not reach the server.';
+      }
+    })();
+  }
+</script>
