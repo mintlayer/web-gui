@@ -18,16 +18,6 @@ interface Props {
   network: string;
 }
 
-const FAV_KEY = 'ml_favourite_tokens';
-
-function loadFavourites(): FavouriteEntry[] {
-  try {
-    return JSON.parse(localStorage.getItem(FAV_KEY) ?? '[]') as FavouriteEntry[];
-  } catch {
-    return [];
-  }
-}
-
 async function rpc<T>(method: string, params: Record<string, unknown>): Promise<T> {
   const res = await fetch('/api/rpc', {
     method: 'POST',
@@ -173,20 +163,32 @@ export default function TokenSearch({ network }: Props) {
       .then((data: { up: boolean }) => setIndexerAvailable(data.up))
       .catch(() => {});
 
-    const stored = loadFavourites();
-    setFavourites(stored);
-    if (stored.length > 0) {
-      fetchFavInfos(stored.map(f => f.tokenId));
-    }
+    fetch('/api/prefs')
+      .then(r => r.json())
+      .then((data: { ok: boolean; value?: FavouriteEntry[] }) => {
+        const stored = data.ok ? (data.value ?? []) : [];
+        setFavourites(stored);
+        if (stored.length > 0) {
+          fetchFavInfos(stored.map(f => f.tokenId));
+        }
+      })
+      .catch(() => {});
   }, []);
 
   async function fetchFavInfos(ids: string[]) {
     if (ids.length === 0) return;
     setFavLoading(true);
     try {
-      const infos = await rpc<(TokenInfo | null)[]>('node_get_tokens_info', { token_ids: ids });
+      // node_get_tokens_info does not preserve input order — call one at a time so
+      // each result is guaranteed to correspond to the correct token ID.
+      const results = await Promise.all(
+        ids.map(id =>
+          rpc<(TokenInfo | null)[]>('node_get_tokens_info', { token_ids: [id] })
+            .then(([info]) => ({ id, info: info ?? null }))
+        )
+      );
       const map = new Map<string, TokenInfo | null>();
-      ids.forEach((id, i) => map.set(id, infos[i] ?? null));
+      results.forEach(({ id, info }) => map.set(id, info));
       setFavInfos(map);
     } catch {
       // silently fail
@@ -201,7 +203,11 @@ export default function TokenSearch({ network }: Props) {
       const next = alreadyPinned
         ? prev.filter(f => f.tokenId !== tokenId)
         : [...prev, { tokenId, ticker }];
-      localStorage.setItem(FAV_KEY, JSON.stringify(next));
+      fetch('/api/prefs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(next),
+      }).catch(() => {});
 
       if (!alreadyPinned) {
         // Fetch fresh info for newly pinned token if not already cached
@@ -257,8 +263,14 @@ export default function TokenSearch({ network }: Props) {
         return;
       }
 
-      const infos = await rpc<(TokenInfo | null)[]>('node_get_tokens_info', { token_ids: tokenIds });
-      setResults(tokenIds.map((id, i) => ({ tokenId: id, info: infos[i] ?? null })));
+      // node_get_tokens_info does not preserve input order — call one at a time.
+      const infoResults = await Promise.all(
+        tokenIds.map(id =>
+          rpc<(TokenInfo | null)[]>('node_get_tokens_info', { token_ids: [id] })
+            .then(([info]) => ({ id, info: info ?? null }))
+        )
+      );
+      setResults(infoResults.map(({ id, info }) => ({ tokenId: id, info })));
     } catch (err) {
       setError((err as Error).message);
     } finally {

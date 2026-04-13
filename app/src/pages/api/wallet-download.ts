@@ -13,7 +13,7 @@ export const GET: APIRoute = async () => {
     return new Response('Wallet file not found or not readable.', { status: 404 });
   }
 
-  return new Response(data, {
+  return new Response(new Uint8Array(data), {
     status: 200,
     headers: {
       'Content-Type': 'application/octet-stream',

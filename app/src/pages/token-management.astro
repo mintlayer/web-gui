@@ -3,9 +3,15 @@ import Layout from '@/layouts/Layout.astro';
 import TokenActions from '@/components/TokenActions';
 import TokenSearch from '@/components/TokenSearch';
 import IssuedTokensPanel from '@/components/IssuedTokensPanel';
+import OwnedNFTsPanel from '@/components/OwnedNFTsPanel';
 import { INDEXER_START_CMD } from '@/lib/indexer';
 
-const ipfsEnabled = !!process.env.PINATA_JWT;
+const ipfsEnabled = (() => {
+  const p = process.env.IPFS_PROVIDER ?? '';
+  if (p === 'filebase') return !!process.env.FILEBASE_TOKEN;
+  if (p === 'pinata')   return !!process.env.PINATA_JWT;
+  return !!process.env.PINATA_JWT; // backward compat: IPFS_PROVIDER unset but PINATA_JWT present
+})();
 const network = (process.env.NETWORK ?? 'mainnet').toLowerCase();
 ---
 
@@ -29,26 +35,49 @@ const network = (process.env.NETWORK ?? 'mainnet').toLowerCase();
     Some features may not work as expected until the indexer catches up with the chain.
   </div>
 
-  <!-- ── My Issued Tokens ──────────────────────────────────────────────────── -->
-  <section class="mb-8">
-    <h2 class="text-base font-semibold text-gray-200 mb-3">My Issued Tokens</h2>
-    <IssuedTokensPanel client:load network={network} />
-  </section>
+  <!-- ── Tab bar ─────────────────────────────────────────────────────────────── -->
+  <div class="flex border-b border-gray-800 mb-6">
+    <button id="tab-tokens" data-tab="tokens"
+      class="tab-btn px-5 py-2.5 text-sm font-medium border-b-2 border-mint-500 text-mint-400 transition-colors -mb-px">
+      Tokens
+    </button>
+    <button id="tab-nfts" data-tab="nfts"
+      class="tab-btn px-5 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300 transition-colors -mb-px">
+      NFTs
+    </button>
+  </div>
 
-  <!-- ── Search on-chain tokens ────────────────────────────────────────────── -->
-  <section class="mb-8">
-    <h2 class="text-base font-semibold text-gray-200 mb-3">Search on-chain tokens</h2>
-    <div class="rounded-xl border border-amber-800/50 bg-amber-950/20 px-4 py-3 mb-3 flex items-start gap-2.5 text-sm text-amber-300">
-      <svg class="shrink-0 mt-0.5" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-      <span>Only add tokens you are certain are legitimate. Anyone can create a token with any name or ticker. Always verify the <strong class="font-semibold">token ID</strong> against a trusted source before interacting with it.</span>
-    </div>
-    <div class="rounded-xl bg-gray-900 border border-gray-800 p-6">
-      <TokenSearch client:load network={network} />
-    </div>
-  </section>
+  <!-- ── Tokens panel ───────────────────────────────────────────────────────── -->
+  <div id="panel-tokens">
+    <section class="mb-8">
+      <h2 class="text-base font-semibold text-gray-200 mb-3">My Issued Tokens</h2>
+      <IssuedTokensPanel client:load network={network} />
+    </section>
+
+    <section class="mb-8">
+      <h2 class="text-base font-semibold text-gray-200 mb-3">Search on-chain tokens</h2>
+      <div class="rounded-xl border border-amber-800/50 bg-amber-950/20 px-4 py-3 mb-3 flex items-start gap-2.5 text-sm text-amber-300">
+        <svg class="shrink-0 mt-0.5" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <span>Only add tokens you are certain are legitimate. Anyone can create a token with any name or ticker. Always verify the <strong class="font-semibold">token ID</strong> against a trusted source before interacting with it.</span>
+      </div>
+      <div class="rounded-xl bg-gray-900 border border-gray-800 p-6">
+        <TokenSearch client:load network={network} />
+      </div>
+    </section>
+  </div>
+
+  <!-- ── NFTs panel ─────────────────────────────────────────────────────────── -->
+  <div id="panel-nfts" style="display:none">
+    <section class="mb-8">
+      <h2 class="text-base font-semibold text-gray-200 mb-3">My NFTs</h2>
+      <OwnedNFTsPanel client:load network={network} />
+    </section>
+  </div>
+
 </Layout>
 
 <script>
+// Indexer status check
 fetch('/api/indexer-status')
   .then(r => r.json())
   .then((data: { up: boolean; synced: boolean }) => {
@@ -61,4 +90,22 @@ fetch('/api/indexer-status')
     }
   })
   .catch(() => {});
+
+// Tab switcher
+document.querySelectorAll<HTMLElement>('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const tab = btn.dataset.tab;
+    document.querySelectorAll<HTMLElement>('.tab-btn').forEach(b => {
+      const active = b.dataset.tab === tab;
+      b.classList.toggle('border-mint-500', active);
+      b.classList.toggle('text-mint-400', active);
+      b.classList.toggle('border-transparent', !active);
+      b.classList.toggle('text-gray-500', !active);
+    });
+    const tokens = document.getElementById('panel-tokens');
+    const nfts = document.getElementById('panel-nfts');
+    if (tokens) tokens.style.display = tab === 'tokens' ? '' : 'none';
+    if (nfts) nfts.style.display = tab === 'nfts' ? '' : 'none';
+  });
+});
 </script>

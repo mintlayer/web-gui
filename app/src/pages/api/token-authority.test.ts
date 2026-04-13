@@ -18,7 +18,7 @@ function makeCtx(addresses?: string) {
   return {
     request: new Request(url.toString()),
     url,
-  } as Parameters<import('@/pages/api/token-authority').GET>[0];
+  } as Parameters<typeof import('@/pages/api/token-authority').GET>[0];
 }
 
 describe('GET /api/token-authority', () => {

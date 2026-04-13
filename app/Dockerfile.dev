@@ -1,5 +1,7 @@
 FROM node:22-alpine
 
+RUN apk add --no-cache python3 make g++ sqlite-dev
+
 WORKDIR /app
 
 # Install deps in a cacheable layer — source is mounted at runtime

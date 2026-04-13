@@ -39,14 +39,22 @@ interface FavouriteEntry {
   ticker: string;
 }
 
-const FAV_KEY = "ml_favourite_tokens";
-
-function loadFavourites(): FavouriteEntry[] {
+async function loadFavourites(): Promise<FavouriteEntry[]> {
   try {
-    return JSON.parse(localStorage.getItem(FAV_KEY) ?? "[]") as FavouriteEntry[];
+    const res = await fetch("/api/prefs");
+    const data = await res.json() as { ok: boolean; value?: FavouriteEntry[] };
+    return data.ok ? (data.value ?? []) : [];
   } catch {
     return [];
   }
+}
+
+function saveFavourites(favs: FavouriteEntry[]): void {
+  fetch("/api/prefs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(favs),
+  }).catch(() => {});
 }
 
 // ── RPC helper ────────────────────────────────────────────────────────────────
@@ -80,7 +88,8 @@ function friendlyError(err: unknown): string {
       : 'Insufficient funds to cover this transaction including fees.';
   }
   if (lower.includes('no wallet') || lower.includes('wallet not open')) {
-    return 'No wallet is open. Please reload the page.';
+    window.location.href = '/';
+    return '';
   }
   if (lower.includes('cannot reach') || lower.includes('network') || lower.includes('fetch')) {
     return 'Could not reach the wallet daemon. Check that all services are running.';
@@ -105,9 +114,10 @@ function friendlyError(err: unknown): string {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function currencyLabel(c: TokenCurrency): string {
+function currencyLabel(c: TokenCurrency, tickerMap?: Map<string, string>): string {
   if (c.type === "Coin") return "ML";
-  return c.content.id.slice(0, 10) + "…";
+  const id = c.content.id;
+  return tickerMap?.get(id) ?? (id.slice(0, 10) + "…");
 }
 
 function currencyAmount(c: TokenCurrency): string {
@@ -385,7 +395,7 @@ function BuySellPanel({
 
 // ── My orders ─────────────────────────────────────────────────────────────────
 
-function MyOrderRow({ order, onAction }: { order: OrderInfo; onAction: () => void }) {
+function MyOrderRow({ order, onAction, tickerMap }: { order: OrderInfo; onAction: () => void; tickerMap: Map<string, string> }) {
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState<string | null>(null);
 
@@ -450,14 +460,14 @@ function MyOrderRow({ order, onAction }: { order: OrderInfo; onAction: () => voi
           <p className="text-xs text-gray-500 mb-0.5">Give</p>
           <p className="font-mono text-gray-200">
             {currencyAmount(order.initially_given)}
-            <span className="text-gray-500 text-xs ml-1">{currencyLabel(order.initially_given)}</span>
+            <span className="text-gray-500 text-xs ml-1">{currencyLabel(order.initially_given, tickerMap)}</span>
           </p>
         </div>
         <div>
           <p className="text-xs text-gray-500 mb-0.5">Ask</p>
           <p className="font-mono text-gray-200">
             {currencyAmount(order.initially_asked)}
-            <span className="text-gray-500 text-xs ml-1">{currencyLabel(order.initially_asked)}</span>
+            <span className="text-gray-500 text-xs ml-1">{currencyLabel(order.initially_asked, tickerMap)}</span>
           </p>
         </div>
         {data && (
@@ -466,14 +476,14 @@ function MyOrderRow({ order, onAction }: { order: OrderInfo; onAction: () => voi
               <p className="text-xs text-gray-500 mb-0.5">Remaining give</p>
               <p className="font-mono text-gray-200">
                 {data.give_balance.decimal}
-                <span className="text-gray-500 text-xs ml-1">{currencyLabel(order.initially_given)}</span>
+                <span className="text-gray-500 text-xs ml-1">{currencyLabel(order.initially_given, tickerMap)}</span>
               </p>
             </div>
             <div>
               <p className="text-xs text-gray-500 mb-0.5">Remaining ask</p>
               <p className="font-mono text-gray-200">
                 {data.ask_balance.decimal}
-                <span className="text-gray-500 text-xs ml-1">{currencyLabel(order.initially_asked)}</span>
+                <span className="text-gray-500 text-xs ml-1">{currencyLabel(order.initially_asked, tickerMap)}</span>
               </p>
             </div>
           </>
@@ -630,9 +640,10 @@ function PairBookPanel({
 interface Props {
   initialOwnOrders: OrderInfo[];
   balanceTokens?: { tokenId: string; ticker: string }[];
+  initialTokenId?: string | null;
 }
 
-export default function OrderBook({ initialOwnOrders, balanceTokens = [] }: Props) {
+export default function OrderBook({ initialOwnOrders, balanceTokens = [], initialTokenId = null }: Props) {
   const [ownOrders, setOwnOrders] = useState<OrderInfo[]>(initialOwnOrders);
 
   // ── Pair selector state ──
@@ -648,56 +659,132 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [] }: Prop
   // writing state so stale in-flight responses are silently discarded.
   const loadSeqRef = useRef(0);
 
-  useEffect(() => {
-    // Auto-star any tokens that have a balance — merge into favourites
-    let favs = loadFavourites();
-    if (balanceTokens.length > 0) {
-      const existingIds = new Set(favs.map(f => f.tokenId));
-      const newEntries = balanceTokens.filter(t => !existingIds.has(t.tokenId));
-      if (newEntries.length > 0) {
-        favs = [...newEntries, ...favs];
-        localStorage.setItem(FAV_KEY, JSON.stringify(favs));
-      }
-    }
+  // Extra tickers resolved from order token IDs not already in favourites
+  const resolvedTokenIds = useRef(new Set<string>());
+  const [extraTickers, setExtraTickers] = useState<Map<string, string>>(new Map());
 
-    // Resolve any "???" tickers from fresh node info.
-    // node_get_tokens_info does not preserve input order, so call one at a time.
-    const unknownIds = favs.filter(f => !f.ticker || f.ticker === "???").map(f => f.tokenId);
-    if (unknownIds.length > 0) {
-      Promise.all(
-        unknownIds.map(id =>
-          rpc<[{ type: string; content: { token_ticker?: { text: string | null }; metadata?: { ticker?: { text: string | null }; name?: { text: string | null } } } }]>(
-            "node_get_tokens_info", { token_ids: [id] }
-          ).then(([info]) => ({ id, info: info ?? null }))
-        )
-      ).then(results => {
-        const resolved = new Map<string, string>();
+  // My Orders filter state
+  const [filterText, setFilterText] = useState('');
+  const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'concluded' | 'frozen'>('all');
+  const [filterDir, setFilterDir] = useState<'all' | 'buy' | 'sell'>('all');
+
+  useEffect(() => {
+    (async () => {
+      // Load from server-side prefs (same store as Token Management page)
+      let favs = await loadFavourites();
+
+      // Auto-star any tokens that have a balance — merge into favourites
+      if (balanceTokens.length > 0) {
+        const existingIds = new Set(favs.map(f => f.tokenId));
+        const newEntries = balanceTokens.filter(t => !existingIds.has(t.tokenId));
+        if (newEntries.length > 0) {
+          favs = [...newEntries, ...favs];
+          saveFavourites(favs);
+        }
+      }
+
+      // Resolve types and tickers for all favourites.
+      // NFTs are filtered out — the order book only supports fungible token pairs.
+      // node_get_tokens_info does not preserve input order, so call one at a time.
+      const allIds = favs.map(f => f.tokenId);
+      if (allIds.length === 0) { setFavourites(favs); return; }
+
+      try {
+        const results = await Promise.all(
+          allIds.map(id =>
+            rpc<[{ type: string; content: { token_ticker?: { text: string | null }; metadata?: { ticker?: { text: string | null }; name?: { text: string | null } } } } | null]>(
+              "node_get_tokens_info", { token_ids: [id] }
+            ).then(([info]) => ({ id, info: info ?? null }))
+            .catch(() => ({ id, info: null as null }))
+          )
+        );
+        const tickerUpdates = new Map<string, string>();
+        const nftIds = new Set<string>();
         results.forEach(({ id, info }) => {
           if (!info) return;
-          const ticker = info.type === "FungibleToken"
-            ? (info.content.token_ticker?.text ?? null)
-            : (info.content.metadata?.ticker?.text ?? info.content.metadata?.name?.text ?? null);
-          if (ticker) resolved.set(id, ticker);
+          if (info.type !== "FungibleToken") { nftIds.add(id); return; }
+          const ticker = info.content.token_ticker?.text ?? null;
+          if (ticker) tickerUpdates.set(id, ticker);
         });
-        if (resolved.size > 0) {
-          const updated = favs.map(f => resolved.has(f.tokenId) ? { ...f, ticker: resolved.get(f.tokenId)! } : f);
-          localStorage.setItem(FAV_KEY, JSON.stringify(updated));
-          setFavourites(updated);
-        } else {
-          setFavourites(favs);
+        // Strip NFTs and update tickers; persist cleaned list to server prefs
+        const fungibleFavs = favs
+          .filter(f => !nftIds.has(f.tokenId))
+          .map(f => tickerUpdates.has(f.tokenId) ? { ...f, ticker: tickerUpdates.get(f.tokenId)! } : f);
+        // If a specific token was requested (e.g. from /balances Buy/Sell), ensure
+        // it's in the list and select it — add it to favourites if not already there.
+        let finalFavs = fungibleFavs;
+        if (initialTokenId && !fungibleFavs.some(f => f.tokenId === initialTokenId)) {
+          try {
+            const [info] = await rpc<[{ type: string; content: { token_ticker?: { text: string | null } } } | null]>(
+              "node_get_tokens_info", { token_ids: [initialTokenId] }
+            );
+            if (info?.type === "FungibleToken") {
+              const ticker = info.content.token_ticker?.text ?? initialTokenId.slice(0, 8) + "…";
+              finalFavs = [{ tokenId: initialTokenId, ticker }, ...fungibleFavs];
+            }
+          } catch { /* leave finalFavs as-is */ }
         }
-      }).catch(() => setFavourites(favs));
-    } else {
-      setFavourites(favs);
-    }
 
-    // Priority: 1) token with balance, 2) first starred, 3) nothing (show message)
-    const autoSelect = balanceTokens[0]?.tokenId ?? favs[0]?.tokenId ?? null;
-    if (autoSelect) handlePairChange(autoSelect);
+        saveFavourites(finalFavs);
+        setFavourites(finalFavs);
+        // Priority: 1) requested token, 2) token with balance, 3) first fungible fav
+        const autoSelect = initialTokenId ?? balanceTokens[0]?.tokenId ?? finalFavs[0]?.tokenId ?? null;
+        if (autoSelect) handlePairChange(autoSelect);
+      } catch {
+        setFavourites(favs);
+        const autoSelect = initialTokenId ?? balanceTokens[0]?.tokenId ?? favs[0]?.tokenId ?? null;
+        if (autoSelect) handlePairChange(autoSelect);
+      }
+    })();
   }, []);
+
+  // Resolve tickers for any token IDs appearing in own orders that aren't in favourites
+  useEffect(() => {
+    const tokenIds = new Set<string>();
+    for (const o of ownOrders) {
+      if (o.initially_given.type === 'Token') tokenIds.add(o.initially_given.content.id);
+      if (o.initially_asked.type === 'Token') tokenIds.add(o.initially_asked.content.id);
+    }
+    if (tokenIds.size === 0) return;
+
+    const favIds = new Set(favourites.map(f => f.tokenId));
+    const unknownIds = [...tokenIds].filter(
+      id => !favIds.has(id) && !resolvedTokenIds.current.has(id)
+    );
+    if (unknownIds.length === 0) return;
+
+    unknownIds.forEach(id => resolvedTokenIds.current.add(id));
+
+    Promise.all(
+      unknownIds.map(id =>
+        rpc<[{ type: string; content: { token_ticker?: { text: string | null }; metadata?: { ticker?: { text: string | null }; name?: { text: string | null } } } } | null]>(
+          'node_get_tokens_info', { token_ids: [id] }
+        ).then(([info]) => ({ id, info: info ?? null }))
+        .catch(() => ({ id, info: null as null }))
+      )
+    ).then(results => {
+      const newMap = new Map<string, string>();
+      results.forEach(({ id, info }) => {
+        if (!info) return;
+        const ticker = info.type === 'FungibleToken'
+          ? (info.content.token_ticker?.text ?? null)
+          : (info.content.metadata?.ticker?.text ?? info.content.metadata?.name?.text ?? null);
+        if (ticker) newMap.set(id, ticker);
+      });
+      if (newMap.size > 0) setExtraTickers(prev => new Map([...prev, ...newMap]));
+    }).catch(() => {});
+  }, [ownOrders, favourites]);
 
   const rawTicker = favourites.find(f => f.tokenId === selectedTokenId)?.ticker ?? "???";
   const selectedTicker = rawTicker === "???" ? (selectedTokenId?.slice(0, 12) + "…") : rawTicker;
+
+  // Combined ticker map for My Orders: favourites + any extra tickers resolved for order tokens
+  const tickerMap = new Map<string, string>([
+    ...favourites
+      .filter(f => f.ticker && f.ticker !== '???')
+      .map(f => [f.tokenId, f.ticker] as [string, string]),
+    ...extraTickers,
+  ]);
 
   const loadPairOrders = async (tokenId: string) => {
     const seq = ++loadSeqRef.current;
@@ -769,9 +856,34 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [] }: Prop
   const activeOwn = ownOrders.filter(o =>
     !o.is_marked_as_concluded_in_wallet && o.existing_order_data && !o.existing_order_data.is_frozen
   );
-  const inactiveOwn = ownOrders.filter(o =>
-    o.is_marked_as_concluded_in_wallet || !o.existing_order_data || o.existing_order_data.is_frozen
-  );
+
+  const filteredOrders = ownOrders.filter(o => {
+    const data = o.existing_order_data;
+    const isConcluded = o.is_marked_as_concluded_in_wallet || !data;
+    const isFrozen    = data?.is_frozen || o.is_marked_as_frozen_in_wallet;
+    const isActive    = !isConcluded && !isFrozen;
+
+    if (filterStatus === 'active'    && !isActive)    return false;
+    if (filterStatus === 'concluded' && !isConcluded) return false;
+    if (filterStatus === 'frozen'    && !isFrozen)    return false;
+
+    const isBuy = o.initially_given.type === 'Coin'; // gave ML → buying token
+    if (filterDir === 'buy'  && !isBuy) return false;
+    if (filterDir === 'sell' &&  isBuy) return false;
+
+    if (filterText) {
+      const q = filterText.toLowerCase();
+      const giveLabel = currencyLabel(o.initially_given, tickerMap).toLowerCase();
+      const askLabel  = currencyLabel(o.initially_asked, tickerMap).toLowerCase();
+      const giveId = o.initially_given.type === 'Token' ? o.initially_given.content.id.toLowerCase() : '';
+      const askId  = o.initially_asked.type === 'Token' ? o.initially_asked.content.id.toLowerCase() : '';
+      if (!o.order_id.toLowerCase().includes(q) &&
+          !giveLabel.includes(q) && !askLabel.includes(q) &&
+          !giveId.includes(q) && !askId.includes(q)) return false;
+    }
+
+    return true;
+  });
 
   return (
     <div className="space-y-8">
@@ -874,29 +986,78 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [] }: Prop
 
       {/* ── My orders ── */}
       <section>
-        <h2 className="text-base font-semibold text-gray-200 mb-3">
-          My Orders
-          {activeOwn.length > 0 && (
-            <span className="ml-2 text-mint-400 font-mono text-sm">{activeOwn.length} active</span>
-          )}
-        </h2>
+        <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+          <h2 className="text-base font-semibold text-gray-200">
+            My Orders
+            {activeOwn.length > 0 && (
+              <span className="ml-2 text-mint-400 font-mono text-sm">{activeOwn.length} active</span>
+            )}
+          </h2>
+          <button
+            onClick={refreshOwn}
+            className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+          >
+            Refresh
+          </button>
+        </div>
+
+        {ownOrders.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-3 items-center">
+            {/* Text search */}
+            <input
+              type="text"
+              value={filterText}
+              onChange={e => setFilterText(e.target.value)}
+              placeholder="Search by ticker or order ID…"
+              className="rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600
+                         px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-mint-600 w-56"
+            />
+            {/* Status filter */}
+            <div className="flex rounded-lg overflow-hidden border border-gray-700 text-xs">
+              {(['all', 'active', 'concluded', 'frozen'] as const).map(s => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setFilterStatus(s)}
+                  className={`px-2.5 py-1.5 font-medium transition-colors capitalize ${
+                    filterStatus === s
+                      ? 'bg-gray-600 text-gray-100'
+                      : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                  }`}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+            {/* Direction filter */}
+            <div className="flex rounded-lg overflow-hidden border border-gray-700 text-xs">
+              {(['all', 'buy', 'sell'] as const).map(d => (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => setFilterDir(d)}
+                  className={`px-2.5 py-1.5 font-medium transition-colors capitalize ${
+                    filterDir === d
+                      ? 'bg-gray-600 text-gray-100'
+                      : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                  }`}
+                >
+                  {d}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {ownOrders.length === 0 ? (
           <p className="text-sm text-gray-500">No orders yet.</p>
+        ) : filteredOrders.length === 0 ? (
+          <p className="text-sm text-gray-500">No orders match the current filter.</p>
         ) : (
           <div className="space-y-3">
-            {activeOwn.map(o => (
-              <MyOrderRow key={o.order_id} order={o} onAction={refreshOwn} />
+            {filteredOrders.map(o => (
+              <MyOrderRow key={o.order_id} order={o} onAction={refreshOwn} tickerMap={tickerMap} />
             ))}
-            {inactiveOwn.length > 0 && activeOwn.length > 0 && (
-              <p className="text-xs text-gray-600 pt-1">+ {inactiveOwn.length} concluded/frozen</p>
-            )}
-            {inactiveOwn.length > 0 && activeOwn.length === 0 && (
-              <div className="space-y-3">
-                {inactiveOwn.map(o => (
-                  <MyOrderRow key={o.order_id} order={o} onAction={refreshOwn} />
-                ))}
-              </div>
-            )}
           </div>
         )}
       </section>

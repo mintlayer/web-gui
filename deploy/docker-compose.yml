@@ -85,6 +85,8 @@ services:
       NETWORK: "${NETWORK:-mainnet}"
       INDEXER_URL: "http://api-web-server:3000"
       PINATA_JWT: "${PINATA_JWT:-}"
+      IPFS_PROVIDER: "${IPFS_PROVIDER:-}"
+      FILEBASE_TOKEN: "${FILEBASE_TOKEN:-}"
       UI_PASSWORD_HASH: "${UI_PASSWORD_HASH}"
       UI_TOTP_SECRET: "${UI_TOTP_SECRET}"
       SESSION_SECRET: "${SESSION_SECRET}"

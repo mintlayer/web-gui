@@ -233,15 +233,38 @@ function nftIconUrl(info: TokenInfo | undefined): string | null {
                 </span>
               </td>
               <td class="px-4 py-3 text-right">
-                <button type="button"
-                  class="send-btn rounded-lg bg-gray-800 hover:bg-mint-700 border border-gray-700 hover:border-mint-600
-                         px-3 py-1.5 text-xs font-semibold text-gray-300 hover:text-white transition-colors"
-                  data-asset-type="token"
-                  data-asset-ticker={ticker}
-                  data-asset-id={tokenId}
-                  data-asset-nft={nft ? "true" : "false"}>
-                  Send
-                </button>
+                <div class="inline-flex items-center justify-end gap-1.5">
+                  {!nft && (
+                    <>
+                      <a href={`/trading?token=${tokenId}`}
+                         class="rounded-lg bg-gray-800 hover:bg-mint-700 border border-gray-700 hover:border-mint-600
+                                px-3 py-1.5 text-xs font-semibold text-gray-300 hover:text-white transition-colors">
+                        Buy
+                      </a>
+                      <a href={`/trading?token=${tokenId}`}
+                         class="rounded-lg bg-gray-800 hover:bg-mint-700 border border-gray-700 hover:border-mint-600
+                                px-3 py-1.5 text-xs font-semibold text-gray-300 hover:text-white transition-colors">
+                        Sell
+                      </a>
+                    </>
+                  )}
+                  {nft && (
+                    <a href={`/trading?nft=${tokenId}`}
+                       class="rounded-lg bg-gray-800 hover:bg-mint-700 border border-gray-700 hover:border-mint-600
+                              px-3 py-1.5 text-xs font-semibold text-gray-300 hover:text-white transition-colors">
+                      Sell
+                    </a>
+                  )}
+                  <button type="button"
+                    class="send-btn rounded-lg bg-gray-800 hover:bg-mint-700 border border-gray-700 hover:border-mint-600
+                           px-3 py-1.5 text-xs font-semibold text-gray-300 hover:text-white transition-colors"
+                    data-asset-type="token"
+                    data-asset-ticker={ticker}
+                    data-asset-id={tokenId}
+                    data-asset-nft={nft ? "true" : "false"}>
+                    Send
+                  </button>
+                </div>
               </td>
             </tr>
           );

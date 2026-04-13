@@ -1,13 +1,15 @@
 ---
 import Layout from '@/layouts/Layout.astro';
 import OrderBook from '@/components/OrderBook';
-import { listOwnOrders, getBalance, getTokensInfo, type OrderInfo } from '@/lib/wallet-rpc';
+import NFTMarketplace from '@/components/NFTMarketplace';
+import { listOwnOrders, getBalance, getTokensInfo, isWalletNotOpenError, type OrderInfo } from '@/lib/wallet-rpc';
 import { hexToText } from '@/lib/wallet-rpc';
 import { INDEXER_START_CMD } from '@/lib/indexer';
 
 let ownOrders: OrderInfo[] = [];
 let loadError: string | null = null;
 let balanceTokens: { tokenId: string; ticker: string }[] = [];
+let ownedNFTs: { tokenId: string; name: string; ticker: string; iconUri: string | null }[] = [];
 
 try {
   const [orders, balance] = await Promise.all([
@@ -25,19 +27,39 @@ try {
     const infoResults = await Promise.all(
       tokenIds.map(id => getTokensInfo([id]).then(([info]) => ({ id, info: info ?? null })))
     );
-    balanceTokens = infoResults.map(({ id, info }) => {
-      let ticker = id.slice(0, 8) + '…';
-      if (info?.type === 'FungibleToken') {
-        ticker = hexToText(info.content.token_ticker) || ticker;
-      } else if (info?.type === 'NonFungibleToken') {
-        ticker = hexToText(info.content.metadata.ticker) || ticker;
-      }
-      return { tokenId: id, ticker };
-    });
+
+    balanceTokens = infoResults
+      .filter(({ info }) => info?.type === 'FungibleToken' || info === null)
+      .map(({ id, info }) => {
+        let ticker = id.slice(0, 8) + '…';
+        if (info?.type === 'FungibleToken') {
+          ticker = hexToText(info.content.token_ticker) || ticker;
+        }
+        return { tokenId: id, ticker };
+      });
+
+    ownedNFTs = infoResults
+      .filter(({ info }) => info?.type === 'NonFungibleToken')
+      .map(({ id, info }) => {
+        const meta = (info as Extract<typeof info, { type: 'NonFungibleToken' }>)!.content.metadata;
+        return {
+          tokenId: id,
+          name:    hexToText(meta.name)    || id.slice(0, 8) + '…',
+          ticker:  hexToText(meta.ticker)  || '',
+          iconUri: meta.icon_uri ? (hexToText(meta.icon_uri) ?? null) : null,
+        };
+      });
   }
 } catch (err) {
+  if (isWalletNotOpenError(err)) {
+    return new Response(null, { status: 302, headers: { Location: '/' } });
+  }
   loadError = (err as Error).message;
 }
+
+const initialTokenId = Astro.url.searchParams.get('token') ?? null;
+const initialNFTId   = Astro.url.searchParams.get('nft')   ?? null;
+const initialTab     = initialNFTId ? 'nft' : 'trading';
 ---
 
 <Layout title="Trading" activeNav="trading">
@@ -65,12 +87,40 @@ try {
     </div>
   )}
 
-  <!-- ── Create order + order book ──────────────────────────────────────────── -->
-  <OrderBook client:load initialOwnOrders={ownOrders} balanceTokens={balanceTokens} />
+  <!-- ── Tab bar ─────────────────────────────────────────────────────────────── -->
+  <div class="flex border-b border-gray-800 mb-6">
+    <button id="tab-trading" data-tab="trading"
+      class:list={["tab-btn px-5 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px",
+        initialTab === 'trading'
+          ? "border-mint-500 text-mint-400"
+          : "border-transparent text-gray-500 hover:text-gray-300"
+      ]}>
+      Token Trading
+    </button>
+    <button id="tab-nft" data-tab="nft"
+      class:list={["tab-btn px-5 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px",
+        initialTab === 'nft'
+          ? "border-mint-500 text-mint-400"
+          : "border-transparent text-gray-500 hover:text-gray-300"
+      ]}>
+      NFT Marketplace
+    </button>
+  </div>
+
+  <!-- ── Token Trading panel ────────────────────────────────────────────────── -->
+  <div id="panel-trading" style={initialTab === 'nft' ? 'display:none' : ''}>
+    <OrderBook client:load initialOwnOrders={ownOrders} balanceTokens={balanceTokens} initialTokenId={initialTokenId} />
+  </div>
+
+  <!-- ── NFT Marketplace panel ──────────────────────────────────────────────── -->
+  <div id="panel-nft" style={initialTab === 'trading' ? 'display:none' : ''}>
+    <NFTMarketplace client:load ownedNFTs={ownedNFTs} initialNFTId={initialNFTId} />
+  </div>
 
 </Layout>
 
 <script>
+// Indexer status check
 fetch('/api/indexer-status')
   .then(r => r.json())
   .then((data: { up: boolean; synced: boolean }) => {
@@ -83,4 +133,22 @@ fetch('/api/indexer-status')
     }
   })
   .catch(() => { /* ignore */ });
+
+// Tab switcher
+document.querySelectorAll<HTMLElement>('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const tab = btn.dataset.tab;
+    document.querySelectorAll<HTMLElement>('.tab-btn').forEach(b => {
+      const active = b.dataset.tab === tab;
+      b.classList.toggle('border-mint-500', active);
+      b.classList.toggle('text-mint-400', active);
+      b.classList.toggle('border-transparent', !active);
+      b.classList.toggle('text-gray-500', !active);
+    });
+    const trading = document.getElementById('panel-trading');
+    const nft = document.getElementById('panel-nft');
+    if (trading) trading.style.display = tab === 'trading' ? '' : 'none';
+    if (nft) nft.style.display = tab === 'nft' ? '' : 'none';
+  });
+});
 </script>

@@ -394,30 +394,57 @@ done
 divider
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 6 — Pinata JWT (IPFS uploads, optional)
+# Step 6 — IPFS Storage Provider (optional)
 # ─────────────────────────────────────────────────────────────────────────────
-step "Pinata JWT (optional)"
-hint "Token Management can upload images/metadata to IPFS via Pinata."
-hint "Without this, token icon uploads are disabled — all other features still work."
-hint "Get a free JWT at https://app.pinata.cloud (free tier is sufficient)."
+step "IPFS Storage Provider (optional)"
+hint "Enables automatic upload of token/NFT images and metadata to IPFS."
+hint "Without this, uploads are disabled — URLs can still be entered manually."
+hint ""
+hint "Provider comparison:"
+hint "  Filebase — 5 GB free, always public"
+hint "             Sign up: https://filebase.com"
+hint "  Pinata   — free tier keeps files PRIVATE (requires paid plan for public)"
+hint "             Sign up: https://app.pinata.cloud"
 hint ""
 
+IPFS_PROVIDER=""
+FILEBASE_TOKEN=""
 PINATA_JWT=""
-WANT_PINATA="no"
-confirm WANT_PINATA "Do you have a Pinata JWT to configure?" "N"
 
-if [[ "$WANT_PINATA" == "yes" ]]; then
-  ask "Pinata JWT"
-  hint "Paste your JWT — it will be stored in .env and never sent to the browser."
-  prompt_secret PINATA_JWT "JWT:"
-  while [[ -z "$PINATA_JWT" ]]; do
-    printf "${CYAN}│${RESET}  ${RED}JWT cannot be empty${RESET}\n"
+IPFS_CHOICE=""
+choose IPFS_CHOICE "Choose IPFS provider:" \
+  "None — disable IPFS uploads" \
+  "Filebase (recommended — 5 GB free, always public)" \
+  "Pinata (paid account required to make files public)"
+
+case "$IPFS_CHOICE" in
+  *"Filebase"*)
+    IPFS_PROVIDER="filebase"
+    ask "Filebase API key"
+    hint "Find it at https://console.filebase.com/keys — scroll to the bottom"
+    hint "for the bucket-specific IPFS API keys (not the S3 access keys at the top)."
+    prompt_secret FILEBASE_TOKEN "API key:"
+    while [[ -z "$FILEBASE_TOKEN" ]]; do
+      printf "${CYAN}│${RESET}  ${RED}API key cannot be empty${RESET}\n"
+      prompt_secret FILEBASE_TOKEN "API key:"
+    done
+    ok "Filebase API key saved"
+    ;;
+  *"Pinata"*)
+    IPFS_PROVIDER="pinata"
+    ask "Pinata JWT"
+    hint "Paste your JWT — stored in .env, never sent to the browser."
     prompt_secret PINATA_JWT "JWT:"
-  done
-  ok "Pinata JWT saved"
-else
-  hint "Skipping — you can add PINATA_JWT to .env later."
-fi
+    while [[ -z "$PINATA_JWT" ]]; do
+      printf "${CYAN}│${RESET}  ${RED}JWT cannot be empty${RESET}\n"
+      prompt_secret PINATA_JWT "JWT:"
+    done
+    ok "Pinata JWT saved"
+    ;;
+  *)
+    hint "Skipping — add IPFS_PROVIDER to .env later to enable uploads."
+    ;;
+esac
 
 divider
 
@@ -474,7 +501,7 @@ printf "${CYAN}│${RESET}  %-22s ${wallet_summary}\n" "Wallet:"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Passwords:"  "${BOLD}$([ "$USE_RANDOM_PASSWORDS" == "yes" ] && echo "randomly generated" || echo "custom")${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Web UI auth:"  "${BOLD}password + TOTP 2FA${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Web GUI:"    "${BOLD}http://<your-server-ip>:${WEB_GUI_PORT}${RESET}"
-printf "${CYAN}│${RESET}  %-22s %s\n" "Pinata JWT:" "${BOLD}$([ -n "$PINATA_JWT" ] && echo "configured" || echo "not set — token icon uploads disabled")${RESET}"
+printf "${CYAN}│${RESET}  %-22s %s\n" "IPFS storage:" "${BOLD}$([ -n "$IPFS_PROVIDER" ] && echo "$IPFS_PROVIDER" || echo "disabled — token/NFT uploads disabled")${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Indexer:"    "${BOLD}$([ "$ENABLE_INDEXER" == "yes" ] && echo "enabled (port ${API_WEB_SERVER_PORT}) — Token Management + Trading active" || echo "disabled — Token Management + Trading hidden")${RESET}"
 printf "${CYAN}│${RESET}\n"
 
@@ -544,8 +571,9 @@ UI_PASSWORD_HASH=${UI_PASSWORD_HASH}
 UI_TOTP_SECRET=${UI_TOTP_SECRET}
 SESSION_SECRET=${SESSION_SECRET}
 
-# Pinata JWT for IPFS uploads (token metadata images, NFT media).
-# Get one at https://app.pinata.cloud — the free tier is sufficient.
+# IPFS storage provider: filebase | pinata (empty = disabled)
+IPFS_PROVIDER=${IPFS_PROVIDER}
+FILEBASE_TOKEN=${FILEBASE_TOKEN}
 PINATA_JWT=${PINATA_JWT}
 
 # Rust log level

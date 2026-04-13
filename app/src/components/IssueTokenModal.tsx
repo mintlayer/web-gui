@@ -304,7 +304,7 @@ export default function IssueTokenModal({ ipfsEnabled, onClose, onIssued }: Prop
               </div>
             ) : (
               <div className="rounded-lg border border-amber-800 bg-amber-900/20 px-4 py-3 text-amber-300 text-xs">
-                Set <code className="font-mono">PINATA_JWT</code> in .env to enable automatic IPFS upload of logo and metadata.
+                Set <code className="font-mono">IPFS_PROVIDER</code> in .env to enable automatic IPFS upload of logo and metadata.
               </div>
             )
           ) : (
@@ -325,7 +325,7 @@ export default function IssueTokenModal({ ipfsEnabled, onClose, onIssued }: Prop
                 )}
               </div>
               {!ipfsEnabled && (
-                <p className="text-xs text-gray-500 mt-1">Set PINATA_JWT in .env to enable IPFS upload.</p>
+                <p className="text-xs text-gray-500 mt-1">Set IPFS_PROVIDER in .env to enable IPFS upload.</p>
               )}
             </div>
           )}

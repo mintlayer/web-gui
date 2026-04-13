@@ -81,6 +81,8 @@ services:
       # Shared with wallet-rpc-daemon's /home/mintlayer/ so uploaded wallet files
       # are accessible to the daemon at /home/mintlayer/uploads/<filename>
       - "./mintlayer-data/uploads:/app/uploads"
+      # Server-side preferences (SQLite) — persists across browsers and restarts
+      - "./mintlayer-data/prefs:/app/prefs"
     ports:
       - "${WEB_GUI_PORT:-4321}:4321"
     environment:
@@ -93,6 +95,8 @@ services:
       NETWORK: "${NETWORK:-mainnet}"
       INDEXER_URL: "http://api-web-server:3000"
       PINATA_JWT: "${PINATA_JWT:-}"
+      IPFS_PROVIDER: "${IPFS_PROVIDER:-}"
+      FILEBASE_TOKEN: "${FILEBASE_TOKEN:-}"
       UI_PASSWORD_HASH: "${UI_PASSWORD_HASH}"
       UI_TOTP_SECRET: "${UI_TOTP_SECRET}"
       SESSION_SECRET: "${SESSION_SECRET}"

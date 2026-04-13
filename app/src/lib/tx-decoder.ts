@@ -44,7 +44,7 @@ export interface DecodedTransaction {
 
 // ── Network detection ──────────────────────────────────────────────────────────
 
-function detectNetwork(): Network {
+function detectNetwork(): number {
   const cmd = process.env.WALLET_RPC_CMD ?? '';
   if (cmd.includes('testnet')) return Network.Testnet;
   if (cmd.includes('regtest')) return Network.Regtest;

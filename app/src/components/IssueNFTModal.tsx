@@ -383,7 +383,7 @@ export default function IssueNFTModal({ ipfsEnabled, onClose, onIssued }: Props)
 
           {mode === 'easy' && !ipfsEnabled && (
             <div className="rounded-lg border border-amber-800 bg-amber-900/20 px-4 py-3 text-amber-300 text-xs">
-              Set <code className="font-mono">PINATA_JWT</code> in .env to enable automatic IPFS upload of media and icon.
+              Set <code className="font-mono">IPFS_PROVIDER</code> in .env to enable automatic IPFS upload of media and icon.
             </div>
           )}
 
