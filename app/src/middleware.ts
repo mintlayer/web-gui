@@ -1,3 +1,5 @@
+import '@/lib/settings-migration';
+import '@/lib/telegram-bot';
 import { defineMiddleware } from 'astro:middleware';
 import {
   verifySessionToken,

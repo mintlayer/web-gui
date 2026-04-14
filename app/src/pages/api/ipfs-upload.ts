@@ -13,14 +13,16 @@
  */
 
 import type { APIRoute } from 'astro';
-
-const provider = process.env.IPFS_PROVIDER ?? '';
-// Backward compat: no IPFS_PROVIDER but PINATA_JWT present → treat as pinata
-const effectiveProvider = provider || (process.env.PINATA_JWT ? 'pinata' : '');
+import { getStringPref } from '@/lib/prefs-db';
 
 export const POST: APIRoute = async ({ request }) => {
+  // Read per-request so settings changes take effect without restart
+  const provider = getStringPref('ipfs.provider');
+  // Backward compat: no provider set but pinata_jwt present → treat as pinata
+  const effectiveProvider = provider || (getStringPref('ipfs.pinata_jwt') ? 'pinata' : '');
+
   if (!effectiveProvider) {
-    return json({ ok: false, error: { message: 'IPFS upload not configured (IPFS_PROVIDER not set)' } }, 503);
+    return json({ ok: false, error: { message: 'IPFS upload not configured. Set up a provider in Settings.' } }, 503);
   }
 
   let formData: FormData;
@@ -37,9 +39,9 @@ export const POST: APIRoute = async ({ request }) => {
 
   switch (effectiveProvider) {
     case 'filebase':
-      return uploadToFilebase(file, process.env.FILEBASE_TOKEN ?? '');
+      return uploadToFilebase(file, getStringPref('ipfs.filebase_token'));
     case 'pinata':
-      return uploadToPinata(file, process.env.PINATA_JWT ?? '');
+      return uploadToPinata(file, getStringPref('ipfs.pinata_jwt'));
     default:
       return json({ ok: false, error: { message: `Unknown IPFS provider: ${effectiveProvider}` } }, 503);
   }
@@ -48,7 +50,7 @@ export const POST: APIRoute = async ({ request }) => {
 // ── Filebase (IPFS RPC API) ───────────────────────────────────────────────────
 
 async function uploadToFilebase(file: File, token: string): Promise<Response> {
-  if (!token) return json({ ok: false, error: { message: 'FILEBASE_TOKEN not set' } }, 503);
+  if (!token) return json({ ok: false, error: { message: 'Filebase token not configured. Set it in Settings.' } }, 503);
 
   const form = new FormData();
   form.append('file', file, file.name);
@@ -88,7 +90,7 @@ async function uploadToFilebase(file: File, token: string): Promise<Response> {
 // ── Pinata ────────────────────────────────────────────────────────────────────
 
 async function uploadToPinata(file: File, jwt: string): Promise<Response> {
-  if (!jwt) return json({ ok: false, error: { message: 'PINATA_JWT not set' } }, 503);
+  if (!jwt) return json({ ok: false, error: { message: 'Pinata JWT not configured. Set it in Settings.' } }, 503);
 
   const pinataForm = new FormData();
   pinataForm.append('file', file, file.name);

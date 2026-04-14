@@ -12,6 +12,7 @@ import {
   type SeedPhraseResult,
 } from '@/lib/wallet-rpc';
 import { verifyTOTP } from '@/lib/auth';
+import { getStringPref } from '@/lib/prefs-db';
 
 let info: WalletInfo | null = null;
 let infoError: string | null = null;
@@ -40,7 +41,7 @@ if (Astro.request.method === 'POST') {
   try {
     if (action === 'show_seed') {
       const totpCode = (form.get('totp_code') as string | null) ?? '';
-      const totpSecret = process.env.UI_TOTP_SECRET ?? '';
+      const totpSecret = getStringPref('auth.totp_secret');
       if (!verifyTOTP(totpCode, totpSecret)) {
         actionError = 'Invalid authenticator code.';
       } else {

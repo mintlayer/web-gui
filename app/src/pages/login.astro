@@ -10,6 +10,7 @@ import {
   SESSION_COOKIE_NAME,
   verifySessionToken,
 } from '@/lib/auth';
+import { getStringPref } from '@/lib/prefs-db';
 
 // If already authenticated, go home
 const existingToken = Astro.cookies.get(SESSION_COOKIE_NAME)?.value ?? '';
@@ -18,8 +19,8 @@ if (verifySessionToken(existingToken)) {
 }
 
 // Fail-safe: ensure auth is configured
-const passwordHash = process.env.UI_PASSWORD_HASH ?? '';
-const totpSecret   = process.env.UI_TOTP_SECRET   ?? '';
+const passwordHash = getStringPref('auth.password_hash');
+const totpSecret   = getStringPref('auth.totp_secret');
 const unconfigured = !passwordHash || !totpSecret;
 
 let errorMessage: string | null = null;

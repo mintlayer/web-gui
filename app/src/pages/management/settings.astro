@@ -1,0 +1,471 @@
+---
+import ManagementLayout from '@/layouts/ManagementLayout.astro';
+import TotpQrCode from '@/components/TotpQrCode';
+import { verifyPassword, hashPassword, verifyTOTP, generateTotpSecret } from '@/lib/auth';
+import { getPref, getStringPref, setPref } from '@/lib/prefs-db';
+import { sendTelegramMessage } from '@/lib/telegram';
+
+type ActionResult =
+  | { action: 'none' }
+  | { action: 'success'; section: string; message: string; extra?: Record<string, string> }
+  | { action: 'error';   section: string; message: string };
+
+let result: ActionResult = { action: 'none' };
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const section = (form.get('section') as string | null) ?? '';
+
+  if (section === 'password') {
+    const currentPassword = (form.get('current_password') as string | null) ?? '';
+    const newPassword     = (form.get('new_password')     as string | null) ?? '';
+    const confirmPassword = (form.get('confirm_password') as string | null) ?? '';
+    const storedHash = getStringPref('auth.password_hash');
+
+    if (!storedHash) {
+      result = { action: 'error', section, message: 'Password not configured.' };
+    } else if (!(await verifyPassword(currentPassword, storedHash))) {
+      result = { action: 'error', section, message: 'Current password is incorrect.' };
+    } else if (newPassword.length < 8) {
+      result = { action: 'error', section, message: 'New password must be at least 8 characters.' };
+    } else if (newPassword !== confirmPassword) {
+      result = { action: 'error', section, message: 'New passwords do not match.' };
+    } else {
+      setPref('auth.password_hash', await hashPassword(newPassword));
+      result = { action: 'success', section, message: 'Password updated successfully.' };
+    }
+
+  } else if (section === 'reset_2fa') {
+    const totpCode = (form.get('totp_code') as string | null) ?? '';
+    const currentSecret = getStringPref('auth.totp_secret');
+
+    if (!currentSecret) {
+      result = { action: 'error', section, message: '2FA not configured.' };
+    } else if (!verifyTOTP(totpCode, currentSecret)) {
+      result = { action: 'error', section, message: 'Invalid authenticator code.' };
+    } else {
+      const newSecret = generateTotpSecret();
+      setPref('auth.totp_secret', newSecret);
+      const label = encodeURIComponent('Mintlayer GUI-X');
+      const issuer = encodeURIComponent('Mintlayer');
+      const uri = `otpauth://totp/${label}?secret=${newSecret}&issuer=${issuer}`;
+      result = { action: 'success', section, message: 'New 2FA secret generated. Scan the QR code below.', extra: { secret: newSecret, uri } };
+    }
+
+  } else if (section === 'ipfs') {
+    const provider      = (form.get('provider')       as string | null) ?? '';
+    const filebaseToken = (form.get('filebase_token') as string | null) ?? '';
+    const pinataJwt     = (form.get('pinata_jwt')     as string | null) ?? '';
+
+    if (!['filebase', 'pinata', ''].includes(provider)) {
+      result = { action: 'error', section, message: `Invalid provider: ${provider}` };
+    } else {
+      setPref('ipfs.provider',       provider);
+      setPref('ipfs.filebase_token', filebaseToken);
+      setPref('ipfs.pinata_jwt',     pinataJwt);
+      result = { action: 'success', section, message: 'IPFS settings saved.' };
+    }
+
+  } else if (section === 'telegram_notif') {
+    const notifKeys = ['received', 'confirmed', 'staking', 'sync', 'offline', 'large_send'];
+    for (const key of notifKeys) {
+      setPref(`telegram.notify.${key}`, form.get(`notify_${key}`) === '1');
+    }
+    const threshold = (form.get('large_send_threshold') as string | null) ?? '100';
+    setPref('telegram.notify.large_send_threshold', threshold || '100');
+    setPref('telegram.staking.status',   form.get('staking_status')   === '1');
+    setPref('telegram.staking.controls', form.get('staking_controls') === '1');
+    result = { action: 'success', section, message: 'Notification preferences saved.' };
+
+  } else if (section === 'telegram') {
+    const botToken = (form.get('bot_token') as string | null) ?? '';
+    const chatId   = (form.get('chat_id')   as string | null) ?? '';
+    const test     = form.get('test') === '1';
+
+    if (!botToken || !chatId) {
+      result = { action: 'error', section, message: 'Bot token and chat ID are required.' };
+    } else {
+      setPref('telegram.bot_token', botToken);
+      setPref('telegram.chat_id',   chatId);
+      if (test) {
+        try {
+          await sendTelegramMessage(botToken, chatId, '✅ Test message from <b>Mintlayer GUI-X</b> — Telegram notifications are working.');
+          result = { action: 'success', section, message: 'Settings saved and test message sent.' };
+        } catch (err) {
+          result = { action: 'error', section, message: `Saved, but test failed: ${(err as Error).message}` };
+        }
+      } else {
+        result = { action: 'success', section, message: 'Telegram settings saved.' };
+      }
+    }
+  }
+}
+
+// Read current config for form pre-population
+const ipfsProvider     = getStringPref('ipfs.provider');
+const filebaseToken    = getStringPref('ipfs.filebase_token');
+const pinataJwt        = getStringPref('ipfs.pinata_jwt');
+const telegramBotToken = getStringPref('telegram.bot_token');
+const telegramChatId   = getStringPref('telegram.chat_id');
+
+// Notification prefs (default: most on, large_send off)
+function notifPref(key: string, defaultOn: boolean): boolean {
+  const v = getPref<boolean>(`telegram.notify.${key}`);
+  return v === null ? defaultOn : v;
+}
+const notifReceived      = notifPref('received',       true);
+const notifConfirmed     = notifPref('confirmed',      true);
+const notifStaking       = notifPref('staking',        true);
+const notifSync          = notifPref('sync',           true);
+const notifOffline       = notifPref('offline',        true);
+const notifLargeSend     = notifPref('large_send',     false);
+const largeSendThreshold = getStringPref('telegram.notify.large_send_threshold') || '100';
+const stakingStatus      = getPref<boolean>('telegram.staking.status')   ?? true;
+const stakingControls    = getPref<boolean>('telegram.staking.controls')  ?? false;
+
+// Extract new TOTP data if reset was successful
+const newTotpUri    = result.action === 'success' && result.section === 'reset_2fa' ? (result.extra?.uri ?? '')    : '';
+const newTotpSecret = result.action === 'success' && result.section === 'reset_2fa' ? (result.extra?.secret ?? '') : '';
+---
+
+<ManagementLayout title="Settings" activeTab="settings">
+  <div class="space-y-6">
+
+    <!-- ── Security ──────────────────────────────────────────────────────────── -->
+    <section class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+      <h2 class="text-lg font-semibold text-gray-100 mb-5">Security</h2>
+
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+        <!-- Change password -->
+        <div>
+          <h3 class="text-sm font-medium text-gray-300 mb-3">Change Password</h3>
+
+          {result.action === 'success' && result.section === 'password' && (
+            <div class="mb-3 px-3 py-2 rounded-lg border border-emerald-800 bg-emerald-950/50 text-emerald-300 text-sm">
+              {result.message}
+            </div>
+          )}
+          {result.action === 'error' && result.section === 'password' && (
+            <div class="mb-3 px-3 py-2 rounded-lg border border-red-800 bg-red-950/50 text-red-300 text-sm">
+              {result.message}
+            </div>
+          )}
+
+          <form method="post" class="space-y-3">
+            <input type="hidden" name="section" value="password" />
+            <div>
+              <label class="block text-xs text-gray-400 mb-1" for="current_password">Current Password</label>
+              <input
+                id="current_password" name="current_password" type="password" required
+                autocomplete="current-password"
+                class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 text-sm
+                       placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-mint-600 focus:border-transparent transition"
+              />
+            </div>
+            <div>
+              <label class="block text-xs text-gray-400 mb-1" for="new_password">New Password</label>
+              <input
+                id="new_password" name="new_password" type="password" required minlength="8"
+                autocomplete="new-password"
+                class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 text-sm
+                       placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-mint-600 focus:border-transparent transition"
+              />
+            </div>
+            <div>
+              <label class="block text-xs text-gray-400 mb-1" for="confirm_password">Confirm New Password</label>
+              <input
+                id="confirm_password" name="confirm_password" type="password" required minlength="8"
+                autocomplete="new-password"
+                class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 text-sm
+                       placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-mint-600 focus:border-transparent transition"
+              />
+            </div>
+            <button
+              type="submit"
+              class="w-full py-2 px-4 rounded-lg bg-mint-600 hover:bg-mint-700 text-white text-sm font-medium
+                     transition-colors focus:outline-none focus:ring-2 focus:ring-mint-500 focus:ring-offset-2 focus:ring-offset-gray-900"
+            >
+              Update Password
+            </button>
+          </form>
+        </div>
+
+        <!-- Reset 2FA -->
+        <div>
+          <h3 class="text-sm font-medium text-gray-300 mb-3">Reset Two-Factor Authentication</h3>
+          <p class="text-xs text-gray-500 mb-3">
+            Generates a new TOTP secret. You must confirm with your current authenticator code.
+            After reset, immediately scan the new QR code — your old code will stop working.
+          </p>
+
+          {result.action === 'success' && result.section === 'reset_2fa' && (
+            <div class="mb-3 px-3 py-2 rounded-lg border border-emerald-800 bg-emerald-950/50 text-emerald-300 text-sm">
+              {result.message}
+            </div>
+          )}
+          {result.action === 'error' && result.section === 'reset_2fa' && (
+            <div class="mb-3 px-3 py-2 rounded-lg border border-red-800 bg-red-950/50 text-red-300 text-sm">
+              {result.message}
+            </div>
+          )}
+
+          {newTotpUri && (
+            <div class="mb-4 space-y-3">
+              <TotpQrCode client:load uri={newTotpUri} />
+              <div class="bg-gray-800 rounded-lg p-3 space-y-1">
+                <p class="text-xs text-gray-400">Secret key (manual entry):</p>
+                <p class="font-mono text-xs text-gray-200 break-all">{newTotpSecret}</p>
+              </div>
+              <details class="text-xs text-gray-500">
+                <summary class="cursor-pointer hover:text-gray-400 transition-colors">Show otpauth URI</summary>
+                <p class="mt-1 font-mono break-all text-gray-400">{newTotpUri}</p>
+              </details>
+            </div>
+          )}
+
+          <form method="post" class="space-y-3">
+            <input type="hidden" name="section" value="reset_2fa" />
+            <div>
+              <label class="block text-xs text-gray-400 mb-1" for="totp_code_reset">Current Authenticator Code</label>
+              <input
+                id="totp_code_reset" name="totp_code" type="text" required
+                inputmode="numeric" maxlength="6" pattern="[0-9]{6}" placeholder="000000"
+                autocomplete="one-time-code"
+                class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 text-sm
+                       placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-mint-600 focus:border-transparent
+                       tracking-[0.4em] text-center font-mono transition"
+              />
+            </div>
+            <button
+              type="submit"
+              class="w-full py-2 px-4 rounded-lg bg-amber-700 hover:bg-amber-600 text-white text-sm font-medium
+                     transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 focus:ring-offset-gray-900"
+            >
+              Reset 2FA Secret
+            </button>
+          </form>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ── IPFS Storage ───────────────────────────────────────────────────────── -->
+    <section class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+      <h2 class="text-lg font-semibold text-gray-100 mb-1">IPFS Storage</h2>
+      <p class="text-sm text-gray-500 mb-5">
+        Used for token logo and metadata uploads. Choose a provider and supply its API key.
+      </p>
+
+      {result.action === 'success' && result.section === 'ipfs' && (
+        <div class="mb-4 px-3 py-2 rounded-lg border border-emerald-800 bg-emerald-950/50 text-emerald-300 text-sm">
+          {result.message}
+        </div>
+      )}
+      {result.action === 'error' && result.section === 'ipfs' && (
+        <div class="mb-4 px-3 py-2 rounded-lg border border-red-800 bg-red-950/50 text-red-300 text-sm">
+          {result.message}
+        </div>
+      )}
+
+      <form method="post" class="space-y-4 max-w-md" id="ipfs-form">
+        <input type="hidden" name="section" value="ipfs" />
+
+        <div>
+          <label class="block text-xs text-gray-400 mb-1" for="ipfs_provider">Provider</label>
+          <select
+            id="ipfs_provider" name="provider"
+            class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 text-sm
+                   focus:outline-none focus:ring-2 focus:ring-mint-600 focus:border-transparent transition"
+          >
+            <option value=""  selected={ipfsProvider === ''}>Disabled</option>
+            <option value="filebase" selected={ipfsProvider === 'filebase'}>Filebase (5 GB free)</option>
+            <option value="pinata"   selected={ipfsProvider === 'pinata'}>Pinata (paid plan required)</option>
+          </select>
+        </div>
+
+        <div id="filebase-fields" class={ipfsProvider !== 'filebase' ? 'hidden' : ''}>
+          <label class="block text-xs text-gray-400 mb-1" for="filebase_token">Filebase API Token</label>
+          <input
+            id="filebase_token" name="filebase_token" type="password"
+            value={filebaseToken}
+            placeholder="Bucket-specific key from console.filebase.com"
+            class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 text-sm
+                   placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-mint-600 focus:border-transparent transition"
+          />
+        </div>
+
+        <div id="pinata-fields" class={ipfsProvider !== 'pinata' ? 'hidden' : ''}>
+          <label class="block text-xs text-gray-400 mb-1" for="pinata_jwt">Pinata JWT</label>
+          <input
+            id="pinata_jwt" name="pinata_jwt" type="password"
+            value={pinataJwt}
+            placeholder="JWT from app.pinata.cloud/developers/api-keys"
+            class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 text-sm
+                   placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-mint-600 focus:border-transparent transition"
+          />
+        </div>
+
+        <button
+          type="submit"
+          class="py-2 px-4 rounded-lg bg-mint-600 hover:bg-mint-700 text-white text-sm font-medium
+                 transition-colors focus:outline-none focus:ring-2 focus:ring-mint-500 focus:ring-offset-2 focus:ring-offset-gray-900"
+        >
+          Save IPFS Settings
+        </button>
+      </form>
+
+      <script>
+        const select = document.getElementById('ipfs_provider') as HTMLSelectElement;
+        const filebaseFields = document.getElementById('filebase-fields')!;
+        const pinataFields   = document.getElementById('pinata-fields')!;
+
+        function updateFields() {
+          filebaseFields.classList.toggle('hidden', select.value !== 'filebase');
+          pinataFields.classList.toggle('hidden',   select.value !== 'pinata');
+        }
+
+        select.addEventListener('change', updateFields);
+      </script>
+    </section>
+
+    <!-- ── Telegram Notifications ─────────────────────────────────────────────── -->
+    <section class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+      <h2 class="text-lg font-semibold text-gray-100 mb-1">Telegram Notifications</h2>
+      <p class="text-sm text-gray-500 mb-5">
+        Receive wallet alerts via a Telegram bot. Create a bot with
+        <a href="https://t.me/BotFather" target="_blank" rel="noopener" class="text-mint-400 hover:text-mint-300 transition-colors">@BotFather</a>,
+        then start a chat with it and use its <code class="font-mono text-xs">/start</code> command to get your chat ID
+        (or use <a href="https://t.me/userinfobot" target="_blank" rel="noopener" class="text-mint-400 hover:text-mint-300 transition-colors">@userinfobot</a>).
+      </p>
+
+      {result.action === 'success' && result.section === 'telegram' && (
+        <div class="mb-4 px-3 py-2 rounded-lg border border-emerald-800 bg-emerald-950/50 text-emerald-300 text-sm">
+          {result.message}
+        </div>
+      )}
+      {result.action === 'error' && result.section === 'telegram' && (
+        <div class="mb-4 px-3 py-2 rounded-lg border border-red-800 bg-red-950/50 text-red-300 text-sm">
+          {result.message}
+        </div>
+      )}
+
+      <form method="post" class="space-y-4 max-w-md">
+        <input type="hidden" name="section" value="telegram" />
+
+        <div>
+          <label class="block text-xs text-gray-400 mb-1" for="bot_token">Bot Token</label>
+          <input
+            id="bot_token" name="bot_token" type="password" required
+            value={telegramBotToken}
+            placeholder="123456789:AAF..."
+            class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 text-sm
+                   placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-mint-600 focus:border-transparent transition"
+          />
+        </div>
+
+        <div>
+          <label class="block text-xs text-gray-400 mb-1" for="chat_id">Chat ID</label>
+          <input
+            id="chat_id" name="chat_id" type="text" required
+            value={telegramChatId}
+            placeholder="123456789"
+            class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 text-sm
+                   placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-mint-600 focus:border-transparent transition"
+          />
+        </div>
+
+        <div class="flex gap-3">
+          <button
+            type="submit"
+            class="py-2 px-4 rounded-lg bg-mint-600 hover:bg-mint-700 text-white text-sm font-medium
+                   transition-colors focus:outline-none focus:ring-2 focus:ring-mint-500 focus:ring-offset-2 focus:ring-offset-gray-900"
+          >
+            Save
+          </button>
+          <button
+            type="submit" name="test" value="1"
+            class="py-2 px-4 rounded-lg bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium
+                   transition-colors focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 focus:ring-offset-gray-900"
+          >
+            Save &amp; Send Test Message
+          </button>
+        </div>
+      </form>
+
+      <!-- Notification preferences -->
+      <form method="post" class="mt-6 pt-6 border-t border-gray-800 space-y-4 max-w-md" id="notif-form">
+        <input type="hidden" name="section" value="telegram_notif" />
+        <h3 class="text-sm font-medium text-gray-300">Notification Events</h3>
+        <p class="text-xs text-gray-500">Choose which events trigger a Telegram message.</p>
+
+        {result.action === 'success' && result.section === 'telegram_notif' && (
+          <div class="px-3 py-2 rounded-lg border border-emerald-800 bg-emerald-950/50 text-emerald-300 text-sm">
+            {result.message}
+          </div>
+        )}
+
+        <div class="space-y-2">
+          {[
+            { key: 'received',         label: 'Incoming payment received',              checked: notifReceived   },
+            { key: 'confirmed',        label: 'Transaction confirmed',                  checked: notifConfirmed  },
+            { key: 'staking',          label: 'Staking reward earned',                  checked: notifStaking    },
+            { key: 'sync',             label: 'Wallet sync state changed',              checked: notifSync       },
+            { key: 'offline',          label: 'Node went offline / came back',          checked: notifOffline    },
+            { key: 'large_send',       label: 'Large send executed (see below)',        checked: notifLargeSend  },
+          ].map(({ key, label, checked }) => (
+            <label class="flex items-center gap-3 cursor-pointer group">
+              <input
+                type="checkbox" name={`notify_${key}`} value="1"
+                checked={checked}
+                class="w-4 h-4 rounded border-gray-600 bg-gray-800 text-mint-600
+                       focus:ring-mint-500 focus:ring-offset-gray-900"
+              />
+              <span class="text-sm text-gray-300 group-hover:text-gray-100 transition-colors">{label}</span>
+            </label>
+          ))}
+        </div>
+
+        <div class="pt-3 border-t border-gray-800 space-y-2">
+          <p class="text-xs font-medium text-gray-400">Bot commands</p>
+          {[
+            { key: 'staking_status',   label: '/staking — show status (read-only)',      checked: stakingStatus   },
+            { key: 'staking_controls', label: '/staking on|off — toggle staking (write, requires TOTP)', checked: stakingControls },
+          ].map(({ key, label, checked }) => (
+            <label class="flex items-center gap-3 cursor-pointer group">
+              <input
+                type="checkbox" name={key} value="1"
+                checked={checked}
+                class="w-4 h-4 rounded border-gray-600 bg-gray-800 text-mint-600
+                       focus:ring-mint-500 focus:ring-offset-gray-900"
+              />
+              <span class="text-sm text-gray-300 group-hover:text-gray-100 transition-colors">{label}</span>
+            </label>
+          ))}
+        </div>
+
+        <div>
+          <label class="block text-xs text-gray-400 mb-1" for="large_send_threshold">
+            Large send threshold (ML)
+          </label>
+          <input
+            id="large_send_threshold" name="large_send_threshold" type="number"
+            min="1" step="1" value={largeSendThreshold}
+            class="w-32 px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 text-sm
+                   focus:outline-none focus:ring-2 focus:ring-mint-600 focus:border-transparent transition"
+          />
+          <p class="text-xs text-gray-500 mt-1">Notify when an outgoing transaction exceeds this amount.</p>
+        </div>
+
+        <button
+          type="submit"
+          class="py-2 px-4 rounded-lg bg-mint-600 hover:bg-mint-700 text-white text-sm font-medium
+                 transition-colors focus:outline-none focus:ring-2 focus:ring-mint-500 focus:ring-offset-2 focus:ring-offset-gray-900"
+        >
+          Save Notification Preferences
+        </button>
+      </form>
+    </section>
+
+  </div>
+</ManagementLayout>

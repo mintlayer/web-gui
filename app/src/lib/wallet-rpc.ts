@@ -5,6 +5,9 @@
  * generated docs at wallet-rpc-daemon/docs/RPC.md.
  */
 
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
 const WALLET_RPC_URL =
   process.env.WALLET_RPC_URL ?? 'http://localhost:3034';
 
@@ -154,7 +157,7 @@ export function isWalletNotOpenError(err: unknown): boolean {
  * (use isWalletNotOpenError first) — otherwise you risk redirect loops.
  * Logs all outcomes to the server console for diagnostics.
  */
-export async function ensureWalletOpen(walletPath = '/home/mintlayer/mintlayer.wallet'): Promise<WalletOpenResult> {
+export async function ensureWalletOpen(walletPath = process.env.WALLET_FILE_PATH ?? join(homedir(), 'mintlayer', 'mintlayer.wallet')): Promise<WalletOpenResult> {
   try {
     await openWallet(walletPath);
     console.log(`[wallet] auto-opened ${walletPath}`);

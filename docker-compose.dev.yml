@@ -20,4 +20,5 @@ services:
       - ./app/wasm-wrappers:/app/wasm-wrappers:ro
       - ./app/astro.config.mjs:/app/astro.config.mjs
       - ./app/tailwind.config.mjs:/app/tailwind.config.mjs
+      - ./app/postcss.config.mjs:/app/postcss.config.mjs
       - ./app/tsconfig.json:/app/tsconfig.json

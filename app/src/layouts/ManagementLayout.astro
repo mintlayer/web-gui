@@ -3,13 +3,14 @@ import Layout from '@/layouts/Layout.astro';
 
 export interface Props {
   title: string;
-  activeTab: 'wallet' | 'addresses' | 'transactions' | 'utxos';
+  activeTab: 'wallet' | 'addresses' | 'transactions' | 'utxos' | 'settings';
 }
 
 const { title, activeTab } = Astro.props;
 
 const tabs = [
   { href: '/management/wallet',       label: 'Wallet',       key: 'wallet'       },
+  { href: '/management/settings',     label: 'Settings',     key: 'settings'     },
   { href: '/management/addresses',    label: 'Addresses',    key: 'addresses'    },
   { href: '/management/transactions', label: 'Transactions', key: 'transactions' },
   { href: '/management/utxos',        label: 'UTXOs',        key: 'utxos'        },

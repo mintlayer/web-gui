@@ -165,6 +165,24 @@ export function verifyTOTP(code: string, secret: string): boolean {
   return false;
 }
 
+// ── TOTP secret generation ─────────────────────────────────────────────────────
+
+export function generateTotpSecret(): string {
+  const bytes = crypto.randomBytes(20);
+  const alpha = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let result = '', bits = 0, value = 0;
+  for (let i = 0; i < bytes.length; i++) {
+    value = (value << 8) | bytes[i];
+    bits += 8;
+    while (bits >= 5) {
+      result += alpha[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) result += alpha[(value << (5 - bits)) & 31];
+  return result;
+}
+
 // ── Login rate limiting ────────────────────────────────────────────────────────
 // Max 5 failures per 15 minutes per IP
 

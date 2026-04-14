@@ -27,6 +27,9 @@ postgres-data/
 .DS_Store
 Thumbs.db
 
+# Tauri
+/windows/src-tauri
+
 # Editor
 .vscode/
 .claude/

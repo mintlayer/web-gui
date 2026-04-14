@@ -5,12 +5,13 @@ import TokenSearch from '@/components/TokenSearch';
 import IssuedTokensPanel from '@/components/IssuedTokensPanel';
 import OwnedNFTsPanel from '@/components/OwnedNFTsPanel';
 import { INDEXER_START_CMD } from '@/lib/indexer';
+import { getStringPref } from '@/lib/prefs-db';
 
 const ipfsEnabled = (() => {
-  const p = process.env.IPFS_PROVIDER ?? '';
-  if (p === 'filebase') return !!process.env.FILEBASE_TOKEN;
-  if (p === 'pinata')   return !!process.env.PINATA_JWT;
-  return !!process.env.PINATA_JWT; // backward compat: IPFS_PROVIDER unset but PINATA_JWT present
+  const p = getStringPref('ipfs.provider');
+  if (p === 'filebase') return !!getStringPref('ipfs.filebase_token');
+  if (p === 'pinata')   return !!getStringPref('ipfs.pinata_jwt');
+  return !!getStringPref('ipfs.pinata_jwt'); // backward compat: provider unset but pinata_jwt present
 })();
 const network = (process.env.NETWORK ?? 'mainnet').toLowerCase();
 ---
