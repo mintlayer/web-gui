@@ -203,7 +203,7 @@ services:
       # Server-side preferences (SQLite) — persists across browsers and restarts
       - "./mintlayer-data/prefs:/app/prefs"
     ports:
-      - "${WEB_GUI_PORT:-4321}:4321"
+      - "127.0.0.1:4321:4321"
     environment:
       WALLET_RPC_URL: "http://wallet-rpc-daemon:3034"
       WALLET_RPC_USERNAME: "${WALLET_RPC_USERNAME}"
@@ -285,8 +285,6 @@ services:
     depends_on:
       - postgres
       - node-daemon
-    ports:
-      - "${API_WEB_SERVER_PORT:-3000}:3000"
     environment:
       ML_API_WEB_SRV_NETWORK: "${NETWORK:-mainnet}"
       ML_API_WEB_SRV_BIND_ADDRESS: "0.0.0.0:3000"
@@ -374,9 +372,80 @@ docker_install_hint() {
 # ── Prerequisite checks ───────────────────────────────────────────────────────
 check_prereqs() {
   if ! command -v docker &>/dev/null; then
-    err "Docker is not installed or not in PATH."
-    docker_install_hint
-    exit 1
+    if [[ "$OS" == "macos" ]]; then
+      err "Docker is not installed or not in PATH."
+      docker_install_hint
+      exit 1
+    else
+      # Linux — offer automatic installation
+      warn "Docker is not installed."
+      printf "${CYAN}│${RESET}\n"
+      _can_sudo=false
+      if [ "$(id -u)" -eq 0 ]; then
+        _can_sudo=true
+      elif command -v sudo &>/dev/null && sudo -n true 2>/dev/null; then
+        _can_sudo=true
+      elif command -v sudo &>/dev/null; then
+        # sudo exists but requires a password — try it
+        printf "${CYAN}│${RESET}  ${BOLD}sudo is required to install Docker.${RESET}\n"
+        if sudo true 2>/dev/null; then
+          _can_sudo=true
+        fi
+      fi
+
+      if [[ "$_can_sudo" == "true" ]]; then
+        _install_docker="no"
+        confirm _install_docker "Install Docker automatically using get.docker.com?" "Y"
+        if [[ "$_install_docker" == "yes" ]]; then
+          step "Installing Docker"
+          hint "Running the official Docker install script from get.docker.com…"
+          printf "${CYAN}│${RESET}\n"
+          if [ "$(id -u)" -eq 0 ]; then
+            curl -fsSL https://get.docker.com | sh
+          else
+            curl -fsSL https://get.docker.com | sudo sh
+          fi
+          if ! command -v docker &>/dev/null; then
+            err "Docker installation failed. Please install manually."
+            docker_install_hint
+            exit 1
+          fi
+          ok "Docker installed."
+
+          # Add current user to docker group so docker works without sudo
+          if [ "$(id -u)" -ne 0 ] && command -v usermod &>/dev/null; then
+            sudo usermod -aG docker "$USER" 2>/dev/null || true
+            hint "Added ${USER} to the docker group."
+          fi
+
+          # Enable and start the docker service
+          if command -v systemctl &>/dev/null; then
+            if [ "$(id -u)" -eq 0 ]; then
+              systemctl enable --now docker 2>/dev/null || true
+            else
+              sudo systemctl enable --now docker 2>/dev/null || true
+            fi
+          fi
+
+          # newgrp trick: re-exec this script under the docker group so we don't
+          # need a full logout/login just to use docker in the current shell.
+          if ! docker info &>/dev/null 2>&1; then
+            hint "Activating docker group membership without logout…"
+            exec sg docker "$0" "$@"
+          fi
+
+          divider
+        else
+          err "Docker is required to continue."
+          docker_install_hint
+          exit 1
+        fi
+      else
+        err "Docker is not installed and sudo is not available to install it automatically."
+        docker_install_hint
+        exit 1
+      fi
+    fi
   fi
 
   if ! docker info &>/dev/null 2>&1; then
@@ -446,6 +515,36 @@ printf "  ${BOLD}Web GUI Setup${RESET}  ${GRAY}— node + wallet-rpc-daemon + we
 printf "\n"
 printf "${GRAY}  This script writes your .env and starts the Docker stack.${RESET}\n"
 printf "\n"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Root warning
+# ─────────────────────────────────────────────────────────────────────────────
+if [ "$(id -u)" -eq 0 ]; then
+  printf "${YELLOW}┌─────────────────────────────────────────────────────────────────────┐${RESET}\n"
+  printf "${YELLOW}│  ⚠  Running as root                                                 │${RESET}\n"
+  printf "${YELLOW}└─────────────────────────────────────────────────────────────────────┘${RESET}\n"
+  printf "\n"
+  printf "  Running this setup as ${BOLD}root${RESET} is not recommended for a production wallet\n"
+  printf "  server. Any vulnerability in the app would give an attacker full host access.\n"
+  printf "\n"
+  printf "  ${BOLD}Recommended:${RESET} create a dedicated user and re-run this script as that user:\n"
+  printf "\n"
+  printf "    ${GRAY}adduser mintlayer${RESET}\n"
+  printf "    ${GRAY}usermod -aG docker mintlayer${RESET}\n"
+  printf "    ${GRAY}su - mintlayer${RESET}   ${GRAY}# then re-run this script${RESET}\n"
+  printf "\n"
+  printf "  Your existing SSH keys stay in ${GRAY}/root/.ssh/${RESET} — log back in as root\n"
+  printf "  to administer the server; use the mintlayer user only for this stack.\n"
+  printf "\n"
+  _continue_as_root="no"
+  confirm _continue_as_root "Continue as root anyway?" "N"
+  if [[ "$_continue_as_root" != "yes" ]]; then
+    printf "\n"
+    ok "Exiting. Re-run as a non-root user when ready."
+    exit 0
+  fi
+  printf "\n"
+fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Step 1 — Network
@@ -537,7 +636,7 @@ UI_PASSWORD_HASH=$(python3 -c "
 import hashlib, os, sys
 password = sys.argv[1]
 salt = os.urandom(32).hex()
-key = hashlib.pbkdf2_hmac('sha512', password.encode(), bytes.fromhex(salt), 100000)
+key = hashlib.pbkdf2_hmac('sha512', password.encode(), salt.encode(), 100000)
 print('pbkdf2:sha512:100000:' + salt + ':' + key.hex(), end='')
 " "$UI_PASSWORD")
 ok "Password hashed"
@@ -560,13 +659,34 @@ printf "${CYAN}│${RESET}\n"
 printf "${CYAN}│${RESET}  ${BOLD}Scan this with Google Authenticator, Authy, or any TOTP app:${RESET}\n"
 printf "${CYAN}│${RESET}\n"
 
-# Show QR code if qrencode is available, otherwise show the URI
+# Show QR code if qrencode is available, otherwise offer to install it
+if ! command -v qrencode &>/dev/null; then
+  printf "${CYAN}│${RESET}  ${DIM}qrencode is not installed — needed to show a scannable QR code.${RESET}\n"
+  INSTALL_QRENCODE="no"
+  if command -v sudo &>/dev/null && sudo -n true 2>/dev/null; then
+    confirm INSTALL_QRENCODE "Install qrencode now (sudo available)?" "Y"
+  elif command -v sudo &>/dev/null; then
+    confirm INSTALL_QRENCODE "Install qrencode now? (will prompt for sudo password)" "Y"
+  fi
+  if [[ "$INSTALL_QRENCODE" == "yes" ]]; then
+    if command -v apt-get &>/dev/null; then
+      sudo apt-get install -y -qq qrencode 2>/dev/null && ok "qrencode installed"
+    elif command -v brew &>/dev/null; then
+      brew install qrencode -q 2>/dev/null && ok "qrencode installed"
+    elif command -v dnf &>/dev/null; then
+      sudo dnf install -y -q qrencode 2>/dev/null && ok "qrencode installed"
+    elif command -v pacman &>/dev/null; then
+      sudo pacman -S --noconfirm qrencode 2>/dev/null && ok "qrencode installed"
+    else
+      warn "Could not detect package manager — install qrencode manually for a QR code."
+    fi
+  fi
+fi
+
 if command -v qrencode &>/dev/null; then
   echo "$TOTP_URI" | qrencode -t ANSIUTF8 | sed "s/^/${CYAN}│${RESET}  /"
 else
   printf "${CYAN}│${RESET}  ${GRAY}%s${RESET}\n" "$TOTP_URI"
-  printf "${CYAN}│${RESET}\n"
-  printf "${CYAN}│${RESET}  ${DIM}(Install qrencode for a scannable QR code in the terminal)${RESET}\n"
 fi
 
 printf "${CYAN}│${RESET}\n"
@@ -592,23 +712,7 @@ ok "2FA configured"
 divider
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 4 — Web GUI port
-# ─────────────────────────────────────────────────────────────────────────────
-step "Web interface"
-
-ask "Port for the web GUI"
-hint "The web interface will be available at http://<your-server-ip>:<port>"
-prompt WEB_GUI_PORT "Port:" "4321"
-
-while ! [[ "$WEB_GUI_PORT" =~ ^[0-9]+$ ]] || (( WEB_GUI_PORT < 1 || WEB_GUI_PORT > 65535 )); do
-  printf "${CYAN}│${RESET}  ${RED}Enter a valid port number (1-65535)${RESET}\n"
-  prompt WEB_GUI_PORT "Port:" "4321"
-done
-
-divider
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Step 5 — HTTPS / Public access
+# Step 4 — HTTPS / Public access
 # ─────────────────────────────────────────────────────────────────────────────
 step "HTTPS / Public access"
 hint "Caddy can automatically provision a free TLS certificate (Let's Encrypt)"
@@ -667,7 +771,7 @@ fi
 divider
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 6 — IPFS Storage Provider (optional)
+# Step 5 — IPFS Storage Provider (optional)
 # ─────────────────────────────────────────────────────────────────────────────
 step "IPFS Storage Provider (optional)"
 hint "Enables automatic upload of token/NFT images and metadata to IPFS."
@@ -722,7 +826,7 @@ esac
 divider
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 7 — Indexer (optional)
+# Step 6 — Indexer (optional)
 # ─────────────────────────────────────────────────────────────────────────────
 step "Indexer stack (optional)"
 hint "Adds: PostgreSQL + api-blockchain-scanner-daemon + api-web-server"
@@ -737,7 +841,6 @@ ENABLE_INDEXER="no"
 confirm ENABLE_INDEXER "Enable the indexer stack?" "N"
 
 POSTGRES_PASSWORD=""
-API_WEB_SERVER_PORT="3000"
 if [[ "$ENABLE_INDEXER" == "yes" ]]; then
   if [[ "$USE_RANDOM_PASSWORDS" == "yes" ]]; then
     POSTGRES_PASSWORD=$(rand_pass)
@@ -750,9 +853,49 @@ if [[ "$ENABLE_INDEXER" == "yes" ]]; then
       prompt_secret POSTGRES_PASSWORD "Password:"
     done
   fi
+fi
 
-  ask "Port for the blockchain REST API"
-  prompt API_WEB_SERVER_PORT "Port:" "3000"
+divider
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 7 — Firewall (optional, Linux only)
+# ─────────────────────────────────────────────────────────────────────────────
+SETUP_FIREWALL="no"
+if [[ "$OS" == "linux" ]]; then
+  step "Firewall"
+  hint "A firewall restricts inbound traffic to SSH, HTTP, and HTTPS only."
+  hint "All other ports (including direct access to node/wallet RPCs) will be blocked."
+  hint ""
+  if ! command -v sudo &>/dev/null && ! [ "$(id -u)" -eq 0 ]; then
+    hint "Skipping — sudo is not available and not running as root."
+  elif ! command -v ufw &>/dev/null && ! command -v firewall-cmd &>/dev/null; then
+    hint "Skipping — neither ufw nor firewalld found on this system."
+  else
+    printf "${CYAN}│${RESET}\n"
+    printf "${RED}│${RESET}  ${BOLD}⚠  WARNING — READ CAREFULLY${RESET}\n"
+    printf "${RED}│${RESET}\n"
+    printf "${RED}│${RESET}  Enabling a firewall will block ALL inbound ports except:\n"
+    printf "${RED}│${RESET}    • SSH  (port 22)\n"
+    printf "${RED}│${RESET}    • HTTP (port 80)\n"
+    printf "${RED}│${RESET}    • HTTPS (port 443)\n"
+    printf "${RED}│${RESET}\n"
+    printf "${RED}│${RESET}  ${BOLD}If your SSH session uses a non-standard port you will be locked out.${RESET}\n"
+    printf "${RED}│${RESET}  ${BOLD}If you are unsure, answer N and configure the firewall manually.${RESET}\n"
+    printf "${CYAN}│${RESET}\n"
+
+    confirm SETUP_FIREWALL "Set up firewall now? (this modifies live network rules)" "N"
+
+    if [[ "$SETUP_FIREWALL" == "yes" ]]; then
+      printf "${CYAN}│${RESET}\n"
+      printf "${CYAN}│${RESET}  ${BOLD}Final confirmation required.${RESET}\n"
+      printf "${CYAN}│${RESET}  Type ${BOLD}YES${RESET} (uppercase) to proceed: "
+      read -r FIREWALL_CONFIRM
+      if [[ "$FIREWALL_CONFIRM" != "YES" ]]; then
+        SETUP_FIREWALL="no"
+        warn "Firewall setup cancelled."
+      fi
+    fi
+  fi
 fi
 
 divider
@@ -766,10 +909,9 @@ printf "${CYAN}│${RESET}\n"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Network:"           "${BOLD}${NETWORK}${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Passwords:"  "${BOLD}$([ "$USE_RANDOM_PASSWORDS" == "yes" ] && echo "randomly generated" || echo "custom")${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Web UI auth:"  "${BOLD}password + TOTP 2FA${RESET}"
-printf "${CYAN}│${RESET}  %-22s %s\n" "Web GUI:"    "${BOLD}http://<your-server-ip>:${WEB_GUI_PORT}${RESET}"
-printf "${CYAN}│${RESET}  %-22s %s\n" "HTTPS:" "${BOLD}$([ "$HTTPS_SETUP" == "yes" ] && echo "https://${DOMAIN}" || echo "disabled — HTTP only")${RESET}"
+printf "${CYAN}│${RESET}  %-22s %s\n" "Web GUI:"    "${BOLD}$([ "$HTTPS_SETUP" == "yes" ] && echo "https://${DOMAIN}" || echo "http://<your-server-ip>:4321")${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "IPFS storage:" "${BOLD}$([ -n "$IPFS_PROVIDER" ] && echo "$IPFS_PROVIDER" || echo "disabled — token/NFT uploads disabled")${RESET}"
-printf "${CYAN}│${RESET}  %-22s %s\n" "Indexer:"    "${BOLD}$([ "$ENABLE_INDEXER" == "yes" ] && echo "enabled (port ${API_WEB_SERVER_PORT}) — Token Management + Trading active" || echo "disabled — Token Management + Trading hidden")${RESET}"
+printf "${CYAN}│${RESET}  %-22s %s\n" "Indexer:"    "${BOLD}$([ "$ENABLE_INDEXER" == "yes" ] && echo "enabled — Token Management + Trading active" || echo "disabled — Token Management + Trading hidden")${RESET}"
 printf "${CYAN}│${RESET}\n"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -788,7 +930,12 @@ divider
 # ─────────────────────────────────────────────────────────────────────────────
 # Write .env
 # ─────────────────────────────────────────────────────────────────────────────
-ML_USER_ID=$(id -u 2>/dev/null || echo "1000")
+_raw_uid=$(id -u 2>/dev/null || echo "1000")
+if (( _raw_uid < 1000 )); then
+  ML_USER_ID=1000
+else
+  ML_USER_ID=$_raw_uid
+fi
 _raw_gid=$(id -g 2>/dev/null || echo "1000")
 if (( _raw_gid < 1000 )); then
   ML_GROUP_ID=1000
@@ -824,9 +971,6 @@ NODE_RPC_PASSWORD=${NODE_RPC_PASSWORD}
 WALLET_RPC_USERNAME=${WALLET_RPC_USERNAME}
 WALLET_RPC_PASSWORD=${WALLET_RPC_PASSWORD}
 
-# Web GUI port
-WEB_GUI_PORT=${WEB_GUI_PORT}
-
 # Indexer-dependent features (Token Management, Trading)
 INDEXER_ENABLED=${INDEXER_ENABLED}
 
@@ -847,7 +991,6 @@ RUST_LOG=info
 POSTGRES_USER=mintlayer
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 POSTGRES_DB=mintlayer
-API_WEB_SERVER_PORT=${API_WEB_SERVER_PORT}
 
 # HTTPS via Caddy (only used with --profile https)
 ENABLE_HTTPS=${ENABLE_HTTPS}
@@ -893,6 +1036,35 @@ if [[ "$START" == "yes" ]]; then
   ok "Services started"
 fi
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Apply firewall rules
+# ─────────────────────────────────────────────────────────────────────────────
+if [[ "$SETUP_FIREWALL" == "yes" ]]; then
+  printf "${CYAN}│${RESET}\n"
+  hint "Applying firewall rules..."
+
+  _sudo=""
+  if [ "$(id -u)" -ne 0 ]; then _sudo="sudo"; fi
+
+  if command -v ufw &>/dev/null; then
+    $_sudo ufw --force reset     >/dev/null 2>&1
+    $_sudo ufw default deny incoming  >/dev/null 2>&1
+    $_sudo ufw default allow outgoing >/dev/null 2>&1
+    $_sudo ufw allow 22/tcp      >/dev/null 2>&1
+    $_sudo ufw allow 80/tcp      >/dev/null 2>&1
+    $_sudo ufw allow 443/tcp     >/dev/null 2>&1
+    $_sudo ufw --force enable    >/dev/null 2>&1
+    ok "ufw enabled — SSH (22), HTTP (80), HTTPS (443) allowed"
+  elif command -v firewall-cmd &>/dev/null; then
+    $_sudo firewall-cmd --set-default-zone=drop           >/dev/null 2>&1
+    $_sudo firewall-cmd --permanent --add-service=ssh     >/dev/null 2>&1
+    $_sudo firewall-cmd --permanent --add-service=http    >/dev/null 2>&1
+    $_sudo firewall-cmd --permanent --add-service=https   >/dev/null 2>&1
+    $_sudo firewall-cmd --reload                          >/dev/null 2>&1
+    ok "firewalld enabled — SSH, HTTP, HTTPS allowed"
+  fi
+fi
+
 divider
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -906,10 +1078,9 @@ printf "  ${BOLD}Next steps${RESET}\n\n"
 
 printf "  ${YELLOW}1.${RESET} Create your wallet via the web UI:\n"
 if [[ "$HTTPS_SETUP" == "yes" ]]; then
-  printf "     ${CYAN}https://${DOMAIN}/setup${RESET}\n"
-  printf "     ${GRAY}(direct HTTP fallback: http://<server-ip>:${WEB_GUI_PORT})${RESET}\n\n"
+  printf "     ${CYAN}https://${DOMAIN}/setup${RESET}\n\n"
 else
-  printf "     ${CYAN}http://<your-server-ip>:${WEB_GUI_PORT}/setup${RESET}\n\n"
+  printf "     ${CYAN}http://<your-server-ip>:4321/setup${RESET}\n\n"
 fi
 printf "  ${YELLOW}2.${RESET} Then point the daemon at the new file — edit ${GRAY}.env${RESET}:\n"
 printf "     ${GRAY}WALLET_RPC_CMD=wallet-rpc-daemon ${NETWORK} --wallet-file /home/mintlayer/<filename>${RESET}\n\n"
