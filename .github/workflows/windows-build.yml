@@ -107,7 +107,7 @@ jobs:
         run: cargo install tauri-cli --version "^2" --locked
 
       - name: Build Tauri installer
-        working-directory: windows
+        working-directory: windows/src-tauri
         run: cargo tauri build --target x86_64-pc-windows-msvc
 
       # ── Upload artifacts ────────────────────────────────────────────────────

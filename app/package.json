@@ -1,7 +1,7 @@
 {
   "name": "mintlayer-web-gui",
   "type": "module",
-  "version": "0.99.2",
+  "version": "0.99.3",
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",
