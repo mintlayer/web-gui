@@ -102,9 +102,6 @@ services:
       SESSION_SECRET: "${SESSION_SECRET}"
       WALLET_RPC_CMD: "${WALLET_RPC_CMD:-}"
       INDEXER_ENABLED: "${INDEXER_ENABLED:-false}"
-      WALLET_FILE_PATH: "/home/mintlayer/mintlayer.wallet"
-      PREFS_DB_PATH: "/app/prefs/mintlayer_prefs.sqlite"
-      MINTLAYER_DATA_DIR: "/app/mintlayer-data"
       HOST: "0.0.0.0"
       PORT: "4321"
     restart: unless-stopped

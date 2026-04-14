@@ -1,9 +1,8 @@
 import type { APIRoute } from 'astro';
-import { join } from 'node:path';
 
 const WALLET_FILENAME = 'mintlayer.wallet';
-const dataDir = process.env.MINTLAYER_DATA_DIR ?? '/app/mintlayer-data';
-const LOCAL_PATH = join(dataDir, WALLET_FILENAME);
+// ./mintlayer-data/ on host is mounted read-only at /app/mintlayer-data/ in the web-gui container
+const LOCAL_PATH = `/app/mintlayer-data/${WALLET_FILENAME}`;
 
 export const GET: APIRoute = async () => {
   const { readFile } = await import('node:fs/promises');

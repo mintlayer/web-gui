@@ -13,11 +13,8 @@ import { join } from 'node:path';
 
 // Load the WASM nodejs CJS module by absolute path so that neither Vite's
 // SSR module runner nor npm package resolution can interfere.
-// WASM_DIR is set by Tauri (Windows) to the directory alongside the compiled exe.
-// Falls back to process.cwd()/wasm-wrappers for Docker and local dev.
-const _wasmAbsPath = process.env.WASM_DIR
-  ? join(process.env.WASM_DIR, 'wasm_wrappers.js')
-  : join(process.cwd(), 'wasm-wrappers', 'wasm_wrappers.js');
+// process.cwd() is the `app/` directory in both local dev and Docker (/app).
+const _wasmAbsPath = join(process.cwd(), 'wasm-wrappers', 'wasm_wrappers.js');
 // createRequire needs a *different* file as its "parent module" — using the
 // WASM file itself would make _require('./wasm_wrappers.js') resolve to itself.
 const _require = createRequire(import.meta.url);
