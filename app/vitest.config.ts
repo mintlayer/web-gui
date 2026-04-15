@@ -26,6 +26,12 @@ export default defineConfig({
         'src/pages/api/address-tokens.ts',
         // External IPFS/Pinata integration
         'src/pages/api/ipfs-upload.ts',
+        // Module-level side effect: seeds DB from env on startup, no exported API to test
+        'src/lib/settings-migration.ts',
+        // Telegram daemon processes: long-poll loops and WebSocket state machines
+        'src/lib/telegram-bot.ts',
+        'src/lib/telegram-commands.ts',
+        'src/lib/telegram-notifications.ts',
       ],
       reporter: ['text', 'lcov', 'html'],
       thresholds: { lines: 80, branches: 75 },
