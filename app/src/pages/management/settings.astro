@@ -4,6 +4,7 @@ import TotpQrCode from '@/components/TotpQrCode';
 import { verifyPassword, hashPassword, verifyTOTP, generateTotpSecret } from '@/lib/auth';
 import { getPref, getStringPref, setPref } from '@/lib/prefs-db';
 import { sendTelegramMessage } from '@/lib/telegram';
+import { getCredentials, saveCredentials, isValidRpId, getRpId } from '@/lib/passkey';
 
 type ActionResult =
   | { action: 'none' }
@@ -50,6 +51,21 @@ if (Astro.request.method === 'POST') {
       const issuer = encodeURIComponent('Mintlayer');
       const uri = `otpauth://totp/${label}?secret=${newSecret}&issuer=${issuer}`;
       result = { action: 'success', section, message: 'New 2FA secret generated. Scan the QR code below.', extra: { secret: newSecret, uri } };
+    }
+
+  } else if (section === 'remove_passkey') {
+    const credentialId = (form.get('credential_id') as string | null) ?? '';
+    if (!credentialId) {
+      result = { action: 'error', section, message: 'No credential ID provided.' };
+    } else {
+      const creds = getCredentials();
+      const filtered = creds.filter((c) => c.id !== credentialId);
+      if (filtered.length === creds.length) {
+        result = { action: 'error', section, message: 'Passkey not found.' };
+      } else {
+        saveCredentials(filtered);
+        result = { action: 'success', section, message: 'Passkey removed.' };
+      }
     }
 
   } else if (section === 'ipfs') {
@@ -126,6 +142,11 @@ const stakingControls    = getPref<boolean>('telegram.staking.controls')  ?? fal
 // Extract new TOTP data if reset was successful
 const newTotpUri    = result.action === 'success' && result.section === 'reset_2fa' ? (result.extra?.uri ?? '')    : '';
 const newTotpSecret = result.action === 'success' && result.section === 'reset_2fa' ? (result.extra?.secret ?? '') : '';
+
+// Passkeys
+const enrolledPasskeys = getCredentials();
+const passkeyRpId = getRpId(Astro.request.url);
+const passkeysSupported = isValidRpId(passkeyRpId);
 ---
 
 <ManagementLayout title="Settings" activeTab="settings">
@@ -245,6 +266,76 @@ const newTotpSecret = result.action === 'success' && result.section === 'reset_2
               Reset 2FA Secret
             </button>
           </form>
+        </div>
+
+        <!-- Passkeys -->
+        <div class="lg:col-span-2">
+          <h3 class="text-sm font-medium text-gray-300 mb-3">Passkeys</h3>
+          <p class="text-xs text-gray-500 mb-4">
+            Passkeys let you sign in using your device biometrics or a hardware key — no password or authenticator code needed.
+            {!passkeysSupported && (
+              <span class="block mt-1 text-amber-400">
+                Passkeys require a DNS hostname. Configure <code class="font-mono">PASSKEY_RP_ID</code> and <code class="font-mono">PASSKEY_ORIGIN</code> in your <code class="font-mono">.env</code> to enable them.
+              </span>
+            )}
+          </p>
+
+          {result.action === 'success' && result.section === 'remove_passkey' && (
+            <div class="mb-3 px-3 py-2 rounded-lg border border-emerald-800 bg-emerald-950/50 text-emerald-300 text-sm">
+              {result.message}
+            </div>
+          )}
+          {result.action === 'error' && result.section === 'remove_passkey' && (
+            <div class="mb-3 px-3 py-2 rounded-lg border border-red-800 bg-red-950/50 text-red-300 text-sm">
+              {result.message}
+            </div>
+          )}
+
+          {passkeysSupported && (
+            <div class="space-y-3">
+              {enrolledPasskeys.length === 0 ? (
+                <p class="text-xs text-gray-600 italic">No passkeys enrolled yet.</p>
+              ) : (
+                <ul class="space-y-2">
+                  {enrolledPasskeys.map((pk) => (
+                    <li class="flex items-center justify-between bg-gray-800 rounded-lg px-3 py-2 text-sm">
+                      <div>
+                        <span class="text-gray-200 font-medium">{pk.name}</span>
+                        <span class="ml-2 text-xs text-gray-500">
+                          {new Date(pk.createdAt).toLocaleDateString()}
+                        </span>
+                      </div>
+                      <form method="post">
+                        <input type="hidden" name="section" value="remove_passkey" />
+                        <input type="hidden" name="credential_id" value={pk.id} />
+                        <button
+                          type="submit"
+                          class="text-xs text-red-400 hover:text-red-300 transition-colors px-2 py-1 rounded hover:bg-red-950/40"
+                        >
+                          Remove
+                        </button>
+                      </form>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              <div id="passkey-register-error" class="hidden px-3 py-2 rounded-lg border border-red-800 bg-red-950/50 text-red-300 text-sm"></div>
+
+              <button
+                id="passkey-register-btn"
+                type="button"
+                class="py-2 px-4 rounded-lg bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium
+                       transition-colors focus:outline-none focus:ring-2 focus:ring-gray-500
+                       focus:ring-offset-2 focus:ring-offset-gray-900 flex items-center gap-2"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                Add a Passkey
+              </button>
+            </div>
+          )}
         </div>
 
       </div>
@@ -469,3 +560,152 @@ const newTotpSecret = result.action === 'success' && result.section === 'reset_2
 
   </div>
 </ManagementLayout>
+
+<!-- ── Passkey name modal ──────────────────────────────────────────────────── -->
+{passkeysSupported && (
+  <div
+    id="passkey-modal"
+    class="hidden fixed inset-0 z-50 flex items-center justify-center"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="passkey-modal-title"
+  >
+    <!-- Backdrop -->
+    <div id="passkey-modal-backdrop" class="absolute inset-0 bg-black/60"></div>
+
+    <!-- Dialog -->
+    <div class="relative w-full max-w-sm mx-4 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-6">
+      <h3 id="passkey-modal-title" class="text-base font-semibold text-gray-100 mb-1">Name this passkey</h3>
+      <p class="text-xs text-gray-500 mb-4">Give it a name so you can identify it later (e.g. "MacBook Touch ID").</p>
+
+      <input
+        id="passkey-name-input"
+        type="text"
+        maxlength="64"
+        placeholder="MacBook Touch ID"
+        class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 text-sm
+               placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-mint-600
+               focus:border-transparent transition mb-4"
+      />
+
+      <div class="flex gap-3 justify-end">
+        <button
+          id="passkey-modal-cancel"
+          type="button"
+          class="py-2 px-4 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm font-medium
+                 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-500"
+        >
+          Cancel
+        </button>
+        <button
+          id="passkey-modal-confirm"
+          type="button"
+          class="py-2 px-4 rounded-lg bg-mint-600 hover:bg-mint-700 text-white text-sm font-medium
+                 transition-colors focus:outline-none focus:ring-2 focus:ring-mint-500"
+        >
+          Continue
+        </button>
+      </div>
+    </div>
+  </div>
+)}
+
+{passkeysSupported && (
+  <script>
+    import { startRegistration } from '@simplewebauthn/browser';
+
+    const btn       = document.getElementById('passkey-register-btn') as HTMLButtonElement | null;
+    const errorBox  = document.getElementById('passkey-register-error');
+    const modal     = document.getElementById('passkey-modal');
+    const backdrop  = document.getElementById('passkey-modal-backdrop');
+    const nameInput = document.getElementById('passkey-name-input') as HTMLInputElement | null;
+    const cancelBtn = document.getElementById('passkey-modal-cancel');
+    const confirmBtn = document.getElementById('passkey-modal-confirm');
+
+    const addIcon = '<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add a Passkey';
+
+    function showError(msg: string) {
+      if (!errorBox) return;
+      errorBox.textContent = msg;
+      errorBox.classList.remove('hidden');
+    }
+
+    function resetBtn() {
+      if (!btn) return;
+      btn.disabled = false;
+      btn.innerHTML = addIcon;
+    }
+
+    function openModal(): Promise<string | null> {
+      return new Promise((resolve) => {
+        if (!modal || !nameInput) return resolve(null);
+        nameInput.value = '';
+        modal.classList.remove('hidden');
+        nameInput.focus();
+
+        function close(value: string | null) {
+          modal!.classList.add('hidden');
+          confirmBtn?.removeEventListener('click', onConfirm);
+          cancelBtn?.removeEventListener('click', onCancel);
+          backdrop?.removeEventListener('click', onCancel);
+          nameInput?.removeEventListener('keydown', onKeydown);
+          resolve(value);
+        }
+
+        function onConfirm() { close(nameInput!.value.trim() || null); }
+        function onCancel()  { close(null); }
+        function onKeydown(e: Event) {
+          const ke = e as KeyboardEvent;
+          if (ke.key === 'Enter')  { e.preventDefault(); onConfirm(); }
+          if (ke.key === 'Escape') { e.preventDefault(); onCancel(); }
+        }
+
+        confirmBtn?.addEventListener('click', onConfirm);
+        cancelBtn?.addEventListener('click', onCancel);
+        backdrop?.addEventListener('click', onCancel);
+        nameInput?.addEventListener('keydown', onKeydown);
+      });
+    }
+
+    btn?.addEventListener('click', async () => {
+      if (!errorBox || !btn) return;
+      errorBox.classList.add('hidden');
+
+      const name = await openModal();
+      if (!name) return;
+
+      btn.disabled = true;
+      btn.textContent = 'Waiting for authenticator…';
+
+      try {
+        const optRes = await fetch('/api/passkey/register-options');
+        if (!optRes.ok) {
+          const { error } = await optRes.json();
+          throw new Error(error ?? 'Failed to load registration options.');
+        }
+        const options = await optRes.json();
+
+        const regResponse = await startRegistration({ optionsJSON: options });
+
+        const verRes = await fetch('/api/passkey/register-verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...regResponse, name }),
+        });
+        const result = await verRes.json();
+
+        if (!verRes.ok || !result.ok) {
+          throw new Error(result.error ?? 'Passkey registration failed.');
+        }
+
+        window.location.reload();
+      } catch (err: unknown) {
+        const e = err as { name?: string; message?: string };
+        if (e?.name !== 'AbortError') {
+          showError(e?.message ?? 'Passkey registration failed.');
+        }
+        resetBtn();
+      }
+    });
+  </script>
+)}

@@ -171,7 +171,7 @@ export default function IssuedTokensPanel({ network }: Props) {
   if (stored.length === 0) {
     return (
       <p className="text-sm text-gray-500">
-        No tokens issued from this browser yet. Use <strong className="text-gray-400">Issue Token</strong> above to create one.
+        No tokens issued from this browser yet. Use <strong className="text-gray-400">Mint Token</strong> above to create one.
       </p>
     );
   }

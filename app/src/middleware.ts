@@ -9,7 +9,12 @@ import {
 } from '@/lib/auth';
 
 // Paths that do not require authentication
-const PUBLIC_PATHS = new Set(['/login', '/api/login']);
+const PUBLIC_PATHS = new Set([
+  '/login',
+  '/api/login',
+  '/api/passkey/auth-options',
+  '/api/passkey/auth-verify',
+]);
 const PUBLIC_PREFIXES = ['/_astro/', '/favicon', '/_image'];
 
 export const onRequest = defineMiddleware(async (context, next) => {

@@ -1,7 +1,7 @@
 {
   "name": "mintlayer-web-gui",
   "type": "module",
-  "version": "0.99.2",
+  "version": "0.99.4",
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",
@@ -16,6 +16,8 @@
     "@astrojs/node": "^10.0.4",
     "@astrojs/react": "^5.0.3",
     "@radix-ui/react-progress": "^1.1.8",
+    "@simplewebauthn/browser": "^13.3.0",
+    "@simplewebauthn/server": "^13.3.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/qrcode": "^1.5.6",
     "astro": "^6.1.6",

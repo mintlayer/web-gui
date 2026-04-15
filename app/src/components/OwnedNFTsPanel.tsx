@@ -140,7 +140,7 @@ export default function OwnedNFTsPanel({ network }: Props) {
   if (nfts.length === 0) {
     return (
       <p className="text-sm text-gray-500">
-        No NFTs in your wallet. Use <strong className="text-gray-400">Issue NFT</strong> above to create one.
+        No NFTs in your wallet. Use <strong className="text-gray-400">Mint NFT</strong> above to create one.
       </p>
     );
   }

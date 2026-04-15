@@ -203,7 +203,7 @@ export default function IssueNFTModal({ ipfsEnabled, onClose, onIssued }: Props)
   return (
     <Overlay onClose={onClose}>
       <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800 shrink-0">
-        <h2 className="text-base font-semibold text-gray-100">Issue NFT</h2>
+        <h2 className="text-base font-semibold text-gray-100">Mint NFT</h2>
         <div className="flex items-center gap-3">
           <ModeToggle mode={mode} onChange={setMode} />
           <button onClick={onClose} className="text-gray-500 hover:text-gray-300 text-xl leading-none">✕</button>
@@ -410,7 +410,7 @@ export default function IssueNFTModal({ ipfsEnabled, onClose, onIssued }: Props)
         <div className="flex gap-3 px-6 py-4 shrink-0 sticky bottom-0 bg-gray-900">
           <button type="button" onClick={onClose} className={cancelBtn}>Cancel</button>
           <button type="submit" disabled={submitting || !mediaHash} className={submitBtn}>
-            {submitting ? 'Issuing…' : 'Issue NFT'}
+            {submitting ? 'Minting…' : 'Mint NFT'}
           </button>
         </div>
       </form>

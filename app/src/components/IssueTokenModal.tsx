@@ -353,7 +353,7 @@ export default function IssueTokenModal({ ipfsEnabled, onClose, onIssued }: Prop
         <div className="flex gap-3 px-6 py-4 shrink-0 sticky bottom-0 bg-gray-900">
           <button type="button" onClick={onClose} className={cancelBtn}>Cancel</button>
           <button type="submit" disabled={submitting} className={submitBtn}>
-            {submitting ? 'Issuing…' : 'Issue Token'}
+            {submitting ? 'Minting…' : 'Mint Token'}
           </button>
         </div>
       </form>

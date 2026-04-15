@@ -1,9 +1,10 @@
 ---
 import Layout from '@/layouts/Layout.astro';
-import TokenActions from '@/components/TokenActions';
 import TokenSearch from '@/components/TokenSearch';
 import IssuedTokensPanel from '@/components/IssuedTokensPanel';
 import OwnedNFTsPanel from '@/components/OwnedNFTsPanel';
+import IssueTokenButton from '@/components/IssueTokenButton';
+import IssueNFTButton from '@/components/IssueNFTButton';
 import { INDEXER_START_CMD } from '@/lib/indexer';
 import { getStringPref } from '@/lib/prefs-db';
 
@@ -17,9 +18,8 @@ const network = (process.env.NETWORK ?? 'mainnet').toLowerCase();
 ---
 
 <Layout title="Token Management" activeNav="token-management">
-  <div class="flex items-center justify-between mb-6">
+  <div class="mb-6">
     <h1 class="text-2xl font-bold text-gray-100">Token Management</h1>
-    <TokenActions client:load ipfsEnabled={ipfsEnabled} />
   </div>
 
   <div id="indexer-warning" style="display:none"
@@ -51,7 +51,10 @@ const network = (process.env.NETWORK ?? 'mainnet').toLowerCase();
   <!-- ── Tokens panel ───────────────────────────────────────────────────────── -->
   <div id="panel-tokens">
     <section class="mb-8">
-      <h2 class="text-base font-semibold text-gray-200 mb-3">My Issued Tokens</h2>
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-base font-semibold text-gray-200">My Issued Tokens</h2>
+        <IssueTokenButton client:load ipfsEnabled={ipfsEnabled} />
+      </div>
       <IssuedTokensPanel client:load network={network} />
     </section>
 
@@ -70,7 +73,10 @@ const network = (process.env.NETWORK ?? 'mainnet').toLowerCase();
   <!-- ── NFTs panel ─────────────────────────────────────────────────────────── -->
   <div id="panel-nfts" style="display:none">
     <section class="mb-8">
-      <h2 class="text-base font-semibold text-gray-200 mb-3">My NFTs</h2>
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-base font-semibold text-gray-200">My NFTs</h2>
+        <IssueNFTButton client:load ipfsEnabled={ipfsEnabled} />
+      </div>
       <OwnedNFTsPanel client:load network={network} />
     </section>
   </div>

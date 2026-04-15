@@ -395,6 +395,23 @@ while ! [[ "$WEB_GUI_PORT" =~ ^[0-9]+$ ]] || (( WEB_GUI_PORT < 1 || WEB_GUI_PORT
   prompt WEB_GUI_PORT "Port:" "4321"
 done
 
+ask "Public hostname (optional — required for Passkeys)"
+hint "If you access this GUI via a DNS name (e.g. DuckDNS, your own domain), enter it here."
+hint "Passkeys (biometric / hardware-key login) require a proper hostname — they do not work"
+hint "with raw IP addresses. Leave blank to use localhost-only access."
+hint "Example: wallet.duckdns.org"
+prompt WEB_GUI_HOST "Hostname (leave blank for localhost):" ""
+
+# Derive passkey config from hostname
+if [[ -z "$WEB_GUI_HOST" || "$WEB_GUI_HOST" == "localhost" ]]; then
+  WEB_GUI_HOST="localhost"
+  PASSKEY_RP_ID="localhost"
+  PASSKEY_ORIGIN="http://localhost:${WEB_GUI_PORT}"
+else
+  PASSKEY_RP_ID="${WEB_GUI_HOST}"
+  PASSKEY_ORIGIN="https://${WEB_GUI_HOST}"
+fi
+
 divider
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -489,6 +506,30 @@ fi
 divider
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Step — Auto-update (Watchtower)
+# ─────────────────────────────────────────────────────────────────────────────
+step "Auto-update (Watchtower)"
+hint "Watchtower checks Docker Hub daily at 04:00 and automatically pulls new"
+hint "versions of the Mintlayer images (node, wallet, indexer) then restarts"
+hint "only the affected containers."
+hint "The web GUI (built locally) is never touched by Watchtower."
+hint ""
+
+ENABLE_WATCHTOWER="no"
+confirm ENABLE_WATCHTOWER "Enable automatic image updates?" "Y"
+
+WATCHTOWER_NOTIFICATION_URL=""
+if [[ "$ENABLE_WATCHTOWER" == "yes" ]]; then
+  ask "Telegram notification on update (optional)"
+  hint "Get a message when an image is updated."
+  hint "Format: telegram://BOT_TOKEN@telegram?channels=CHAT_ID"
+  hint "Leave blank to skip."
+  prompt WATCHTOWER_NOTIFICATION_URL "Notification URL:" ""
+fi
+
+divider
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Summary
 # ─────────────────────────────────────────────────────────────────────────────
 printf "\n"
@@ -497,9 +538,11 @@ printf "${CYAN}│${RESET}\n"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Network:"           "${BOLD}${NETWORK}${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Passwords:"  "${BOLD}$([ "$USE_RANDOM_PASSWORDS" == "yes" ] && echo "randomly generated" || echo "custom")${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Web UI auth:"  "${BOLD}password + TOTP 2FA${RESET}"
-printf "${CYAN}│${RESET}  %-22s %s\n" "Web GUI:"    "${BOLD}http://localhost:${WEB_GUI_PORT}${RESET}"
+printf "${CYAN}│${RESET}  %-22s %s\n" "Web GUI:"    "${BOLD}${PASSKEY_ORIGIN}${RESET}"
+printf "${CYAN}│${RESET}  %-22s %s\n" "Passkeys:"   "${BOLD}$([ "$WEB_GUI_HOST" != "localhost" ] && echo "enabled (${WEB_GUI_HOST})" || echo "localhost only")${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "IPFS storage:" "${BOLD}$([ -n "$IPFS_PROVIDER" ] && echo "$IPFS_PROVIDER" || echo "disabled — token/NFT uploads disabled")${RESET}"
-printf "${CYAN}│${RESET}  %-22s %s\n" "Indexer:"    "${BOLD}$([ "$ENABLE_INDEXER" == "yes" ] && echo "enabled (port ${API_WEB_SERVER_PORT}) — Token Management + Trading active" || echo "disabled — Token Management + Trading hidden")${RESET}"
+printf "${CYAN}│${RESET}  %-22s %s\n" "Indexer:"      "${BOLD}$([ "$ENABLE_INDEXER" == "yes" ] && echo "enabled (port ${API_WEB_SERVER_PORT}) — Token Management + Trading active" || echo "disabled — Token Management + Trading hidden")${RESET}"
+printf "${CYAN}│${RESET}  %-22s %s\n" "Auto-update:"  "${BOLD}$([ "$ENABLE_WATCHTOWER" == "yes" ] && echo "enabled (daily at 04:00)" || echo "disabled")${RESET}"
 printf "${CYAN}│${RESET}\n"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -560,8 +603,14 @@ NODE_RPC_PASSWORD=${NODE_RPC_PASSWORD}
 WALLET_RPC_USERNAME=${WALLET_RPC_USERNAME}
 WALLET_RPC_PASSWORD=${WALLET_RPC_PASSWORD}
 
-# Web GUI port
+# Web GUI
 WEB_GUI_PORT=${WEB_GUI_PORT}
+WEB_GUI_HOST=${WEB_GUI_HOST}
+
+# Passkeys (WebAuthn) — derived from WEB_GUI_HOST above
+# Override these if running behind a reverse proxy that changes the visible hostname.
+PASSKEY_RP_ID=${PASSKEY_RP_ID}
+PASSKEY_ORIGIN=${PASSKEY_ORIGIN}
 
 # Indexer-dependent features (Token Management, Trading)
 INDEXER_ENABLED=${INDEXER_ENABLED}
@@ -575,6 +624,10 @@ SESSION_SECRET=${SESSION_SECRET}
 IPFS_PROVIDER=${IPFS_PROVIDER}
 FILEBASE_TOKEN=${FILEBASE_TOKEN}
 PINATA_JWT=${PINATA_JWT}
+
+# Watchtower — auto-update Mintlayer images (profile: watchtower)
+# telegram://BOT_TOKEN@telegram?channels=CHAT_ID  or leave empty
+WATCHTOWER_NOTIFICATION_URL=${WATCHTOWER_NOTIFICATION_URL}
 
 # Rust log level
 RUST_LOG=info
@@ -608,7 +661,10 @@ if [[ "$START" == "yes" ]]; then
 
   PROFILES=""
   if [[ "$ENABLE_INDEXER" == "yes" ]]; then
-    PROFILES="--profile indexer"
+    PROFILES="$PROFILES --profile indexer"
+  fi
+  if [[ "$ENABLE_WATCHTOWER" == "yes" ]]; then
+    PROFILES="$PROFILES --profile watchtower"
   fi
 
   $COMPOSE pull --quiet
@@ -629,7 +685,7 @@ printf "\n"
 printf "  ${BOLD}Next steps${RESET}\n\n"
 
 printf "  ${YELLOW}1.${RESET} Create your wallet via the web UI:\n"
-printf "     ${CYAN}http://localhost:${WEB_GUI_PORT}/setup${RESET}\n\n"
+printf "     ${CYAN}${PASSKEY_ORIGIN}/setup${RESET}\n\n"
 printf "  ${YELLOW}2.${RESET} Then point the daemon at the new file — edit ${GRAY}.env${RESET}:\n"
 printf "     ${GRAY}WALLET_RPC_CMD=wallet-rpc-daemon ${NETWORK} --wallet-file /home/mintlayer/<filename>${RESET}\n\n"
 printf "  ${YELLOW}3.${RESET} Restart the wallet daemon:\n"
@@ -646,7 +702,7 @@ printf "\n"
 
 # ── Open browser ──────────────────────────────────────────────────────────────
 if [[ "$START" == "yes" ]]; then
-  OPEN_URL="http://localhost:${WEB_GUI_PORT}/setup"
+  OPEN_URL="${PASSKEY_ORIGIN}/setup"
 
   # Give the web-gui container a moment to finish starting
   sleep 2

@@ -23,6 +23,8 @@ services:
     <<: *common
     image: "mintlayer/node-daemon:latest"
     command: "node-daemon ${NETWORK:-mainnet}"
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
     environment:
       <<: [*common-env, *node-rpc-env]
       RUST_LOG: "${RUST_LOG:-info}"
@@ -43,6 +45,8 @@ services:
     <<: *common
     image: "mintlayer/wallet-rpc-daemon:latest"
     command: "${WALLET_RPC_CMD:-wallet-rpc-daemon mainnet}"
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
     depends_on:
       - node-daemon
     environment:
@@ -107,6 +111,27 @@ services:
     restart: unless-stopped
 
   # ─────────────────────────────────────────
+  # Optional: Watchtower — auto-update Mintlayer images  (profile: watchtower)
+  # Checks Docker Hub daily at 04:00 and restarts any container whose image
+  # has changed. The web-gui (locally built) is intentionally excluded.
+  # Start with: docker compose --profile watchtower up -d
+  # ─────────────────────────────────────────
+  watchtower:
+    image: containrrr/watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: >
+      --schedule "0 0 4 * * *"
+      --cleanup
+      --label-enable
+    environment:
+      WATCHTOWER_NOTIFICATIONS: shoutrrr
+      WATCHTOWER_NOTIFICATION_URL: "${WATCHTOWER_NOTIFICATION_URL:-}"
+    profiles:
+      - watchtower
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────
   # Optional: wallet-cli  (profile: wallet_cli)
   # Usage: docker compose run --rm wallet-cli
   # ─────────────────────────────────────────
@@ -143,6 +168,8 @@ services:
   api-blockchain-scanner-daemon:
     <<: *common
     image: "mintlayer/api-blockchain-scanner-daemon:latest"
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
     depends_on:
       - node-daemon
       - postgres
@@ -163,6 +190,8 @@ services:
 
   api-web-server:
     image: "mintlayer/api-web-server:latest"
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
     depends_on:
       - postgres
       - node-daemon
