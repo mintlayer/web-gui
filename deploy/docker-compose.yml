@@ -23,6 +23,8 @@ services:
     <<: *common
     image: "mintlayer/node-daemon:latest"
     command: "node-daemon ${NETWORK:-mainnet}"
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
     environment:
       <<: [*common-env, *node-rpc-env]
       RUST_LOG: "${RUST_LOG:-info}"
@@ -43,6 +45,8 @@ services:
     <<: *common
     image: "mintlayer/wallet-rpc-daemon:latest"
     command: "${WALLET_RPC_CMD:-wallet-rpc-daemon mainnet}"
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
     depends_on:
       - node-daemon
     environment:
@@ -70,11 +74,21 @@ services:
   # Web GUI (Astro SSR app)
   # ─────────────────────────────────────────
   web-gui:
-    image: "mintlayer/gui-x:latest"
+    build:
+      context: ./app
+      dockerfile: Dockerfile
     depends_on:
       - wallet-rpc-daemon
+    volumes:
+      # Read-only access to wallet data for file backup download
+      - "./mintlayer-data:/app/mintlayer-data:ro"
+      # Shared with wallet-rpc-daemon's /home/mintlayer/ so uploaded wallet files
+      # are accessible to the daemon at /home/mintlayer/uploads/<filename>
+      - "./mintlayer-data/uploads:/app/uploads"
+      # Server-side preferences (SQLite) — persists across browsers and restarts
+      - "./mintlayer-data/prefs:/app/prefs"
     ports:
-      - "127.0.0.1:4321:4321"
+      - "${WEB_GUI_PORT:-4321}:4321"
     environment:
       WALLET_RPC_URL: "http://wallet-rpc-daemon:3034"
       WALLET_RPC_USERNAME: "${WALLET_RPC_USERNAME}"
@@ -90,9 +104,31 @@ services:
       UI_PASSWORD_HASH: "${UI_PASSWORD_HASH}"
       UI_TOTP_SECRET: "${UI_TOTP_SECRET}"
       SESSION_SECRET: "${SESSION_SECRET}"
+      WALLET_RPC_CMD: "${WALLET_RPC_CMD:-}"
       INDEXER_ENABLED: "${INDEXER_ENABLED:-false}"
       HOST: "0.0.0.0"
       PORT: "4321"
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────
+  # Optional: Watchtower — auto-update Mintlayer images  (profile: watchtower)
+  # Checks Docker Hub daily at 04:00 and restarts any container whose image
+  # has changed. The web-gui (locally built) is intentionally excluded.
+  # Start with: docker compose --profile watchtower up -d
+  # ─────────────────────────────────────────
+  watchtower:
+    image: containrrr/watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: >
+      --schedule "0 0 4 * * *"
+      --cleanup
+      --label-enable
+    environment:
+      WATCHTOWER_NOTIFICATIONS: shoutrrr
+      WATCHTOWER_NOTIFICATION_URL: "${WATCHTOWER_NOTIFICATION_URL:-}"
+    profiles:
+      - watchtower
     restart: unless-stopped
 
   # ─────────────────────────────────────────
@@ -132,6 +168,8 @@ services:
   api-blockchain-scanner-daemon:
     <<: *common
     image: "mintlayer/api-blockchain-scanner-daemon:latest"
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
     depends_on:
       - node-daemon
       - postgres
@@ -152,9 +190,13 @@ services:
 
   api-web-server:
     image: "mintlayer/api-web-server:latest"
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
     depends_on:
       - postgres
       - node-daemon
+    ports:
+      - "${API_WEB_SERVER_PORT:-3000}:3000"
     environment:
       ML_API_WEB_SRV_NETWORK: "${NETWORK:-mainnet}"
       ML_API_WEB_SRV_BIND_ADDRESS: "0.0.0.0:3000"
