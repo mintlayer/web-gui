@@ -12,7 +12,8 @@ type SetupResult =
   | { action: 'error'; message: string }
   | { action: 'create_success'; mnemonic: string; walletPath: string }
   | { action: 'import_success' }
-  | { action: 'upload_success' };
+  | { action: 'upload_success' }
+  | { action: 'upload_confirm_needed' };
 
 let result: SetupResult = { action: 'none' };
 
@@ -63,8 +64,9 @@ if (Astro.request.method === 'POST') {
 
   // ── Upload existing wallet file ─────────────────────────────────────────────
   } else if (action === 'upload') {
-    const fileField = form.get('wallet_file');
-    const password  = form.get('password')?.toString().trim() || undefined;
+    const fileField       = form.get('wallet_file');
+    const password        = form.get('password')?.toString().trim() || undefined;
+    const confirmOverwrite = form.get('confirm_overwrite') === 'yes';
 
     if (!(fileField instanceof File) || fileField.size === 0) {
       result = { action: 'error', message: 'Please select a wallet file.' };
@@ -72,13 +74,19 @@ if (Astro.request.method === 'POST') {
       result = { action: 'error', message: 'Wallet file too large (max 50 MB).' };
     } else {
       try {
-        const uploadDir = '/app/uploads';
-        const { writeFile, mkdir } = await import('node:fs/promises');
-        await mkdir(uploadDir, { recursive: true });
-        // Write directly as mintlayer.wallet, overwriting any existing file
-        await writeFile(`${uploadDir}/mintlayer.wallet`, Buffer.from(await fileField.arrayBuffer()));
-        await openWallet(WALLET_PATH, password);
-        result = { action: 'upload_success' };
+        const destPath = '/app/mintlayer-data/mintlayer.wallet';
+        const { writeFile, access } = await import('node:fs/promises');
+
+        let walletExists = false;
+        try { await access(destPath); walletExists = true; } catch {}
+
+        if (walletExists && !confirmOverwrite) {
+          result = { action: 'upload_confirm_needed' };
+        } else {
+          await writeFile(destPath, Buffer.from(await fileField.arrayBuffer()));
+          await openWallet(WALLET_PATH, password);
+          result = { action: 'upload_success' };
+        }
       } catch (err) {
         result = { action: 'error', message: (err as Error).message };
       }
@@ -383,6 +391,22 @@ if (Astro.request.method === 'POST') {
             />
           </div>
 
+          <div id="overwrite-section" class="hidden rounded-lg border border-yellow-700/50 bg-yellow-900/10 px-3 py-3 space-y-2">
+            <p class="text-xs text-yellow-400">
+              A wallet file already exists. Uploading will permanently replace it.
+            </p>
+            <label class="flex items-start gap-2 cursor-pointer">
+              <input
+                id="confirm-overwrite-cb"
+                name="confirm_overwrite"
+                type="checkbox"
+                value="yes"
+                class="accent-yellow-500 w-4 h-4 mt-0.5 shrink-0"
+              />
+              <span class="text-xs text-yellow-300">I understand — overwrite the existing wallet file</span>
+            </label>
+          </div>
+
           <div class="flex items-center justify-end gap-3 pt-1">
             <button
               type="button"
@@ -410,10 +434,36 @@ if (Astro.request.method === 'POST') {
       </style>
 
       <script>
-        document.getElementById('upload-modal')?.addEventListener('click', function (e) {
-          if (e.target === this) this.close();
+        const uploadModal = document.getElementById('upload-modal') as HTMLDialogElement | null;
+        const overwriteSection = document.getElementById('overwrite-section');
+        const confirmCb = document.getElementById('confirm-overwrite-cb') as HTMLInputElement | null;
+
+        uploadModal?.addEventListener('click', function (e) {
+          if (e.target === this) (this as HTMLDialogElement).close();
+        });
+
+        // Validate overwrite checkbox before submit
+        uploadModal?.querySelector('form')?.addEventListener('submit', function (e) {
+          if (overwriteSection && !overwriteSection.classList.contains('hidden')) {
+            if (confirmCb && !confirmCb.checked) {
+              e.preventDefault();
+              confirmCb.setCustomValidity('Please confirm you want to overwrite the existing wallet file.');
+              confirmCb.reportValidity();
+            } else if (confirmCb) {
+              confirmCb.setCustomValidity('');
+            }
+          }
         });
       </script>
+
+      {result.action === 'upload_confirm_needed' && (
+        <script>
+          const modal = document.getElementById('upload-modal') as HTMLDialogElement | null;
+          const section = document.getElementById('overwrite-section');
+          modal?.showModal();
+          section?.classList.remove('hidden');
+        </script>
+      )}
     </>
   )}
 
