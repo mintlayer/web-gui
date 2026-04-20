@@ -6,7 +6,7 @@ WORKDIR /app
 
 COPY package.json package-lock.json ./
 COPY wasm-wrappers/ ./wasm-wrappers/
-RUN npm ci
+RUN npm ci && npm rebuild better-sqlite3
 
 COPY . .
 RUN npm run build

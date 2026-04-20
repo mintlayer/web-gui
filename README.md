@@ -105,18 +105,7 @@ Open <http://localhost:4321/setup> and use the **Create new wallet** form.
 - Use `/home/mintlayer/my_wallet` as the path — it appears as `./mintlayer-data/my_wallet` on the host
 - Write down the mnemonic shown — it will not be displayed again
 
-**5. Make the wallet load automatically on restart**
-
-```bash
-# .env
-WALLET_FILE=my_wallet
-```
-
-```bash
-docker compose restart wallet-rpc-daemon
-```
-
-The dashboard at <http://localhost:4321> will now show your balance and sync status.
+After creating your wallet at <http://localhost:4321/setup>, the dashboard at <http://localhost:4321> will show your balance and sync status.
 
 > **Sync time:** balance and transaction history only appear once the node has fully synced. On first run this takes several hours for mainnet. The dashboard shows the current block height so you can track progress.
 

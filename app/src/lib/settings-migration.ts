@@ -9,8 +9,6 @@
 import { getPref, setPref } from './prefs-db';
 
 const MIGRATIONS: Array<{ key: string; envVar: string }> = [
-  { key: 'auth.password_hash',  envVar: 'UI_PASSWORD_HASH' },
-  { key: 'auth.totp_secret',    envVar: 'UI_TOTP_SECRET'   },
   { key: 'ipfs.provider',       envVar: 'IPFS_PROVIDER'    },
   { key: 'ipfs.filebase_token', envVar: 'FILEBASE_TOKEN'   },
   { key: 'ipfs.pinata_jwt',     envVar: 'PINATA_JWT'       },

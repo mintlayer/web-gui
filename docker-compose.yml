@@ -37,9 +37,8 @@ services:
   # ─────────────────────────────────────────
   # Core: Wallet RPC daemon (headless wallet)
   #
-  # WALLET_RPC_CMD is written by init.sh and contains the full resolved
-  # command, e.g. "wallet-rpc-daemon mainnet --wallet-file /home/mintlayer/wallet"
-  # Run ./init.sh (or edit .env manually) to change it.
+  # WALLET_RPC_CMD is written by init.sh (network only, e.g. "wallet-rpc-daemon mainnet").
+  # Wallet files are managed via the web UI — no --wallet-file flag needed.
   # ─────────────────────────────────────────
   wallet-rpc-daemon:
     <<: *common
@@ -101,8 +100,6 @@ services:
       PINATA_JWT: "${PINATA_JWT:-}"
       IPFS_PROVIDER: "${IPFS_PROVIDER:-}"
       FILEBASE_TOKEN: "${FILEBASE_TOKEN:-}"
-      UI_PASSWORD_HASH: "${UI_PASSWORD_HASH}"
-      UI_TOTP_SECRET: "${UI_TOTP_SECRET}"
       SESSION_SECRET: "${SESSION_SECRET}"
       WALLET_RPC_CMD: "${WALLET_RPC_CMD:-}"
       INDEXER_ENABLED: "${INDEXER_ENABLED:-false}"

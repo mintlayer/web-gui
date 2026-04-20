@@ -415,74 +415,19 @@ fi
 divider
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 5 — IPFS Storage Provider (optional)
+# Step 5 — Indexer
 # ─────────────────────────────────────────────────────────────────────────────
-step "IPFS Storage Provider (optional)"
-hint "Enables automatic upload of token/NFT images and metadata to IPFS."
-hint "Without this, uploads are disabled — URLs can still be entered manually."
+step "Indexer stack"
+hint "The indexer adds PostgreSQL + blockchain scanner + REST API."
+hint "It enables Token Management and Trading in the web UI."
+hint "Requires more disk space and memory."
 hint ""
-hint "Provider comparison:"
-hint "  Filebase — 5 GB free, always public"
-hint "             Sign up: https://filebase.com"
-hint "  Pinata   — free tier keeps files PRIVATE (requires paid plan for public)"
-hint "             Sign up: https://app.pinata.cloud"
+hint "Disable it only if you don't need to issue tokens or trade."
+hint "Staking, sending, and receiving work fine without it."
 hint ""
 
-IPFS_PROVIDER=""
-FILEBASE_TOKEN=""
-PINATA_JWT=""
-
-IPFS_CHOICE=""
-choose IPFS_CHOICE "Choose IPFS provider:" \
-  "Filebase (recommended — 5 GB free, always public)" \
-  "Pinata (paid account required to make files public)" \
-  "None — disable IPFS uploads"
-
-case "$IPFS_CHOICE" in
-  *"Filebase"*)
-    IPFS_PROVIDER="filebase"
-    ask "Filebase API key"
-    hint "Find it at https://console.filebase.com/keys — scroll to the bottom"
-    hint "for the bucket-specific IPFS API keys (not the S3 access keys at the top)."
-    prompt_secret FILEBASE_TOKEN "API key:"
-    while [[ -z "$FILEBASE_TOKEN" ]]; do
-      printf "${CYAN}│${RESET}  ${RED}API key cannot be empty${RESET}\n"
-      prompt_secret FILEBASE_TOKEN "API key:"
-    done
-    ok "Filebase API key saved"
-    ;;
-  *"Pinata"*)
-    IPFS_PROVIDER="pinata"
-    ask "Pinata JWT"
-    hint "Paste your JWT — stored in .env, never sent to the browser."
-    prompt_secret PINATA_JWT "JWT:"
-    while [[ -z "$PINATA_JWT" ]]; do
-      printf "${CYAN}│${RESET}  ${RED}JWT cannot be empty${RESET}\n"
-      prompt_secret PINATA_JWT "JWT:"
-    done
-    ok "Pinata JWT saved"
-    ;;
-  *)
-    hint "Skipping — add IPFS_PROVIDER to .env later to enable uploads."
-    ;;
-esac
-
-divider
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Step 6 — Indexer (optional)
-# ─────────────────────────────────────────────────────────────────────────────
-step "Indexer stack (optional)"
-hint "Adds: PostgreSQL + api-blockchain-scanner-daemon + api-web-server"
-hint "Provides a REST API for querying blockchain data (blocks, transactions, addresses)."
-hint "Requires more resources and disk space."
-hint ""
-warn "Without the indexer, Token Management and Trading are disabled in the web UI."
-hint "Staking, sending, receiving, and all basic wallet features work fine without it."
-hint ""
-
-ENABLE_INDEXER="no"
-confirm ENABLE_INDEXER "Enable the indexer stack?" "N"
+ENABLE_INDEXER="yes"
+confirm ENABLE_INDEXER "Enable the indexer? (disable only if you don't need Token Management or Trading)" "Y"
 
 POSTGRES_PASSWORD=""
 API_WEB_SERVER_PORT="3000"
@@ -530,6 +475,96 @@ fi
 divider
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Step — IPFS Storage (optional)
+# ─────────────────────────────────────────────────────────────────────────────
+step "IPFS Storage (optional)"
+hint "Enables automatic upload of token/NFT images and metadata to IPFS."
+hint "Without this, URLs can still be entered manually — you can configure this"
+hint "later in the web UI Settings page."
+hint ""
+
+SETUP_IPFS="no"
+confirm SETUP_IPFS "Configure IPFS now?" "N"
+
+IPFS_PROVIDER=""
+FILEBASE_TOKEN=""
+PINATA_JWT=""
+
+if [[ "$SETUP_IPFS" == "yes" ]]; then
+  hint "  Filebase — 5 GB free, always public — https://filebase.com"
+  hint "  Pinata   — requires paid plan for public files — https://app.pinata.cloud"
+  hint ""
+
+  IPFS_CHOICE=""
+  choose IPFS_CHOICE "Choose IPFS provider:" \
+    "Filebase (recommended — 5 GB free, always public)" \
+    "Pinata (paid account required to make files public)"
+
+  case "$IPFS_CHOICE" in
+    *"Filebase"*)
+      IPFS_PROVIDER="filebase"
+      ask "Filebase API key"
+      hint "Find it at https://console.filebase.com/keys — scroll to the bottom"
+      hint "for the bucket-specific IPFS API keys (not the S3 access keys at the top)."
+      prompt_secret FILEBASE_TOKEN "API key:"
+      while [[ -z "$FILEBASE_TOKEN" ]]; do
+        printf "${CYAN}│${RESET}  ${RED}API key cannot be empty${RESET}\n"
+        prompt_secret FILEBASE_TOKEN "API key:"
+      done
+      ok "Filebase API key saved"
+      ;;
+    *"Pinata"*)
+      IPFS_PROVIDER="pinata"
+      ask "Pinata JWT"
+      prompt_secret PINATA_JWT "JWT:"
+      while [[ -z "$PINATA_JWT" ]]; do
+        printf "${CYAN}│${RESET}  ${RED}JWT cannot be empty${RESET}\n"
+        prompt_secret PINATA_JWT "JWT:"
+      done
+      ok "Pinata JWT saved"
+      ;;
+  esac
+fi
+
+divider
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step — Telegram Notifications (optional)
+# ─────────────────────────────────────────────────────────────────────────────
+step "Telegram Notifications (optional)"
+hint "Receive wallet alerts (payments, staking rewards, node status) via a Telegram bot."
+hint "You can configure this later in the web UI Settings page."
+hint ""
+
+SETUP_TELEGRAM="no"
+confirm SETUP_TELEGRAM "Configure Telegram notifications now?" "N"
+
+TELEGRAM_BOT_TOKEN=""
+TELEGRAM_CHAT_ID=""
+
+if [[ "$SETUP_TELEGRAM" == "yes" ]]; then
+  hint "1. Create a bot with @BotFather on Telegram"
+  hint "2. Start a chat with your bot and send /start"
+  hint "3. Use @userinfobot to get your chat ID"
+  hint ""
+  ask "Telegram bot token"
+  prompt_secret TELEGRAM_BOT_TOKEN "Bot token:"
+  while [[ -z "$TELEGRAM_BOT_TOKEN" ]]; do
+    printf "${CYAN}│${RESET}  ${RED}Bot token cannot be empty${RESET}\n"
+    prompt_secret TELEGRAM_BOT_TOKEN "Bot token:"
+  done
+  ask "Telegram chat ID"
+  prompt TELEGRAM_CHAT_ID "Chat ID:"
+  while [[ -z "$TELEGRAM_CHAT_ID" ]]; do
+    printf "${CYAN}│${RESET}  ${RED}Chat ID cannot be empty${RESET}\n"
+    prompt TELEGRAM_CHAT_ID "Chat ID:"
+  done
+  ok "Telegram configured"
+fi
+
+divider
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Summary
 # ─────────────────────────────────────────────────────────────────────────────
 printf "\n"
@@ -540,8 +575,9 @@ printf "${CYAN}│${RESET}  %-22s %s\n" "Passwords:"  "${BOLD}$([ "$USE_RANDOM_P
 printf "${CYAN}│${RESET}  %-22s %s\n" "Web UI auth:"  "${BOLD}password + TOTP 2FA${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Web GUI:"    "${BOLD}${PASSKEY_ORIGIN}${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Passkeys:"   "${BOLD}$([ "$WEB_GUI_HOST" != "localhost" ] && echo "enabled (${WEB_GUI_HOST})" || echo "localhost only")${RESET}"
-printf "${CYAN}│${RESET}  %-22s %s\n" "IPFS storage:" "${BOLD}$([ -n "$IPFS_PROVIDER" ] && echo "$IPFS_PROVIDER" || echo "disabled — token/NFT uploads disabled")${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Indexer:"      "${BOLD}$([ "$ENABLE_INDEXER" == "yes" ] && echo "enabled (port ${API_WEB_SERVER_PORT}) — Token Management + Trading active" || echo "disabled — Token Management + Trading hidden")${RESET}"
+printf "${CYAN}│${RESET}  %-22s %s\n" "IPFS storage:" "${BOLD}$([ -n "$IPFS_PROVIDER" ] && echo "$IPFS_PROVIDER" || echo "disabled — configure later in Settings")${RESET}"
+printf "${CYAN}│${RESET}  %-22s %s\n" "Telegram:"     "${BOLD}$([ -n "$TELEGRAM_BOT_TOKEN" ] && echo "configured" || echo "disabled — configure later in Settings")${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Auto-update:"  "${BOLD}$([ "$ENABLE_WATCHTOWER" == "yes" ] && echo "enabled (daily at 04:00)" || echo "disabled")${RESET}"
 printf "${CYAN}│${RESET}\n"
 
@@ -591,8 +627,7 @@ NETWORK=${NETWORK}
 ML_USER_ID=${ML_USER_ID}
 ML_GROUP_ID=${ML_GROUP_ID}
 
-# Full wallet-rpc-daemon command (includes network + optional --wallet-file)
-# Re-run ./init.sh or edit this line to change wallet file or network.
+# wallet-rpc-daemon command (network only — wallet files are managed via the web UI)
 WALLET_RPC_CMD="${WALLET_RPC_CMD}"
 
 # Node RPC credentials
@@ -615,15 +650,8 @@ PASSKEY_ORIGIN=${PASSKEY_ORIGIN}
 # Indexer-dependent features (Token Management, Trading)
 INDEXER_ENABLED=${INDEXER_ENABLED}
 
-# Web UI authentication (generated by init.sh — do NOT edit manually)
-UI_PASSWORD_HASH=${UI_PASSWORD_HASH}
-UI_TOTP_SECRET=${UI_TOTP_SECRET}
+# Session signing secret (generated by init.sh)
 SESSION_SECRET=${SESSION_SECRET}
-
-# IPFS storage provider: filebase | pinata (empty = disabled)
-IPFS_PROVIDER=${IPFS_PROVIDER}
-FILEBASE_TOKEN=${FILEBASE_TOKEN}
-PINATA_JWT=${PINATA_JWT}
 
 # Watchtower — auto-update Mintlayer images (profile: watchtower)
 # telegram://BOT_TOKEN@telegram?channels=CHAT_ID  or leave empty
@@ -640,6 +668,23 @@ API_WEB_SERVER_PORT=${API_WEB_SERVER_PORT}
 EOF
 
 ok ".env written"
+
+# ── Write credentials to SQLite via temporary alpine container ───────────────
+mkdir -p mintlayer-data/prefs
+{
+  echo "CREATE TABLE IF NOT EXISTS prefs (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+  echo "INSERT OR REPLACE INTO prefs VALUES ('auth.password_hash', '\"${UI_PASSWORD_HASH}\"');"
+  echo "INSERT OR REPLACE INTO prefs VALUES ('auth.totp_secret',   '\"${UI_TOTP_SECRET}\"');"
+  [ -n "$IPFS_PROVIDER"      ] && echo "INSERT OR REPLACE INTO prefs VALUES ('ipfs.provider',       '\"${IPFS_PROVIDER}\"');" || true
+  [ -n "$FILEBASE_TOKEN"     ] && echo "INSERT OR REPLACE INTO prefs VALUES ('ipfs.filebase_token', '\"${FILEBASE_TOKEN}\"');" || true
+  [ -n "$PINATA_JWT"         ] && echo "INSERT OR REPLACE INTO prefs VALUES ('ipfs.pinata_jwt',     '\"${PINATA_JWT}\"');" || true
+  [ -n "$TELEGRAM_BOT_TOKEN" ] && echo "INSERT OR REPLACE INTO prefs VALUES ('telegram.bot_token',  '\"${TELEGRAM_BOT_TOKEN}\"');" || true
+  [ -n "$TELEGRAM_CHAT_ID"   ] && echo "INSERT OR REPLACE INTO prefs VALUES ('telegram.chat_id',    '\"${TELEGRAM_CHAT_ID}\"');" || true
+} | docker run --rm -i \
+    -v "$(pwd)/mintlayer-data/prefs:/prefs" \
+    alpine \
+    sh -c 'apk add -q --no-progress sqlite >/dev/null 2>&1 && sqlite3 /prefs/mintlayer_prefs.sqlite'
+ok "Credentials written to mintlayer-data/prefs/mintlayer_prefs.sqlite"
 
 # ── Create data directory ─────────────────────────────────────────────────────
 mkdir -p mintlayer-data
@@ -686,10 +731,6 @@ printf "  ${BOLD}Next steps${RESET}\n\n"
 
 printf "  ${YELLOW}1.${RESET} Create your wallet via the web UI:\n"
 printf "     ${CYAN}${PASSKEY_ORIGIN}/setup${RESET}\n\n"
-printf "  ${YELLOW}2.${RESET} Then point the daemon at the new file — edit ${GRAY}.env${RESET}:\n"
-printf "     ${GRAY}WALLET_RPC_CMD=wallet-rpc-daemon ${NETWORK} --wallet-file /home/mintlayer/<filename>${RESET}\n\n"
-printf "  ${YELLOW}3.${RESET} Restart the wallet daemon:\n"
-printf "     ${GRAY}${COMPOSE} restart wallet-rpc-daemon${RESET}\n\n"
 
 printf "  ${DIM}Other useful commands:${RESET}\n"
 printf "  ${GRAY}${COMPOSE} logs -f wallet-rpc-daemon   # watch wallet daemon logs${RESET}\n"

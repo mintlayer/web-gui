@@ -6,7 +6,7 @@ WORKDIR /app
 
 # Install deps in a cacheable layer — source is mounted at runtime
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci && npm rebuild better-sqlite3
 
 ENV HOST=0.0.0.0
 ENV PORT=4321

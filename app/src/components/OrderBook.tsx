@@ -259,11 +259,11 @@ function BuySellPanel({
         <button type="button" onClick={() => setSide("buy")}
           className={`px-6 py-2 text-sm font-semibold transition-colors ${
             side === "buy" ? "bg-green-700 text-white" : "bg-gray-800 text-gray-400 hover:text-gray-200"
-          }`}>Buy</button>
+          }`}>Buy {effectiveTicker} with ML</button>
         <button type="button" onClick={() => setSide("sell")}
           className={`px-6 py-2 text-sm font-semibold transition-colors ${
             side === "sell" ? "bg-red-700 text-white" : "bg-gray-800 text-gray-400 hover:text-gray-200"
-          }`}>Sell</button>
+          }`}>Sell {effectiveTicker} for ML</button>
       </div>
 
       {/* Order type underline tabs */}
@@ -916,7 +916,7 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
                 <option value="">— Select pair —</option>
                 {favourites.map(f => (
                   <option key={f.tokenId} value={f.tokenId}>
-                    ML / {f.ticker === "???" ? f.tokenId.slice(0, 12) + "…" : f.ticker}
+                    {f.ticker === "???" ? f.tokenId.slice(0, 12) + "…" : f.ticker} / ML
                   </option>
                 ))}
               </select>
@@ -946,7 +946,7 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
             {!pairLoading && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <PairBookPanel
-                  title={`Asks — sell ${selectedTicker} for ML`}
+                  title={`Asks — ${selectedTicker} Sell Orders`}
                   orders={pairAsks}
                   side="ask"
                   ticker={selectedTicker}
@@ -954,7 +954,7 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
                   onFilled={() => loadPairOrders(selectedTokenId)}
                 />
                 <PairBookPanel
-                  title={`Bids — buy ${selectedTicker} with ML`}
+                  title={`Bids — ${selectedTicker} Buy Orders`}
                   orders={pairBids}
                   side="bid"
                   ticker={selectedTicker}

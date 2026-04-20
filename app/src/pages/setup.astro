@@ -74,7 +74,8 @@ if (Astro.request.method === 'POST') {
       result = { action: 'error', message: 'Wallet file too large (max 50 MB).' };
     } else {
       try {
-        const destPath = '/app/mintlayer-data/mintlayer.wallet';
+        const destPath   = '/app/uploads/mintlayer.wallet';
+        const daemonPath = '/home/mintlayer/uploads/mintlayer.wallet';
         const { writeFile, access } = await import('node:fs/promises');
 
         let walletExists = false;
@@ -84,7 +85,7 @@ if (Astro.request.method === 'POST') {
           result = { action: 'upload_confirm_needed' };
         } else {
           await writeFile(destPath, Buffer.from(await fileField.arrayBuffer()));
-          await openWallet(WALLET_PATH, password);
+          await openWallet(daemonPath, password);
           result = { action: 'upload_success' };
         }
       } catch (err) {
