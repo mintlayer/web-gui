@@ -1,0 +1,7 @@
+{
+  "id": "mlusdt-price",
+  "name": "ML/USDT Price",
+  "navLabel": "ML Price",
+  "version": "1.0.0",
+  "entry": "index.mjs"
+}

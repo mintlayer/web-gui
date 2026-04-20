@@ -1,0 +1,98 @@
+---
+import Layout from '@/layouts/Layout.astro';
+import {
+  getEnabledPlugins,
+  loadPluginHandler,
+  makePluginContext,
+  PLUGINS_DIR,
+} from '@/lib/plugins';
+import { createReadStream, statSync } from 'node:fs';
+import { join, extname } from 'node:path';
+
+const { plugin: pluginId, path: subPath = '' } = Astro.params as {
+  plugin: string;
+  path?: string;
+};
+
+function getMimeType(ext: string): string {
+  const map: Record<string, string> = {
+    '.js':    'application/javascript',
+    '.mjs':   'application/javascript',
+    '.css':   'text/css',
+    '.html':  'text/html',
+    '.json':  'application/json',
+    '.svg':   'image/svg+xml',
+    '.png':   'image/png',
+    '.jpg':   'image/jpeg',
+    '.jpeg':  'image/jpeg',
+    '.webp':  'image/webp',
+    '.ico':   'image/x-icon',
+    '.woff2': 'font/woff2',
+    '.woff':  'font/woff',
+  };
+  return map[ext.toLowerCase()] ?? 'application/octet-stream';
+}
+
+// ── Verify plugin is installed and enabled (auth is enforced by middleware) ───
+const plugins = getEnabledPlugins();
+const manifest = plugins.find((p) => p.id === pluginId);
+if (!manifest) {
+  return new Response('Plugin not found or disabled', { status: 404 });
+}
+
+// ── Static assets: /plugins/{id}/public/* ─────────────────────────────────────
+if (subPath && subPath.startsWith('public/')) {
+  const relativePath = subPath.slice('public/'.length);
+  if (relativePath.includes('..')) {
+    return new Response('Forbidden', { status: 403 });
+  }
+  const filePath = join(PLUGINS_DIR, pluginId, 'public', relativePath);
+  let stat: ReturnType<typeof statSync> | null = null;
+  try { stat = statSync(filePath); } catch { /* not found */ }
+  if (!stat || !stat.isFile()) {
+    return new Response('Not found', { status: 404 });
+  }
+  const nodeStream = createReadStream(filePath);
+  const webStream = new ReadableStream({
+    start(controller) {
+      nodeStream.on('data', (chunk) =>
+        controller.enqueue(typeof chunk === 'string' ? Buffer.from(chunk) : chunk),
+      );
+      nodeStream.on('end',   () => controller.close());
+      nodeStream.on('error', (err) => controller.error(err));
+    },
+    cancel() { nodeStream.destroy(); },
+  });
+  return new Response(webStream, {
+    headers: { 'Content-Type': getMimeType(extname(relativePath)) },
+  });
+}
+
+// ── Delegate to plugin handler ────────────────────────────────────────────────
+let pluginModule: Awaited<ReturnType<typeof loadPluginHandler>>;
+try {
+  pluginModule = await loadPluginHandler(pluginId);
+} catch (err) {
+  return new Response(`Failed to load plugin: ${(err as Error).message}`, { status: 500 });
+}
+
+const context = makePluginContext(pluginId, Astro.request);
+let result: Response | { title: string; html: string };
+try {
+  result = await pluginModule.handler(Astro.request, context);
+} catch (err) {
+  return new Response(`Plugin error: ${(err as Error).message}`, { status: 500 });
+}
+
+// Raw Response (JSON, redirect, SSE, etc.) → pass through
+if (result instanceof Response) {
+  return result;
+}
+
+// { title, html } → render inside shared Layout
+const { title, html } = result;
+---
+
+<Layout title={title} activeNav={pluginId}>
+  <Fragment set:html={html} />
+</Layout>

@@ -86,6 +86,8 @@ services:
       - "./mintlayer-data/uploads:/app/uploads"
       # Server-side preferences (SQLite) — persists across browsers and restarts
       - "./mintlayer-data/prefs:/app/prefs"
+      # Installed plugins — persists across restarts
+      - "./mintlayer-data/plugins:/app/plugins"
     ports:
       - "${WEB_GUI_PORT:-4321}:4321"
     environment:

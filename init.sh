@@ -670,7 +670,7 @@ EOF
 ok ".env written"
 
 # ── Write credentials to SQLite via temporary alpine container ───────────────
-mkdir -p mintlayer-data/prefs
+mkdir -p mintlayer-data/prefs mintlayer-data/plugins
 {
   echo "CREATE TABLE IF NOT EXISTS prefs (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
   echo "INSERT OR REPLACE INTO prefs VALUES ('auth.password_hash', '\"${UI_PASSWORD_HASH}\"');"

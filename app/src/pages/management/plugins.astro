@@ -1,0 +1,173 @@
+---
+import ManagementLayout from '@/layouts/ManagementLayout.astro';
+import { getInstalledPlugins } from '@/lib/plugins';
+import { getPref } from '@/lib/prefs-db';
+
+type ActionResult =
+  | { action: 'none' }
+  | { action: 'success'; message: string }
+  | { action: 'error';   message: string };
+
+let result: ActionResult = { action: 'none' };
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const actionName = (form.get('action') as string | null) ?? '';
+  const pluginId   = (form.get('plugin_id') as string | null) ?? '';
+
+  try {
+    if (actionName === 'install') {
+      const file = form.get('plugin') as File | null;
+      if (!file || typeof file === 'string' || file.size === 0) {
+        result = { action: 'error', message: 'No file selected.' };
+      } else {
+        const res  = await fetch(new URL('/api/plugins/install', Astro.url), {
+          method: 'POST',
+          body:    form,
+          headers: { cookie: Astro.request.headers.get('cookie') ?? '' },
+        });
+        const data = await res.json() as { ok: boolean; plugin?: { name: string }; error?: string };
+        result = data.ok
+          ? { action: 'success', message: `Plugin "${data.plugin?.name}" installed successfully.` }
+          : { action: 'error',   message: data.error ?? 'Install failed.' };
+      }
+    } else if (actionName === 'toggle') {
+      const enabledVal = form.get('enabled') === 'true';
+      const res  = await fetch(new URL(`/api/plugins/${pluginId}/toggle`, Astro.url), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          cookie: Astro.request.headers.get('cookie') ?? '',
+        },
+        body: JSON.stringify({ enabled: enabledVal }),
+      });
+      const data = await res.json() as { ok: boolean; error?: string };
+      result = data.ok
+        ? { action: 'success', message: `Plugin ${enabledVal ? 'enabled' : 'disabled'}.` }
+        : { action: 'error',   message: data.error ?? 'Toggle failed.' };
+    } else if (actionName === 'uninstall') {
+      const res  = await fetch(new URL(`/api/plugins/${pluginId}/uninstall`, Astro.url), {
+        method: 'POST',
+        headers: { cookie: Astro.request.headers.get('cookie') ?? '' },
+      });
+      const data = await res.json() as { ok: boolean; error?: string };
+      result = data.ok
+        ? { action: 'success', message: 'Plugin uninstalled.' }
+        : { action: 'error',   message: data.error ?? 'Uninstall failed.' };
+    }
+  } catch (err) {
+    result = { action: 'error', message: (err as Error).message };
+  }
+}
+
+// Pre-compute enabled state in frontmatter to keep the template simple
+const plugins = getInstalledPlugins().map((p) => ({
+  ...p,
+  enabled: getPref<boolean>(`plugins.${p.id}.enabled`) === true,
+}));
+---
+
+<ManagementLayout title="Plugins" activeTab="plugins">
+  <div class="space-y-8">
+
+    <div>
+      <h2 class="text-lg font-semibold text-gray-100 mb-1">Plugins</h2>
+      <p class="text-sm text-gray-400">
+        Install community plugins to extend the wallet UI. Plugins run server-side with full access
+        to your wallet — only install plugins you trust.
+      </p>
+    </div>
+
+    {result.action !== 'none' && (
+      <div class:list={[
+        'rounded-lg px-4 py-3 text-sm',
+        result.action === 'success'
+          ? 'bg-green-900/30 border border-green-700 text-green-300'
+          : 'bg-red-900/30 border border-red-700 text-red-300',
+      ]}>
+        {result.message}
+      </div>
+    )}
+
+    <!-- Install form -->
+    <div class="rounded-xl border border-gray-800 bg-gray-900/40 p-6">
+      <h3 class="text-sm font-semibold text-gray-200 mb-4">Install plugin</h3>
+      <form method="post" enctype="multipart/form-data" class="flex items-end gap-3">
+        <input type="hidden" name="action" value="install" />
+        <div class="flex-1">
+          <label class="block text-xs text-gray-400 mb-1.5" for="plugin-file">
+            Plugin archive (.tgz)
+          </label>
+          <input
+            id="plugin-file"
+            type="file"
+            name="plugin"
+            accept=".tgz,.tar.gz"
+            required
+            class="block w-full text-sm text-gray-300 file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:bg-gray-700 file:text-gray-200 file:text-sm file:cursor-pointer hover:file:bg-gray-600"
+          />
+        </div>
+        <button
+          type="submit"
+          class="px-4 py-2 rounded bg-mint-600 hover:bg-mint-500 text-white text-sm font-medium transition-colors shrink-0"
+        >
+          Install
+        </button>
+      </form>
+    </div>
+
+    <!-- Installed plugins list -->
+    {plugins.length === 0 && (
+      <p class="text-sm text-gray-500 text-center py-8">No plugins installed yet.</p>
+    )}
+
+    {plugins.length > 0 && (
+      <div class="space-y-3">
+        {plugins.map((plugin) => (
+          <div class="rounded-xl border border-gray-800 bg-gray-900/40 p-5 flex items-center justify-between gap-4">
+            <div class="min-w-0">
+              <div class="flex items-center gap-2">
+                <span class="font-medium text-gray-100">{plugin.name}</span>
+                <span class="text-xs text-gray-500">v{plugin.version}</span>
+                {plugin.enabled
+                  ? <span class="text-xs bg-mint-900/40 text-mint-400 border border-mint-800 px-1.5 py-0.5 rounded">enabled</span>
+                  : <span class="text-xs bg-gray-800 text-gray-500 border border-gray-700 px-1.5 py-0.5 rounded">disabled</span>
+                }
+              </div>
+              <p class="text-xs text-gray-500 mt-0.5">ID: {plugin.id}</p>
+            </div>
+            <div class="flex items-center gap-2 shrink-0">
+              <form method="post">
+                <input type="hidden" name="action" value="toggle" />
+                <input type="hidden" name="plugin_id" value={plugin.id} />
+                <input type="hidden" name="enabled" value={plugin.enabled ? 'false' : 'true'} />
+                <button
+                  type="submit"
+                  class:list={[
+                    'px-3 py-1.5 rounded text-sm font-medium transition-colors',
+                    plugin.enabled
+                      ? 'bg-gray-700 hover:bg-gray-600 text-gray-200'
+                      : 'bg-mint-700 hover:bg-mint-600 text-white',
+                  ]}
+                >
+                  {plugin.enabled ? 'Disable' : 'Enable'}
+                </button>
+              </form>
+              <form method="post" onsubmit="return confirm('Uninstall this plugin?')">
+                <input type="hidden" name="action" value="uninstall" />
+                <input type="hidden" name="plugin_id" value={plugin.id} />
+                <button
+                  type="submit"
+                  class="px-3 py-1.5 rounded text-sm font-medium bg-red-900/40 hover:bg-red-900/70 text-red-400 border border-red-900 transition-colors"
+                >
+                  Uninstall
+                </button>
+              </form>
+            </div>
+          </div>
+        ))}
+      </div>
+    )}
+
+  </div>
+</ManagementLayout>
