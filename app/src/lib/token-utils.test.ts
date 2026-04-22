@@ -44,7 +44,7 @@ describe('hexToText', () => {
   });
 
   it('returns null on exception from malformed hex (odd-length)', () => {
-    // "abc" is odd-length hex — match(/../g) will skip last char so parseInt('') = NaN
+    // "abc" is odd-length hex - match(/../g) will skip last char so parseInt('') = NaN
     // The resulting Uint8Array with NaN gets set to 0, which decodes but is empty
     // Either way the function must not throw
     expect(() => hexToText({ text: null, hex: 'abc' })).not.toThrow();

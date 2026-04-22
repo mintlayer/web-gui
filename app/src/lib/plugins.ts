@@ -1,5 +1,5 @@
 /**
- * Plugin system — install, registry, load, and context helpers.
+ * Plugin system - install, registry, load, and context helpers.
  *
  * Plugins are trusted server-side Node.js modules uploaded as .tgz archives.
  * They run in the same process as the app (no sandboxing), consistent with
@@ -26,12 +26,17 @@ export const PLUGINS_DIR = process.env.PLUGINS_DIR ?? '/app/plugins';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+export type PluginNavSection = 'wallet' | 'assets' | 'trade' | 'apps';
+
 export interface PluginManifest {
   id: string;
   name: string;
   navLabel: string;
   version: string;
   entry: string;
+  navSection?: PluginNavSection;
+  /** SVG path `d` attribute for the sidebar icon (single Heroicons-style path) */
+  navIcon?: string;
 }
 
 export interface PluginResult {
@@ -62,6 +67,13 @@ function validateManifest(raw: unknown): PluginManifest {
     if (typeof m[field] !== 'string' || !(m[field] as string).trim()) {
       throw new Error(`plugin.json missing or invalid field: ${field}`);
     }
+  }
+  const validSections: PluginNavSection[] = ['wallet', 'assets', 'trade', 'apps'];
+  if (m.navSection !== undefined && !validSections.includes(m.navSection as PluginNavSection)) {
+    throw new Error(`plugin.json navSection must be one of: ${validSections.join(', ')}`);
+  }
+  if (m.navIcon !== undefined && typeof m.navIcon !== 'string') {
+    throw new Error('plugin.json navIcon must be a string (SVG path d attribute)');
   }
   if (!VALID_ID.test(m.id as string)) {
     throw new Error(
@@ -185,7 +197,7 @@ export async function loadPluginHandler(id: string): Promise<PluginModule> {
   const entryPath = join(PLUGINS_DIR, id, manifest.entry);
   // Query parameter busts Node's ESM cache after reinstall
   const url = `file://${entryPath}?gen=${gen}`;
-  const module = await import(url) as PluginModule;
+  const module = await import(/* @vite-ignore */ url) as PluginModule;
 
   if (typeof module.handler !== 'function') {
     throw new Error(`Plugin "${id}" must export a "handler" function`);

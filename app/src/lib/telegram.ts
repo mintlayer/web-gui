@@ -1,5 +1,5 @@
 /**
- * telegram.ts — Telegram Bot API primitives.
+ * telegram.ts - Telegram Bot API primitives.
  *
  * Low-level helpers for the Telegram Bot API (send message, send photo,
  * poll for updates). Higher-level logic lives in telegram-bot.ts,

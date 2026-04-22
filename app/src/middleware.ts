@@ -45,10 +45,10 @@ export const onRequest = defineMiddleware(async (context, next) => {
     });
   }
 
-  // Valid session — proceed
+  // Valid session - proceed
   const response = await next();
 
-  // Refresh cookie (sliding window) — skip if the response already sets its own cookie
+  // Refresh cookie (sliding window) - skip if the response already sets its own cookie
   // (e.g. logout clears it, login sets a fresh one) or if it's a streaming SSE response.
   const contentType = response.headers.get('content-type') ?? '';
   const alreadySetsCookie = response.headers.has('Set-Cookie');

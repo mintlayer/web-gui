@@ -1,5 +1,5 @@
 /**
- * Tests for auth.ts — password hashing, session tokens, TOTP, rate limiting.
+ * Tests for auth.ts - password hashing, session tokens, TOTP, rate limiting.
  *
  * The in-memory Maps (loginAttempts, rpcAttempts) persist for the lifetime of
  * a module instance. Rate-limiting tests use vi.resetModules() + dynamic
@@ -11,7 +11,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // ── Password hashing ──────────────────────────────────────────────────────────
 
 describe('hashPassword / verifyPassword', () => {
-  // Import directly — these are pure async functions with no side effects
+  // Import directly - these are pure async functions with no side effects
   let hashPassword: (p: string) => Promise<string>;
   let verifyPassword: (p: string, s: string) => Promise<boolean>;
 
@@ -189,7 +189,7 @@ describe('verifyTOTP', () => {
     // RFC 4226 test vector: secret "12345678901234567890"
     // Base32 of "12345678901234567890" = GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ
     const secret = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
-    // Use T=2 (60 seconds in) so T-1=1 and T+1=3 are all valid — avoids counter=-1
+    // Use T=2 (60 seconds in) so T-1=1 and T+1=3 are all valid - avoids counter=-1
     // At T=2 (counter=2), HOTP code = 359152
     vi.spyOn(Date, 'now').mockReturnValue(60_000); // T=2
     expect(verifyTOTP('359152', secret)).toBe(true);

@@ -1,5 +1,5 @@
 /**
- * Tests for /api/rpc — the browser-facing RPC proxy.
+ * Tests for /api/rpc - the browser-facing RPC proxy.
  *
  * Security boundary: allowlist enforcement, rate limiting, request validation.
  * The handler is a plain async function; we call it directly with a synthetic
@@ -168,7 +168,7 @@ const ALLOWED_METHODS = [
   'account_utxos',
 ];
 
-describe('allowlist enforcement — allowed methods', () => {
+describe('allowlist enforcement - allowed methods', () => {
   beforeEach(() => {
     vi.mocked(rpcCall).mockResolvedValue({ foo: 'bar' });
   });
@@ -180,7 +180,7 @@ describe('allowlist enforcement — allowed methods', () => {
   });
 });
 
-describe('allowlist enforcement — blocked methods', () => {
+describe('allowlist enforcement - blocked methods', () => {
   it.each([
     'wallet_delete',
     'admin_shutdown',
@@ -188,7 +188,7 @@ describe('allowlist enforcement — blocked methods', () => {
     '../../etc/passwd',
     '__proto__',
     'constructor',
-    'WALLET_INFO', // case-sensitive — uppercase not allowed
+    'WALLET_INFO', // case-sensitive - uppercase not allowed
   ])('blocks method "%s"', async (method) => {
     const { status, json } = await postRpc({ method, params: {} });
     expect(status).toBe(403);

@@ -101,7 +101,7 @@ export default function IssueNFTModal({ ipfsEnabled, onClose, onIssued }: Props)
       const uploadPromise = ipfsEnabled ? uploadToIPFS(file) : Promise.resolve('');
       const [hash, url] = await Promise.all([hashPromise, uploadPromise]);
       if (ipfsEnabled && !url) {
-        throw new Error('IPFS upload succeeded but returned no URL — cannot proceed without media URI');
+        throw new Error('IPFS upload succeeded but returned no URL - cannot proceed without media URI');
       }
       // Chain max is 32 bytes; SHA-256 hex is 64 chars → truncate to 32
       setMediaHash(hash.slice(0, 32));
@@ -257,7 +257,7 @@ export default function IssueNFTModal({ ipfsEnabled, onClose, onIssued }: Props)
             <p className="text-xs text-gray-500 mt-1">Short identifier, up to 5 characters</p>
           </div>
 
-          {/* Media file — always shown, but label differs by mode */}
+          {/* Media file - always shown, but label differs by mode */}
           <div>
             <label className="block text-xs text-gray-400 mb-1">
               Media file <span className="text-red-400">*</span>
@@ -276,7 +276,7 @@ export default function IssueNFTModal({ ipfsEnabled, onClose, onIssued }: Props)
                     <p className="text-xs text-gray-500 font-mono">SHA-256: {mediaHash.slice(0, 16)}…{mediaHash.slice(-8)}</p>
                   )}
                   {mediaUri && <p className="text-xs text-mint-400">Uploaded to IPFS</p>}
-                  <p className="text-xs text-gray-600 mt-1">{mediaFile?.name} — Click to replace</p>
+                  <p className="text-xs text-gray-600 mt-1">{mediaFile?.name} - Click to replace</p>
                 </div>
               ) : (
                 <div className="space-y-1">
@@ -284,7 +284,7 @@ export default function IssueNFTModal({ ipfsEnabled, onClose, onIssued }: Props)
                   <p className="text-xs text-gray-600">
                     {ipfsEnabled
                       ? 'Hash computed + uploaded to IPFS automatically'
-                      : 'Hash computed locally — enter IPFS URL manually below if needed'}
+                      : 'Hash computed locally - enter IPFS URL manually below if needed'}
                   </p>
                 </div>
               )}
@@ -363,7 +363,7 @@ export default function IssueNFTModal({ ipfsEnabled, onClose, onIssued }: Props)
               <label className="block text-xs text-gray-400 mb-1">Icon image <span className="text-gray-500">(optional)</span></label>
               <label className={`flex items-center gap-3 rounded-lg border border-dashed border-gray-700 px-4 py-3 cursor-pointer hover:border-gray-500 hover:bg-gray-800/40 transition-colors ${iconUploading ? 'opacity-60 pointer-events-none' : ''}`}>
                 {iconUri ? (
-                  <span className="text-xs text-mint-400">Uploaded — {iconFile?.name ?? 'icon'}</span>
+                  <span className="text-xs text-mint-400">Uploaded - {iconFile?.name ?? 'icon'}</span>
                 ) : iconUploading ? (
                   <span className="text-sm text-gray-400">Uploading…</span>
                 ) : (
@@ -396,7 +396,7 @@ export default function IssueNFTModal({ ipfsEnabled, onClose, onIssued }: Props)
               required
               className={inp}
             />
-            <p className="text-xs text-gray-500 mt-1">Your address — NFT will be sent here.</p>
+            <p className="text-xs text-gray-500 mt-1">Your address - NFT will be sent here.</p>
           </div>
 
           {error && (

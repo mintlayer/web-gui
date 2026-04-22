@@ -37,7 +37,7 @@ try {
 }
 
 // Both staking_list_pools and staking_list_created_block_ids encode pool_id via
-// Address::new(chain_config, pool_id).to_string() — same bech32 format, safe to group.
+// Address::new(chain_config, pool_id).to_string() - same bech32 format, safe to group.
 const blocksByPool = createdBlocks.reduce<Record<string, typeof createdBlocks>>((acc, b) => {
   (acc[b.pool_id] ??= []).push(b);
   return acc;

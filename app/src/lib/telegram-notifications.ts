@@ -1,17 +1,17 @@
 /**
- * telegram-notifications.ts — Wallet event detection and notification dispatch.
+ * telegram-notifications.ts - Wallet event detection and notification dispatch.
  *
  * Polls wallet and node state every POLL_INTERVAL_MS. On each tick it compares
  * the current state against the last known state and fires Telegram messages
  * for the events the user has enabled.
  *
  * Events tracked:
- *   received   — Balance increased (new incoming funds)
- *   confirmed  — New transaction(s) appeared in the confirmed list
- *   staking    — New blocks created by our pools (= staking reward earned)
- *   sync       — Wallet sync state changed (fell behind / caught up)
- *   offline    — Node/wallet RPC became unreachable or came back
- *   large_send — Outgoing amount exceeded the configured threshold
+ *   received   - Balance increased (new incoming funds)
+ *   confirmed  - New transaction(s) appeared in the confirmed list
+ *   staking    - New blocks created by our pools (= staking reward earned)
+ *   sync       - Wallet sync state changed (fell behind / caught up)
+ *   offline    - Node/wallet RPC became unreachable or came back
+ *   large_send - Outgoing amount exceeded the configured threshold
  */
 
 import { getPref } from './prefs-db';
@@ -103,7 +103,7 @@ export async function pollNotifications(
     createdBlockCount = blocks.length;
     txIds             = txList.map(t => t.id);
 
-    // Node is reachable — reset failure counter
+    // Node is reachable - reset failure counter
     if (!state.nodeOnline && state.rpcFailures >= OFFLINE_THRESHOLD) {
       await maybeNotify(botToken, chatId, 'offline',
         '🟢 <b>Node is back online</b>\n\nWallet RPC is reachable again.', true);
@@ -119,7 +119,7 @@ export async function pollNotifications(
         `🔴 <b>Node appears offline</b>\n\n${msg}`, true);
       state.nodeOnline = false;
     }
-    // Don't update state further — we have no fresh data
+    // Don't update state further - we have no fresh data
     return;
   }
 
@@ -151,7 +151,7 @@ export async function pollNotifications(
     // Balance increased
     const newBlocks = createdBlockCount - state.lastCreatedBlockCount;
     if (newBlocks === 0) {
-      // Not from staking — likely an incoming payment
+      // Not from staking - likely an incoming payment
       const diffDecimal = formatAtoms(balanceDiff);
       await maybeNotify(botToken, chatId, 'received',
         `📨 <b>Incoming transaction</b>\n\n` +
@@ -160,7 +160,7 @@ export async function pollNotifications(
     }
     // (Staking reward already handled above)
   } else if (balanceDiff < 0n) {
-    // Balance decreased — outgoing transaction
+    // Balance decreased - outgoing transaction
     const diffDecimal = formatAtoms(-balanceDiff);
     const thresholdStr = getPref<string>('telegram.notify.large_send_threshold') ?? '100';
     const threshold = parseFloat(thresholdStr) || 100;

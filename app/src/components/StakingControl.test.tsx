@@ -1,5 +1,5 @@
 /**
- * Tests for StakingControl — start/stop staking toggle component.
+ * Tests for StakingControl - start/stop staking toggle component.
  * Uses MSW to intercept /api/rpc fetch calls.
  */
 
@@ -15,7 +15,7 @@ function renderStaking(initialStatus: 'Staking' | 'NotStaking') {
   return render(<StakingControl initialStatus={initialStatus} />);
 }
 
-describe('StakingControl — initial rendering', () => {
+describe('StakingControl - initial rendering', () => {
   it('shows "Staking" label and "Stop" button when initialStatus is Staking', () => {
     renderStaking('Staking');
     expect(screen.getByText('Staking')).toBeInTheDocument();
@@ -34,7 +34,7 @@ describe('StakingControl — initial rendering', () => {
   });
 });
 
-describe('StakingControl — start flow', () => {
+describe('StakingControl - start flow', () => {
   it('calls staking_start and transitions to Staking on success', async () => {
     server.use(
       http.post('/api/rpc', async ({ request }) => {
@@ -87,7 +87,7 @@ describe('StakingControl — start flow', () => {
   });
 });
 
-describe('StakingControl — stop flow', () => {
+describe('StakingControl - stop flow', () => {
   it('calls staking_stop and transitions to Not staking on success', async () => {
     server.use(
       http.post('/api/rpc', async ({ request }) => {
@@ -111,7 +111,7 @@ describe('StakingControl — stop flow', () => {
   });
 });
 
-describe('StakingControl — error handling', () => {
+describe('StakingControl - error handling', () => {
   it('displays error message when RPC returns {ok: false}', async () => {
     server.use(
       http.post('/api/rpc', () =>
@@ -143,11 +143,11 @@ describe('StakingControl — error handling', () => {
     const user = userEvent.setup();
     renderStaking('NotStaking');
 
-    // First click — fails
+    // First click - fails
     await user.click(screen.getByRole('button', { name: 'Start' }));
     await waitFor(() => expect(screen.getByText('fail')).toBeInTheDocument());
 
-    // Second click — succeeds, error should clear
+    // Second click - succeeds, error should clear
     await user.click(screen.getByRole('button', { name: 'Start' }));
     await waitFor(() => expect(screen.queryByText('fail')).not.toBeInTheDocument());
   });

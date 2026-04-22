@@ -1,5 +1,5 @@
 /**
- * Indexer REST API client — server-side only.
+ * Indexer REST API client - server-side only.
  *
  * The indexer (api-web-server) is an optional Docker Compose profile.
  * Start it with: docker compose --profile indexer up -d

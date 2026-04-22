@@ -255,7 +255,7 @@ function FreezeSection({ tokenId, onRefresh }: { tokenId: string; onRefresh: () 
         <p className="text-xs text-gray-500">
           {isUnfreezable
             ? 'You will be able to unfreeze this token in the future.'
-            : 'This freeze will be permanent — the token can never be unfrozen.'}
+            : 'This freeze will be permanent - the token can never be unfrozen.'}
         </p>
         {msg && <p className={state === 'error' ? errorCls : successCls}>{msg}</p>}
         <button

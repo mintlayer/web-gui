@@ -1,5 +1,5 @@
 /**
- * Tests for txWatcher.ts — client-side EventSource-based TX confirmation.
+ * Tests for txWatcher.ts - client-side EventSource-based TX confirmation.
  * Environment: jsdom (EventSource is a browser API).
  */
 
@@ -110,7 +110,7 @@ describe('watchTx', () => {
     expect(settled).toBe(false);
   });
 
-  it('treats TxDropped as Inactive (keeps waiting — does not resolve or reject)', async () => {
+  it('treats TxDropped as Inactive (keeps waiting - does not resolve or reject)', async () => {
     const { watchTx } = await import('@/lib/txWatcher');
     let settled = false;
     const promise = watchTx('tx1');

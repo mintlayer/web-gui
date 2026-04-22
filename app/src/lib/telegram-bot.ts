@@ -1,9 +1,9 @@
 /**
- * telegram-bot.ts — Background polling orchestrator.
+ * telegram-bot.ts - Background polling orchestrator.
  *
  * Starts two independent async loops when imported:
- *   1. Command loop  — long-polls Telegram's getUpdates, routes /commands.
- *   2. Notification loop — polls wallet/node state and fires event messages.
+ *   1. Command loop  - long-polls Telegram's getUpdates, routes /commands.
+ *   2. Notification loop - polls wallet/node state and fires event messages.
  *
  * Both loops are resilient: they wait for configuration to appear in the prefs
  * DB, and resume automatically if the bot token/chat ID is updated at runtime
@@ -24,12 +24,13 @@ import {
 } from './telegram-notifications';
 
 // ── Startup guard ──────────────────────────────────────────────────────────────
-// Prevent double-start if the module is hot-reloaded in dev mode.
+// Use globalThis so the flag survives hot-reload (module re-evaluation resets
+// module-level vars but not globalThis properties).
 
-let _started = false;
+const _g = globalThis as typeof globalThis & { __telegramBotStarted?: boolean };
 
-if (!_started) {
-  _started = true;
+if (!_g.__telegramBotStarted) {
+  _g.__telegramBotStarted = true;
   console.log('[telegram-bot] starting background loops');
   runCommandLoop().catch(err =>
     console.error('[telegram-bot] command loop crashed unexpectedly:', err),
@@ -60,14 +61,22 @@ async function runCommandLoop(): Promise<void> {
 
       for (const update of updates) {
         offset = Math.max(offset, update.update_id + 1);
-        // Fire-and-forget each update — don't block the poll loop
+        // Fire-and-forget each update - don't block the poll loop
         handleUpdate(update, botToken, chatId).catch(err =>
           console.error('[telegram-bot] handleUpdate error:', err),
         );
       }
     } catch (err) {
-      console.error('[telegram-bot] getUpdates failed:', err);
-      await sleep(10_000); // back off before retrying
+      const msg = (err as Error).message ?? '';
+      if (msg.includes('409')) {
+        // Another instance is polling — wait longer than the poll timeout (25s)
+        // so Telegram drops the competing request before we retry.
+        console.warn('[telegram-bot] 409 conflict — another instance is polling, backing off 35s');
+        await sleep(35_000);
+      } else {
+        console.error('[telegram-bot] getUpdates failed:', err);
+        await sleep(10_000);
+      }
     }
   }
 }

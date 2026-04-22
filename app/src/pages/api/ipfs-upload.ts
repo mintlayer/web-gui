@@ -1,10 +1,10 @@
 /**
- * /api/ipfs-upload — Server-side proxy to IPFS pinning services.
+ * /api/ipfs-upload - Server-side proxy to IPFS pinning services.
  *
  * Supported providers (set IPFS_PROVIDER in .env):
- *   filebase — 5 GB free, always public  (FILEBASE_TOKEN)
+ *   filebase - 5 GB free, always public  (FILEBASE_TOKEN)
  *              Bucket-specific API key from https://console.filebase.com/keys (scroll to bottom)
- *   pinata   — requires paid plan for public files  (PINATA_JWT)
+ *   pinata   - requires paid plan for public files  (PINATA_JWT)
  *
  * Backward compatibility: if IPFS_PROVIDER is unset but PINATA_JWT is present,
  * Pinata is used automatically.

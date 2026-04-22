@@ -1,5 +1,5 @@
 /**
- * Module-level toast store — shared across all React islands on the page.
+ * Module-level toast store - shared across all React islands on the page.
  * Uses useSyncExternalStore-compatible subscribe/getSnapshot pattern.
  */
 

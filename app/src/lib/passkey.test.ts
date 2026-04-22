@@ -64,7 +64,7 @@ describe('createChallenge / consumeChallenge', () => {
     expect(consumeChallenge('no-such-token')).toBeNull();
   });
 
-  it('is single-use — second consume returns null', () => {
+  it('is single-use - second consume returns null', () => {
     const token = createChallenge('one-time');
     consumeChallenge(token);
     expect(consumeChallenge(token)).toBeNull();

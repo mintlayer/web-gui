@@ -1,5 +1,5 @@
 /**
- * /api/rpc — Server-side proxy to the wallet-rpc-daemon.
+ * /api/rpc - Server-side proxy to the wallet-rpc-daemon.
  *
  * Accepts POST requests with { method, params } and forwards them to the
  * wallet-rpc-daemon using stored credentials. This keeps credentials
@@ -71,6 +71,7 @@ const ALLOWED_METHODS = new Set([
   'transaction_list_pending',
   // UTXOs
   'account_utxos',
+  'address_sweep_spendable',
 ]);
 
 export const POST: APIRoute = async ({ request }) => {

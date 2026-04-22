@@ -892,6 +892,8 @@ divider
 # Step 7 — Firewall (optional, Linux only)
 # ─────────────────────────────────────────────────────────────────────────────
 SETUP_FIREWALL="no"
+OPEN_P2P_PORT="no"
+if [[ "${NETWORK:-mainnet}" == "mainnet" ]]; then _P2P_PORT=3031; else _P2P_PORT=13031; fi
 if [[ "$OS" == "linux" ]]; then
   step "Firewall"
   hint "A firewall restricts inbound traffic to SSH, HTTP, and HTTPS only."
@@ -906,9 +908,10 @@ if [[ "$OS" == "linux" ]]; then
     printf "${RED}│${RESET}  ${BOLD}⚠  WARNING — READ CAREFULLY${RESET}\n"
     printf "${RED}│${RESET}\n"
     printf "${RED}│${RESET}  Enabling a firewall will block ALL inbound ports except:\n"
-    printf "${RED}│${RESET}    • SSH  (port 22)\n"
-    printf "${RED}│${RESET}    • HTTP (port 80)\n"
+    printf "${RED}│${RESET}    • SSH   (port 22)\n"
+    printf "${RED}│${RESET}    • HTTP  (port 80)\n"
     printf "${RED}│${RESET}    • HTTPS (port 443)\n"
+    printf "${RED}│${RESET}    • Node P2P (port ${_P2P_PORT}) — optional, see below\n"
     printf "${RED}│${RESET}\n"
     printf "${RED}│${RESET}  ${BOLD}If your SSH session uses a non-standard port you will be locked out.${RESET}\n"
     printf "${RED}│${RESET}  ${BOLD}If you are unsure, answer N and configure the firewall manually.${RESET}\n"
@@ -918,11 +921,17 @@ if [[ "$OS" == "linux" ]]; then
 
     if [[ "$SETUP_FIREWALL" == "yes" ]]; then
       printf "${CYAN}│${RESET}\n"
+      hint "If this machine has a public IP, opening the P2P port (${_P2P_PORT}/tcp) allows"
+      hint "other nodes to initiate connections to you, improving network health."
+      confirm OPEN_P2P_PORT "Open node P2P port ${_P2P_PORT}/tcp for inbound peer connections?" "N"
+
+      printf "${CYAN}│${RESET}\n"
       printf "${CYAN}│${RESET}  ${BOLD}Final confirmation required.${RESET}\n"
       printf "${CYAN}│${RESET}  Type ${BOLD}YES${RESET} (uppercase) to proceed: "
       read -r FIREWALL_CONFIRM
       if [[ "$FIREWALL_CONFIRM" != "YES" ]]; then
         SETUP_FIREWALL="no"
+        OPEN_P2P_PORT="no"
         warn "Firewall setup cancelled."
       fi
     fi
@@ -1088,21 +1097,35 @@ if [[ "$SETUP_FIREWALL" == "yes" ]]; then
   if [ "$(id -u)" -ne 0 ]; then _sudo="sudo"; fi
 
   if command -v ufw &>/dev/null; then
-    $_sudo ufw --force reset     >/dev/null 2>&1
+    $_sudo ufw --force reset          >/dev/null 2>&1
     $_sudo ufw default deny incoming  >/dev/null 2>&1
     $_sudo ufw default allow outgoing >/dev/null 2>&1
-    $_sudo ufw allow 22/tcp      >/dev/null 2>&1
-    $_sudo ufw allow 80/tcp      >/dev/null 2>&1
-    $_sudo ufw allow 443/tcp     >/dev/null 2>&1
-    $_sudo ufw --force enable    >/dev/null 2>&1
-    ok "ufw enabled — SSH (22), HTTP (80), HTTPS (443) allowed"
+    $_sudo ufw allow 22/tcp           >/dev/null 2>&1
+    $_sudo ufw allow 80/tcp           >/dev/null 2>&1
+    $_sudo ufw allow 443/tcp          >/dev/null 2>&1
+    if [[ "$OPEN_P2P_PORT" == "yes" ]]; then
+      $_sudo ufw allow ${_P2P_PORT}/tcp >/dev/null 2>&1
+    fi
+    $_sudo ufw --force enable         >/dev/null 2>&1
+    if [[ "$OPEN_P2P_PORT" == "yes" ]]; then
+      ok "ufw enabled — SSH (22), HTTP (80), HTTPS (443), P2P (${_P2P_PORT}) allowed"
+    else
+      ok "ufw enabled — SSH (22), HTTP (80), HTTPS (443) allowed"
+    fi
   elif command -v firewall-cmd &>/dev/null; then
     $_sudo firewall-cmd --set-default-zone=drop           >/dev/null 2>&1
     $_sudo firewall-cmd --permanent --add-service=ssh     >/dev/null 2>&1
     $_sudo firewall-cmd --permanent --add-service=http    >/dev/null 2>&1
     $_sudo firewall-cmd --permanent --add-service=https   >/dev/null 2>&1
+    if [[ "$OPEN_P2P_PORT" == "yes" ]]; then
+      $_sudo firewall-cmd --permanent --add-port=${_P2P_PORT}/tcp >/dev/null 2>&1
+    fi
     $_sudo firewall-cmd --reload                          >/dev/null 2>&1
-    ok "firewalld enabled — SSH, HTTP, HTTPS allowed"
+    if [[ "$OPEN_P2P_PORT" == "yes" ]]; then
+      ok "firewalld enabled — SSH, HTTP, HTTPS, P2P (${_P2P_PORT}) allowed"
+    else
+      ok "firewalld enabled — SSH, HTTP, HTTPS allowed"
+    fi
   fi
 fi
 

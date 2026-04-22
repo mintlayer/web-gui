@@ -22,7 +22,7 @@ try {
     id => parseFloat(balance.tokens[id].decimal) > 0
   );
   if (tokenIds.length > 0) {
-    // node_get_tokens_info does not preserve input order — call one at a time to
+    // node_get_tokens_info does not preserve input order - call one at a time to
     // guarantee the ticker is assigned to the correct token ID.
     const infoResults = await Promise.all(
       tokenIds.map(id => getTokensInfo([id]).then(([info]) => ({ id, info: info ?? null })))

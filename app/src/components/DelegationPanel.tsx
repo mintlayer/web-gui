@@ -274,7 +274,7 @@ export default function DelegationPanel({ poolId, initialDelegations, network }:
         />
       ))}
 
-      {/* Create form — only shown when no delegation exists */}
+      {/* Create form - only shown when no delegation exists */}
       {!hasDelegation && (
         <div className="rounded-lg bg-gray-800/50 border border-gray-700/50 p-4 space-y-3">
           <p className="text-xs text-gray-400">

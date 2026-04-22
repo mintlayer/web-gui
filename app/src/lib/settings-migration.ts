@@ -1,8 +1,8 @@
 /**
- * settings-migration.ts — Seeds the prefs DB from .env on first startup.
+ * settings-migration.ts - Seeds the prefs DB from .env on first startup.
  *
  * Runs as a module-level side effect (imported once per Node process).
- * Only writes a key if it is absent from the DB — idempotent on every
+ * Only writes a key if it is absent from the DB - idempotent on every
  * subsequent startup.
  */
 

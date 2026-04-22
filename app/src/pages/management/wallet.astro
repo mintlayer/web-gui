@@ -12,7 +12,7 @@ import {
   type SeedPhraseResult,
 } from '@/lib/wallet-rpc';
 import { verifyTOTP } from '@/lib/auth';
-import { getStringPref } from '@/lib/prefs-db';
+import { getStringPref, getPref, setPref } from '@/lib/prefs-db';
 
 let info: WalletInfo | null = null;
 let infoError: string | null = null;
@@ -22,6 +22,7 @@ let actionError: string | null = null;
 // null = unknown (probe failed for unrelated reason), true = locked, false = unlocked
 let isLocked: boolean | null = null;
 let isStaking = false;
+let lookaheadSize: number = getPref<number>('wallet.lookahead_size') ?? 20;
 
 // Load wallet info and staking status
 try {
@@ -61,6 +62,8 @@ if (Astro.request.method === 'POST') {
     } else if (action === 'set_lookahead') {
       const size = parseInt(form.get('lookahead_size') as string, 10);
       await walletSetLookaheadSize(size);
+      lookaheadSize = size;
+      setPref('wallet.lookahead_size', size);
       actionSuccess = `Lookahead size set to ${size}.`;
     }
   } catch (err) {
@@ -320,7 +323,8 @@ if (isLocked === null) {
           name="lookahead_size"
           min="1"
           max="1000"
-          value="20"
+          value={lookaheadSize}
+          placeholder="20"
           class="rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-mint-600 w-24"
         />
         <button

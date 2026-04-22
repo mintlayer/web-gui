@@ -1,5 +1,5 @@
 /**
- * telegram-commands.ts — Bot command handlers.
+ * telegram-commands.ts - Bot command handlers.
  *
  * Read-only commands run freely. Write commands (/staking on|off) require an
  * inline TOTP code: e.g. `/staking on 123456`. The code is verified against
@@ -82,16 +82,16 @@ async function cmdHelp(botToken: string, chatId: string): Promise<void> {
     '🤖 <b>Mintlayer GUI-X Bot</b>',
     '',
     '<b>Read-only commands:</b>',
-    '/balance — Current wallet balance',
-    '/sync — Sync status and block heights',
-    '/address — Generate a fresh receive address (with QR)',
-    '/status — Overall node &amp; wallet health',
-    '/staking — Staking status and pools',
+    '/balance - Current wallet balance',
+    '/sync - Sync status and block heights',
+    '/address - Generate a fresh receive address (with QR)',
+    '/status - Overall node &amp; wallet health',
+    '/staking - Staking status and pools',
     '',
     '<b>Write commands</b> (require your authenticator code):',
-    '/staking on <code>123456</code> — Start staking',
-    '/staking off <code>123456</code> — Stop staking',
-    '/help — Show this message',
+    '/staking on <code>123456</code> - Start staking',
+    '/staking off <code>123456</code> - Stop staking',
+    '/help - Show this message',
   ].join('\n'));
 }
 
@@ -131,11 +131,11 @@ async function cmdSync(botToken: string, chatId: string): Promise<void> {
 
   let statusLine: string;
   if (ibd) {
-    statusLine = `⏳ Node is syncing (IBD) — ${pct}%`;
+    statusLine = `⏳ Node is syncing (IBD) - ${pct}%`;
   } else if (behind <= 2) {
     statusLine = `✅ Fully synced`;
   } else {
-    statusLine = `🔄 Wallet syncing — ${behind.toLocaleString()} blocks behind`;
+    statusLine = `🔄 Wallet syncing - ${behind.toLocaleString()} blocks behind`;
   }
 
   await sendTelegramMessage(botToken, chatId, [
@@ -247,7 +247,7 @@ async function cmdStaking(botToken: string, chatId: string, args: string[]): Pro
     return;
   }
 
-  // ── Read-only: /staking (no args) — show status ────────────────────────────
+  // ── Read-only: /staking (no args) - show status ────────────────────────────
   if (!(getPref<boolean>('telegram.staking.status') ?? true)) {
     await sendTelegramMessage(botToken, chatId,
       '🔒 Staking status command is disabled.\n\nEnable it in Management → Settings → Telegram notifications.');
@@ -256,7 +256,7 @@ async function cmdStaking(botToken: string, chatId: string, args: string[]): Pro
 
   if (subCmd && subCmd !== 'status') {
     await sendTelegramMessage(botToken, chatId,
-      'Usage:\n/staking — show status\n/staking on <code>123456</code> — start\n/staking off <code>123456</code> — stop');
+      'Usage:\n/staking - show status\n/staking on <code>123456</code> - start\n/staking off <code>123456</code> - stop');
     return;
   }
 

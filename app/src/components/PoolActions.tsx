@@ -83,7 +83,7 @@ export function CreatePoolForm({ initialDecommissionAddress, onSuccess }: Create
       )}
       {success && (
         <div className="rounded-lg border border-mint-700 bg-mint-900/30 p-3 text-mint-300 text-sm">
-          Pool creation submitted — watch the toast for confirmation.
+          Pool creation submitted - watch the toast for confirmation.
         </div>
       )}
 
@@ -132,7 +132,7 @@ export function CreatePoolForm({ initialDecommissionAddress, onSuccess }: Create
                      px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-mint-600 disabled:opacity-50"
         />
         <p className="text-xs text-yellow-600 mt-1">
-          Controls who can decommission the pool. Pre-filled with a fresh wallet address — save it.
+          Controls who can decommission the pool. Pre-filled with a fresh wallet address - save it.
         </p>
       </div>
 

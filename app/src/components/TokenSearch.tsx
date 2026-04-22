@@ -179,7 +179,7 @@ export default function TokenSearch({ network }: Props) {
     if (ids.length === 0) return;
     setFavLoading(true);
     try {
-      // node_get_tokens_info does not preserve input order — call one at a time so
+      // node_get_tokens_info does not preserve input order - call one at a time so
       // each result is guaranteed to correspond to the correct token ID.
       const results = await Promise.all(
         ids.map(id =>
@@ -263,7 +263,7 @@ export default function TokenSearch({ network }: Props) {
         return;
       }
 
-      // node_get_tokens_info does not preserve input order — call one at a time.
+      // node_get_tokens_info does not preserve input order - call one at a time.
       const infoResults = await Promise.all(
         tokenIds.map(id =>
           rpc<(TokenInfo | null)[]>('node_get_tokens_info', { token_ids: [id] })
@@ -336,7 +336,7 @@ export default function TokenSearch({ network }: Props) {
 
       {!indexerAvailable && (
         <p className="text-xs text-gray-500 mt-2">
-          Ticker search requires the indexer — only direct token ID lookup is available.
+          Ticker search requires the indexer - only direct token ID lookup is available.
         </p>
       )}
 

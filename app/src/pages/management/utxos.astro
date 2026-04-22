@@ -1,9 +1,38 @@
 ---
 import ManagementLayout from '@/layouts/ManagementLayout.astro';
-import { listUtxos, isWalletNotOpenError, WalletRpcError, type UtxoEntry, type UtxoOutput } from '@/lib/wallet-rpc';
+import { listUtxos, newAddress, showAddresses, sweepSpendable, isWalletNotOpenError, WalletRpcError, type UtxoEntry, type UtxoOutput, type SweepResult } from '@/lib/wallet-rpc';
+
+const SWEEP_BATCH = 20;
 
 let utxos: UtxoEntry[] = [];
 let error: string | null = null;
+let sweepResult: SweepResult | null = null;
+let sweepDest: string | null = null;
+let sweepTxCount = 0;
+let actionError: string | null = null;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  if (form.get('action') === 'consolidate') {
+    try {
+      const allAddrs = await showAddresses(0, true);
+      const funded = allAddrs.filter(a => a.coins.decimal !== '0').map(a => a.address);
+      const dest = await newAddress(0);
+      sweepDest = dest.address;
+      if (funded.length === 0) {
+        sweepResult = await sweepSpendable(dest.address, [], 0);
+        sweepTxCount = 1;
+      } else {
+        for (let i = 0; i < funded.length; i += SWEEP_BATCH) {
+          sweepResult = await sweepSpendable(dest.address, funded.slice(i, i + SWEEP_BATCH), 0);
+          sweepTxCount++;
+        }
+      }
+    } catch (err) {
+      actionError = err instanceof WalletRpcError ? err.message : (err as Error).message;
+    }
+  }
+}
 
 try {
   utxos = await listUtxos(0);
@@ -40,7 +69,36 @@ function isLocked(output: UtxoOutput): boolean {
 ---
 
 <ManagementLayout title="UTXOs" activeTab="utxos">
-  <h1 class="text-2xl font-bold text-gray-100 mb-6">UTXOs</h1>
+  <div class="flex items-center justify-between mb-6">
+    <h1 class="text-2xl font-bold text-gray-100">UTXOs</h1>
+    <form method="POST">
+      <input type="hidden" name="action" value="consolidate" />
+      <button
+        type="submit"
+        class="rounded-lg bg-gray-700 hover:bg-gray-600 px-4 py-2 text-sm text-white font-medium transition-colors"
+        title="Sweep all UTXOs into a single new address"
+      >
+        Consolidate
+      </button>
+    </form>
+  </div>
+
+  {sweepResult && sweepDest && (
+    <div class="rounded-lg border border-mint-700 bg-mint-900/30 p-4 mb-5 space-y-1">
+      <p class="text-xs text-mint-400 uppercase tracking-wider">
+        Consolidation submitted{sweepTxCount > 1 ? ` · ${sweepTxCount} transactions` : ''}
+      </p>
+      <p class="text-xs text-gray-400">Destination: <span class="font-mono text-gray-300 break-all">{sweepDest}</span></p>
+      <p class="text-xs text-gray-400">Last tx: <span class="font-mono text-gray-300 break-all">{sweepResult.tx_id}</span></p>
+      <p class="text-xs text-gray-400">Last fee: <span class="font-mono text-gray-300">{sweepResult.fees.coins.decimal} ML</span></p>
+    </div>
+  )}
+
+  {actionError && (
+    <div class="rounded-lg border border-red-700 bg-red-900/30 p-3 mb-5 text-red-300 text-sm">
+      {actionError}
+    </div>
+  )}
 
   {error && (
     <div class="rounded-lg border border-red-700 bg-red-900/30 p-4 text-red-300 text-sm mb-6">

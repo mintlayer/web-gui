@@ -44,13 +44,15 @@ tar -czf myplugin.tgz myplugin/plugin.json myplugin/index.mjs
 
 ## plugin.json — manifest
 
-| Field | Type | Description |
-|---|---|---|
-| `id` | string | Unique identifier. **Lowercase letters, digits, and hyphens only** — used as a URL path segment and directory name. |
-| `name` | string | Human-readable name shown in the Plugins management page. |
-| `navLabel` | string | Short label shown in the top navigation bar when the plugin is enabled. |
-| `version` | string | Semver-style version string, shown in the Plugins list. |
-| `entry` | string | Filename of the ESM handler module, relative to the archive root. |
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `id` | string | ✓ | Unique identifier. **Lowercase letters, digits, and hyphens only** — used as a URL path segment and directory name. |
+| `name` | string | ✓ | Human-readable name shown in the Plugins management page. |
+| `navLabel` | string | ✓ | Short label shown in the sidebar when the plugin is enabled. |
+| `version` | string | ✓ | Semver-style version string, shown in the Plugins list. |
+| `entry` | string | ✓ | Filename of the ESM handler module, relative to the archive root. |
+| `navSection` | string | — | Sidebar section to place the plugin in. One of `"wallet"`, `"assets"`, `"trade"`, `"apps"`. Defaults to `"apps"`. |
+| `navIcon` | string | — | SVG `d` attribute of a single Heroicons-outline-style path (`viewBox="0 0 24 24"`, `strokeWidth="1.5"`). Defaults to a wrench icon. |
 
 ```json
 {
@@ -58,11 +60,23 @@ tar -czf myplugin.tgz myplugin/plugin.json myplugin/index.mjs
   "name": "My Plugin",
   "navLabel": "My Plugin",
   "version": "1.0.0",
-  "entry": "index.mjs"
+  "entry": "index.mjs",
+  "navSection": "apps",
+  "navIcon": "M12 18v-5.25m0 0a6.01 6.01 0 001.5-.189m-1.5.189a6.01 6.01 0 01-1.5-.189m3.75 7.478a12.06 12.06 0 01-4.5 0m3.75 2.383a14.406 14.406 0 01-3 0M14.25 18v-.192c0-.983.658-1.823 1.508-2.316a7.5 7.5 0 10-7.517 0c.85.493 1.509 1.333 1.509 2.316V18"
 }
 ```
 
 **ID rules:** must match `/^[a-z0-9][a-z0-9-]*[a-z0-9]$/`. No uppercase, no leading/trailing dash, minimum 2 characters. The ID becomes the URL path (`/plugins/{id}/`) and the directory name on disk.
+
+### Choosing a `navIcon`
+
+The icon is the `d` attribute value of a single SVG path. Use any [Heroicons outline icon](https://heroicons.com/) (24px, strokeWidth 1.5). Copy the `d` value from the SVG source:
+
+```json
+"navIcon": "M2.25 18.75a60.07 60.07 0 0115.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 013 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18.75-9v9m0 0h-.375a.75.75 0 01-.75-.75V18M18.75 15h.375A.75.75 0 0120.25 15v3.75m-18 0H3.75m0 0a.75.75 0 00-.75.75V20.25m.75-.75H12"
+```
+
+The wrench icon is used when `navIcon` is omitted.
 
 ---
 

@@ -102,7 +102,7 @@ export default function IssuedTokensPanel({ network }: Props) {
       const map = await fetchLiveInfos(tokens.map(t => t.tokenId));
       setLiveInfos(map);
     } catch {
-      // silently fail — we still show stored data
+      // silently fail - we still show stored data
     } finally {
       setLoading(false);
     }
@@ -116,7 +116,7 @@ export default function IssuedTokensPanel({ network }: Props) {
       const status = await statusRes.json() as { up: boolean };
       if (!status.up) return;
 
-      // Get all wallet addresses (receive + change — authority could be either)
+      // Get all wallet addresses (receive + change - authority could be either)
       const addresses = await rpc<{ address: string }[]>(
         'address_show', { account: 0, include_change_addresses: true }
       );
@@ -149,7 +149,7 @@ export default function IssuedTokensPanel({ network }: Props) {
         return next;
       });
     } catch {
-      // Indexer augmentation is best-effort — don't surface errors
+      // Indexer augmentation is best-effort - don't surface errors
     }
   }
 
@@ -194,9 +194,9 @@ export default function IssuedTokensPanel({ network }: Props) {
               const content = live?.type === 'FungibleToken' ? live.content : null;
               const ticker = content?.token_ticker.text ?? token.ticker;
               const decimals = content?.number_of_decimals ?? token.decimals;
-              const circulating = content ? atomsToDecimal(content.circulating_supply.atoms, decimals) : '—';
+              const circulating = content ? atomsToDecimal(content.circulating_supply.atoms, decimals) : '-';
               const badges = content ? supplyBadge(content) : [];
-              const supplyType = content?.total_supply.type ?? '—';
+              const supplyType = content?.total_supply.type ?? '-';
 
               return (
                 <tr key={token.tokenId} className="bg-gray-900 hover:bg-gray-800/60 transition-colors">
@@ -227,7 +227,7 @@ export default function IssuedTokensPanel({ network }: Props) {
                   </td>
                   <td className="px-4 py-3 text-right font-mono text-gray-200 text-xs">
                     {circulating}
-                    {circulating !== '—' && (
+                    {circulating !== '-' && (
                       <span className="inline-flex items-center gap-1 ml-1">
                         <span className="text-gray-500">{ticker}</span>
                         <TokenIdTooltip tokenId={token.tokenId} align="right" />

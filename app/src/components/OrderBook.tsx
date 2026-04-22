@@ -84,7 +84,7 @@ function friendlyError(err: unknown): string {
       ? (Number(gotAtoms) / 1e11).toLocaleString(undefined, { maximumFractionDigits: 8 }) + ' ML'
       : null;
     return gotML
-      ? `Insufficient funds — your balance (${gotML}) is too low to cover this transaction including fees.`
+      ? `Insufficient funds - your balance (${gotML}) is too low to cover this transaction including fees.`
       : 'Insufficient funds to cover this transaction including fees.';
   }
   if (lower.includes('no wallet') || lower.includes('wallet not open')) {
@@ -132,7 +132,7 @@ function formatTimestamp(ts: number): string {
 function calcPrice(mlDecimal: string, tokenDecimal: string): string {
   const ml = parseFloat(mlDecimal);
   const tok = parseFloat(tokenDecimal);
-  if (!tok || !ml) return "—";
+  if (!tok || !ml) return "-";
   return (ml / tok).toPrecision(6).replace(/\.?0+$/, "");
 }
 
@@ -184,11 +184,11 @@ function BuySellPanel({
     ? (parseFloat(amount) * parseFloat(price)).toPrecision(8).replace(/\.?0+$/, "")
     : "";
 
-  const estTokens = mlAmount && bestAskPrice && bestAskPrice !== "—"
+  const estTokens = mlAmount && bestAskPrice && bestAskPrice !== "-"
     ? (parseFloat(mlAmount) / parseFloat(bestAskPrice)).toPrecision(6).replace(/\.?0+$/, "")
     : null;
 
-  const estML = amount && bestBidPrice && bestBidPrice !== "—"
+  const estML = amount && bestBidPrice && bestBidPrice !== "-"
     ? (parseFloat(amount) * parseFloat(bestBidPrice)).toPrecision(6).replace(/\.?0+$/, "")
     : null;
 
@@ -208,7 +208,7 @@ function BuySellPanel({
       await submitWithToast(async () => {
         if (type === "limit") {
           const total = (parseFloat(amount) * parseFloat(price)).toString();
-          // conclude_address is required — fetch a fresh receive address
+          // conclude_address is required - fetch a fresh receive address
           const addrRes = await rpc<{ address: string }>("address_new", { account: 0 });
           const res = await rpc<{ tx_id: string }>("order_create", {
             account: 0,
@@ -338,7 +338,7 @@ function BuySellPanel({
         <div className="space-y-3">
           {bestAskPrice
             ? <p className="text-xs text-gray-500">Best ask: <span className="font-mono text-green-400">{bestAskPrice} ML/{effectiveTicker}</span></p>
-            : selectedTokenId && <p className="text-xs text-amber-400">No asks available — load the order book first.</p>
+            : selectedTokenId && <p className="text-xs text-amber-400">No asks available - load the order book first.</p>
           }
           <div className="space-y-1.5">
             <label className="block text-xs text-gray-400">ML to spend</label>
@@ -359,7 +359,7 @@ function BuySellPanel({
         <div className="space-y-3">
           {bestBidPrice
             ? <p className="text-xs text-gray-500">Best bid: <span className="font-mono text-red-400">{bestBidPrice} ML/{effectiveTicker}</span></p>
-            : selectedTokenId && <p className="text-xs text-amber-400">No bids available — load the order book first.</p>
+            : selectedTokenId && <p className="text-xs text-amber-400">No bids available - load the order book first.</p>
           }
           <div className="space-y-1.5">
             <label className="block text-xs text-gray-400">{effectiveTicker} to sell</label>
@@ -673,7 +673,7 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
       // Load from server-side prefs (same store as Token Management page)
       let favs = await loadFavourites();
 
-      // Auto-star any tokens that have a balance — merge into favourites
+      // Auto-star any tokens that have a balance - merge into favourites
       if (balanceTokens.length > 0) {
         const existingIds = new Set(favs.map(f => f.tokenId));
         const newEntries = balanceTokens.filter(t => !existingIds.has(t.tokenId));
@@ -684,7 +684,7 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
       }
 
       // Resolve types and tickers for all favourites.
-      // NFTs are filtered out — the order book only supports fungible token pairs.
+      // NFTs are filtered out - the order book only supports fungible token pairs.
       // node_get_tokens_info does not preserve input order, so call one at a time.
       const allIds = favs.map(f => f.tokenId);
       if (allIds.length === 0) { setFavourites(favs); return; }
@@ -711,7 +711,7 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
           .filter(f => !nftIds.has(f.tokenId))
           .map(f => tickerUpdates.has(f.tokenId) ? { ...f, ticker: tickerUpdates.get(f.tokenId)! } : f);
         // If a specific token was requested (e.g. from /balances Buy/Sell), ensure
-        // it's in the list and select it — add it to favourites if not already there.
+        // it's in the list and select it - add it to favourites if not already there.
         let finalFavs = fungibleFavs;
         if (initialTokenId && !fungibleFavs.some(f => f.tokenId === initialTokenId)) {
           try {
@@ -793,13 +793,13 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
     try {
       const tokenCurrency = { type: "Token", content: tokenId };
       const [asksRaw, bidsRaw, balance] = await Promise.all([
-        // Asks: give Token, ask ML — sorted by price ascending (cheapest ask first)
+        // Asks: give Token, ask ML - sorted by price ascending (cheapest ask first)
         rpc<ActiveOrderRaw[]>("order_list_all_active", {
           account: 0,
           ask_currency: { type: "Coin" },
           give_currency: tokenCurrency,
         }),
-        // Bids: give ML, ask Token — sorted by price descending (highest bid first)
+        // Bids: give ML, ask Token - sorted by price descending (highest bid first)
         rpc<ActiveOrderRaw[]>("order_list_all_active", {
           account: 0,
           ask_currency: tokenCurrency,
@@ -901,7 +901,7 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
                 <a href="/token-management" className="text-mint-400 hover:text-mint-300 underline">
                   Token Management
                 </a>
-                , search for a token, and pin it — then come back here to trade.
+                , search for a token, and pin it - then come back here to trade.
               </p>
             </div>
           ) : (
@@ -913,7 +913,7 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
                 className="rounded-lg bg-gray-800 border border-gray-700 text-gray-100 px-3 py-2 text-sm
                            focus:outline-none focus:ring-2 focus:ring-mint-600"
               >
-                <option value="">— Select pair —</option>
+                <option value="">- Select pair -</option>
                 {favourites.map(f => (
                   <option key={f.tokenId} value={f.tokenId}>
                     {f.ticker === "???" ? f.tokenId.slice(0, 12) + "…" : f.ticker} / ML
@@ -946,7 +946,7 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
             {!pairLoading && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <PairBookPanel
-                  title={`Asks — ${selectedTicker} Sell Orders`}
+                  title={`Asks - ${selectedTicker} Sell Orders`}
                   orders={pairAsks}
                   side="ask"
                   ticker={selectedTicker}
@@ -954,7 +954,7 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
                   onFilled={() => loadPairOrders(selectedTokenId)}
                 />
                 <PairBookPanel
-                  title={`Bids — ${selectedTicker} Buy Orders`}
+                  title={`Bids - ${selectedTicker} Buy Orders`}
                   orders={pairBids}
                   side="bid"
                   ticker={selectedTicker}

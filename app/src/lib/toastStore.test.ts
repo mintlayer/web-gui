@@ -1,5 +1,5 @@
 /**
- * Tests for toastStore.ts — the useSyncExternalStore-compatible toast state.
+ * Tests for toastStore.ts - the useSyncExternalStore-compatible toast state.
  *
  * The store is a module-level singleton. Each describe block resets module state
  * via vi.resetModules() + dynamic import so toasts[] and listeners start fresh.
@@ -193,7 +193,7 @@ describe('submitWithToast', () => {
       // Toast is pending
       expect(freshMod.toastStore.getSnapshot().find(t => t.id === 'txAutoDismiss')).toBeDefined();
 
-      // Resolve the watchFn — the .then() schedules a setTimeout(8s)
+      // Resolve the watchFn - the .then() schedules a setTimeout(8s)
       resolveWatch({ block_height: 1 });
       // Flush the microtask queue so the .then() body runs and sets up setTimeout
       await Promise.resolve();

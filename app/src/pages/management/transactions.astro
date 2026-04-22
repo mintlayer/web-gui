@@ -3,8 +3,12 @@ import ManagementLayout from '@/layouts/ManagementLayout.astro';
 import { listTransactions, listPendingTransactions, getTransactionSignedRaw, isWalletNotOpenError, WalletRpcError, type TransactionInfo } from '@/lib/wallet-rpc';
 import { decodeSignedTransaction, outputVariant, isTransferOutput, outputValueLabel, type DecodedTransaction } from '@/lib/tx-decoder';
 
-const EXPLORER_BASE =
-  (process.env.ML_EXPLORER_URL ?? 'https://explorer.mintlayer.org').replace(/\/$/, '');
+const network = (process.env.NETWORK ?? 'mainnet').toLowerCase();
+const EXPLORER_BASE = (process.env.ML_EXPLORER_URL ?? (
+  network === 'testnet'
+    ? 'https://lovelace.explorer.mintlayer.org'
+    : 'https://explorer.mintlayer.org'
+)).replace(/\/$/, '');
 
 let transactions: TransactionInfo[] = [];
 let pending: string[] = [];
@@ -40,7 +44,7 @@ function truncateTxId(id: string) {
 }
 
 function outputSummary(detail: DecodedTransaction | null | undefined): string {
-  if (!detail || detail.outputs.length === 0) return '—';
+  if (!detail || detail.outputs.length === 0) return '-';
 
   const nonTransfer = detail.outputs.filter((o) => !isTransferOutput(o));
   if (nonTransfer.length > 0) {
@@ -48,7 +52,7 @@ function outputSummary(detail: DecodedTransaction | null | undefined): string {
     return types.join(', ');
   }
 
-  // All outputs are Transfer / LockThenTransfer — show value from first output
+  // All outputs are Transfer / LockThenTransfer - show value from first output
   const label = outputValueLabel(detail.outputs[0]);
   return label ?? 'Transfer';
 }
@@ -139,7 +143,7 @@ function outputSummary(detail: DecodedTransaction | null | undefined): string {
                     <!-- TXID -->
                     <td class="px-4 py-3 font-mono text-xs text-gray-300 whitespace-nowrap">
                       <a
-                        href={`${EXPLORER_BASE}/transaction/${tx.id}`}
+                        href={`${EXPLORER_BASE}/tx/${tx.id}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         class="hover:text-mint-400 transition-colors"
@@ -174,7 +178,7 @@ function outputSummary(detail: DecodedTransaction | null | undefined): string {
                     <td class="px-4 py-3 text-right text-xs text-gray-400 tabular-nums whitespace-nowrap">
                       {detail
                         ? `${detail.inputs.length} / ${detail.outputs.length}`
-                        : '—'}
+                        : '-'}
                     </td>
                   </tr>
                 );

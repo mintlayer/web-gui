@@ -5,7 +5,7 @@
  * authority. Used by IssuedTokensPanel to discover tokens issued from other
  * browsers / devices / CLI.
  *
- * Returns { ok: true, result: string[] } — deduplicated token IDs.
+ * Returns { ok: true, result: string[] } - deduplicated token IDs.
  */
 
 import type { APIRoute } from 'astro';

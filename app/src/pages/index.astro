@@ -63,7 +63,7 @@ try {
   }
 } catch (err) {
   if (isWalletNotOpenError(err)) {
-    // fall through — the client-side opening screen handles it
+    // fall through - the client-side opening screen handles it
   } else if (err instanceof WalletRpcError && (err.message.includes('Cannot reach') || err.code === -32000)) {
     daemonOffline = true;
   } else {
@@ -124,11 +124,11 @@ const indexerEnabled = process.env.INDEXER_ENABLED === 'true';
       <p class="text-xs text-gray-500 uppercase tracking-wider mb-1">Balance (confirmed)</p>
       {balance ? (
         <p class="text-3xl font-bold text-mint-400 font-mono">
-          {balance.coins.decimal}
+          {parseFloat(balance.coins.decimal).toFixed(4)}
           <span class="text-base text-gray-400 ml-1">ML</span>
         </p>
       ) : (
-        <p class="text-3xl font-bold text-gray-700">—</p>
+        <p class="text-3xl font-bold text-gray-700">-</p>
       )}
       {totalTokens > 0 && (
         <a href="/balances" class="inline-flex items-center gap-1.5 mt-2 text-xs text-gray-500 hover:text-gray-300 transition-colors">
@@ -145,7 +145,7 @@ const indexerEnabled = process.env.INDEXER_ENABLED === 'true';
       {blockInfo ? (
         <p class="text-3xl font-bold text-gray-100 font-mono">#{blockInfo.height.toLocaleString()}</p>
       ) : (
-        <p class="text-3xl font-bold text-gray-700">—</p>
+        <p class="text-3xl font-bold text-gray-700">-</p>
       )}
       {chainstate && blockInfo && (
         <p class="text-xs text-gray-500 mt-1">
@@ -170,7 +170,7 @@ const indexerEnabled = process.env.INDEXER_ENABLED === 'true';
           </span>
         </div>
       ) : (
-        <p class="text-xl font-bold text-gray-700 mt-1">—</p>
+        <p class="text-xl font-bold text-gray-700 mt-1">-</p>
       )}
     </div>
 
@@ -179,7 +179,7 @@ const indexerEnabled = process.env.INDEXER_ENABLED === 'true';
       {blocksFound !== null ? (
         <p class="text-3xl font-bold text-gray-100 font-mono">{blocksFound.toLocaleString()}</p>
       ) : (
-        <p class="text-3xl font-bold text-gray-700">—</p>
+        <p class="text-3xl font-bold text-gray-700">-</p>
       )}
     </div>
   </div>
@@ -201,7 +201,7 @@ const indexerEnabled = process.env.INDEXER_ENABLED === 'true';
     </div>
   )}
 
-  {/* ── Password modal — auto-opens when wallet file exists but is encrypted ── */}
+  {/* ── Password modal - auto-opens when wallet file exists but is encrypted ── */}
   {(needsPassword || passwordError) && (
     <dialog
       id="wallet-password-modal"

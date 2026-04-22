@@ -1,5 +1,5 @@
 /**
- * mlusdt-price — example Mintlayer Web GUI plugin
+ * mlusdt-price - example Mintlayer Web GUI plugin
  *
  * Fetches the ML/USDT spot price from the Bitget public API and displays
  * it in a dashboard card. The page auto-refreshes every 30 seconds by
@@ -48,12 +48,12 @@ async function fetchTicker() {
 
 function fmtPrice(v) {
   const n = parseFloat(v);
-  return isNaN(n) ? '—' : n.toFixed(6);
+  return isNaN(n) ? '-' : n.toFixed(6);
 }
 
 function fmtVolume(v) {
   const n = parseFloat(v);
-  if (isNaN(n)) return '—';
+  if (isNaN(n)) return '-';
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + 'M';
   if (n >= 1_000)     return (n / 1_000).toFixed(2) + 'K';
   return n.toFixed(2);
@@ -61,7 +61,7 @@ function fmtVolume(v) {
 
 function fmtChange(v) {
   const n = parseFloat(v) * 100; // fraction → percent
-  if (isNaN(n)) return { text: '—', positive: true };
+  if (isNaN(n)) return { text: '-', positive: true };
   return {
     text:     (n >= 0 ? '+' : '') + n.toFixed(2) + '%',
     positive: n >= 0,
@@ -181,7 +181,7 @@ export async function handler(request, context) {
     }
   }
 
-  // Main page — returns { title, html } for Layout embedding
+  // Main page - returns { title, html } for Layout embedding
   try {
     const ticker = await fetchTicker();
     return { title: 'ML/USDT Price', html: renderPage(ticker) };

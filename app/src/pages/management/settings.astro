@@ -105,7 +105,7 @@ if (Astro.request.method === 'POST') {
       setPref('telegram.chat_id',   chatId);
       if (test) {
         try {
-          await sendTelegramMessage(botToken, chatId, '✅ Test message from <b>Mintlayer GUI-X</b> — Telegram notifications are working.');
+          await sendTelegramMessage(botToken, chatId, '✅ Test message from <b>Mintlayer GUI-X</b> - Telegram notifications are working.');
           result = { action: 'success', section, message: 'Settings saved and test message sent.' };
         } catch (err) {
           result = { action: 'error', section, message: `Saved, but test failed: ${(err as Error).message}` };
@@ -217,7 +217,7 @@ const passkeysSupported = isValidRpId(passkeyRpId);
           <h3 class="text-sm font-medium text-gray-300 mb-3">Reset Two-Factor Authentication</h3>
           <p class="text-xs text-gray-500 mb-3">
             Generates a new TOTP secret. You must confirm with your current authenticator code.
-            After reset, immediately scan the new QR code — your old code will stop working.
+            After reset, immediately scan the new QR code - your old code will stop working.
           </p>
 
           {result.action === 'success' && result.section === 'reset_2fa' && (
@@ -272,7 +272,7 @@ const passkeysSupported = isValidRpId(passkeyRpId);
         <div class="lg:col-span-2">
           <h3 class="text-sm font-medium text-gray-300 mb-3">Passkeys</h3>
           <p class="text-xs text-gray-500 mb-4">
-            Passkeys let you sign in using your device biometrics or a hardware key — no password or authenticator code needed.
+            Passkeys let you sign in using your device biometrics or a hardware key - no password or authenticator code needed.
             {!passkeysSupported && (
               <span class="block mt-1 text-amber-400">
                 Passkeys require a DNS hostname. Configure <code class="font-mono">PASSKEY_RP_ID</code> and <code class="font-mono">PASSKEY_ORIGIN</code> in your <code class="font-mono">.env</code> to enable them.
@@ -520,8 +520,8 @@ const passkeysSupported = isValidRpId(passkeyRpId);
         <div class="pt-3 border-t border-gray-800 space-y-2">
           <p class="text-xs font-medium text-gray-400">Bot commands</p>
           {[
-            { key: 'staking_status',   label: '/staking — show status (read-only)',      checked: stakingStatus   },
-            { key: 'staking_controls', label: '/staking on|off — toggle staking (write, requires TOTP)', checked: stakingControls },
+            { key: 'staking_status',   label: '/staking - show status (read-only)',      checked: stakingStatus   },
+            { key: 'staking_controls', label: '/staking on|off - toggle staking (write, requires TOTP)', checked: stakingControls },
           ].map(({ key, label, checked }) => (
             <label class="flex items-center gap-3 cursor-pointer group">
               <input

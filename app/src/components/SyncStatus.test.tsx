@@ -1,5 +1,5 @@
 /**
- * Tests for SyncStatus — real-time sync progress component.
+ * Tests for SyncStatus - real-time sync progress component.
  *
  * EventSource is mocked globally so we can control messages and connection events.
  * fetch is intercepted via MSW.
@@ -69,7 +69,7 @@ const defaultProps = {
 
 // ── Rendering ─────────────────────────────────────────────────────────────────
 
-describe('SyncStatus — initial rendering (not yet synced)', () => {
+describe('SyncStatus - initial rendering (not yet synced)', () => {
   it('renders the expanded "System Status" view when not synced', () => {
     render(<SyncStatus {...defaultProps} />);
     expect(screen.getByText('System Status')).toBeInTheDocument();
@@ -92,7 +92,7 @@ describe('SyncStatus — initial rendering (not yet synced)', () => {
   });
 });
 
-describe('SyncStatus — "All systems in sync" collapsed view', () => {
+describe('SyncStatus - "All systems in sync" collapsed view', () => {
   it('shows collapsed view when node and wallet are in sync (isSyncing=false, heights match)', () => {
     render(
       <SyncStatus
@@ -133,7 +133,7 @@ describe('SyncStatus — "All systems in sync" collapsed view', () => {
 
 // ── LiveDot ───────────────────────────────────────────────────────────────────
 
-describe('SyncStatus — LiveDot connection state', () => {
+describe('SyncStatus - LiveDot connection state', () => {
   it('shows "connecting…" before EventSource connects', () => {
     render(<SyncStatus {...defaultProps} />);
     expect(screen.getByText('connecting…')).toBeInTheDocument();
@@ -174,7 +174,7 @@ describe('SyncStatus — LiveDot connection state', () => {
 
 // ── Public chain tip fetch ────────────────────────────────────────────────────
 
-describe('SyncStatus — chain tip fetch', () => {
+describe('SyncStatus - chain tip fetch', () => {
   it('fetches /api/chain-tip on mount', async () => {
     const handler = vi.fn(() => HttpResponse.json({ height: 5000, id: 'tipid' }));
     server.use(http.get('/api/chain-tip', handler));
@@ -189,7 +189,7 @@ describe('SyncStatus — chain tip fetch', () => {
 
 // ── Indexer status fetch ──────────────────────────────────────────────────────
 
-describe('SyncStatus — indexer status', () => {
+describe('SyncStatus - indexer status', () => {
   it('fetches /api/indexer-status when indexerEnabled=true', async () => {
     const handler = vi.fn(() => HttpResponse.json({ up: true, height: 940 }));
     server.use(http.get('/api/indexer-status', handler));
@@ -229,7 +229,7 @@ describe('SyncStatus — indexer status', () => {
 
 // ── Block stream messages ─────────────────────────────────────────────────────
 
-describe('SyncStatus — block stream events', () => {
+describe('SyncStatus - block stream events', () => {
   it('opens an EventSource for /api/block-stream', () => {
     render(<SyncStatus {...defaultProps} />);
     expect(MockEventSource.instances).toHaveLength(1);

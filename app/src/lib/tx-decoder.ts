@@ -4,7 +4,7 @@
  * Decodes a hex-encoded signed transaction into a structured JS object
  * with human-readable addresses (bech32) and parsed outputs.
  *
- * The WASM package is architecture-neutral — built once from
+ * The WASM package is architecture-neutral - built once from
  * wasm-wrappers in mintlayer-core and committed to this repo.
  */
 
@@ -15,7 +15,7 @@ import { join } from 'node:path';
 // SSR module runner nor npm package resolution can interfere.
 // process.cwd() is the `app/` directory in both local dev and Docker (/app).
 const _wasmAbsPath = join(process.cwd(), 'wasm-wrappers', 'wasm_wrappers.js');
-// createRequire needs a *different* file as its "parent module" — using the
+// createRequire needs a *different* file as its "parent module" - using the
 // WASM file itself would make _require('./wasm_wrappers.js') resolve to itself.
 const _require = createRequire(import.meta.url);
 const { decode_signed_transaction_to_js, Network } = _require(_wasmAbsPath) as {

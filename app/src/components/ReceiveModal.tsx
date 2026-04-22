@@ -40,7 +40,7 @@ export default function ReceiveModal() {
       if (unused) {
         setState({ status: "ready", address: unused.address });
       } else {
-        // All used — generate a fresh one
+        // All used - generate a fresh one
         const result = await rpc<{ address: string }>("address_new", { account: 0 });
         setState({ status: "ready", address: result.address });
       }

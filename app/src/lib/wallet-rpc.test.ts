@@ -1,5 +1,5 @@
 /**
- * Tests for wallet-rpc.ts — the server-side JSON-RPC 2.0 client.
+ * Tests for wallet-rpc.ts - the server-side JSON-RPC 2.0 client.
  *
  * fetch is mocked globally so no real network calls are made.
  * Tests verify: request construction, auth headers, error handling,
@@ -29,7 +29,7 @@ function mockHttpError(status: number): Response {
   return new Response('', { status, statusText: 'Internal Server Error' });
 }
 
-describe('rpcCall — core JSON-RPC mechanics', () => {
+describe('rpcCall - core JSON-RPC mechanics', () => {
   const mockFetch = vi.fn<typeof fetch>();
 
   beforeEach(async () => {
@@ -135,7 +135,7 @@ describe('rpcCall — core JSON-RPC mechanics', () => {
 
 // ── Wrapper functions ─────────────────────────────────────────────────────────
 
-describe('wrapper functions — correct method names and params', () => {
+describe('wrapper functions - correct method names and params', () => {
   const mockFetch = vi.fn<typeof fetch>();
 
   beforeEach(async () => {

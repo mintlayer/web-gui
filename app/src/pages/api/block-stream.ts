@@ -11,7 +11,7 @@ import WebSocket from 'ws';
 import { verifySessionToken, SESSION_COOKIE_NAME } from '@/lib/auth';
 
 export const GET: APIRoute = async ({ request }) => {
-  // Auth check — browsers send cookies with same-origin EventSource (per spec)
+  // Auth check - browsers send cookies with same-origin EventSource (per spec)
   const cookieHeader = request.headers.get('cookie') ?? '';
   const sessionToken =
     cookieHeader.match(new RegExp(`(?:^|;\\s*)${SESSION_COOKIE_NAME}=([^;]+)`))?.[1] ?? '';

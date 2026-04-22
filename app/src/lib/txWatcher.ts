@@ -1,5 +1,5 @@
 /**
- * txWatcher — client-side singleton that shares the /api/block-stream
+ * txWatcher - client-side singleton that shares the /api/block-stream
  * EventSource and exposes watchTx(txId) to await on-chain confirmation.
  */
 
@@ -37,7 +37,7 @@ function ensureStream() {
   };
 
   es.onerror = () => {
-    // Stream closed — reconnect will happen on next watchTx call
+    // Stream closed - reconnect will happen on next watchTx call
     es = null;
   };
 }
@@ -67,7 +67,7 @@ export function watchTx(txId: string): Promise<{ block_height: number }> {
         watchers.delete(txId);
         reject(new Error(`Transaction ${state.type.toLowerCase()}`));
       }
-      // InMempool / Inactive — keep waiting
+      // InMempool / Inactive - keep waiting
     });
   });
 }

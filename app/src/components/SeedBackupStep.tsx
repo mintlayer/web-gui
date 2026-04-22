@@ -68,7 +68,7 @@ function PrintArea({ words, walletPath }: { words: string[]; walletPath: string 
     <div id="seed-print-area">
       <div style={{ marginBottom: '1rem' }}>
         <h1 style={{ fontSize: '1.4rem', fontWeight: 'bold', marginBottom: '0.25rem' }}>
-          Mintlayer Wallet — Seed Phrase Backup
+          Mintlayer Wallet - Seed Phrase Backup
         </h1>
         <p style={{ fontSize: '0.8rem', color: '#555' }}>
           Wallet: {walletPath} &nbsp;|&nbsp; Generated: {date}

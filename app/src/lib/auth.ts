@@ -1,15 +1,15 @@
 /**
- * auth.ts — Browser-level authentication utilities.
+ * auth.ts - Browser-level authentication utilities.
  *
- * All cryptographic operations use Node's built-in `crypto` module only —
+ * All cryptographic operations use Node's built-in `crypto` module only -
  * no additional npm dependencies.
  *
  * Exports:
- *  - hashPassword / verifyPassword  — PBKDF2-SHA512
- *  - generateSessionToken / verifySessionToken  — HMAC-SHA256 signed cookie tokens
- *  - verifyTOTP  — RFC 6238 TOTP (Google Authenticator compatible)
- *  - checkLoginRateLimit / recordLoginFailure  — in-memory brute-force protection
- *  - checkRpcRateLimit  — in-memory API rate limiting
+ *  - hashPassword / verifyPassword  - PBKDF2-SHA512
+ *  - generateSessionToken / verifySessionToken  - HMAC-SHA256 signed cookie tokens
+ *  - verifyTOTP  - RFC 6238 TOTP (Google Authenticator compatible)
+ *  - checkLoginRateLimit / recordLoginFailure  - in-memory brute-force protection
+ *  - checkRpcRateLimit  - in-memory API rate limiting
  *  - Cookie header helpers
  */
 
@@ -41,7 +41,7 @@ function getSessionSecret(): string {
   return secret;
 }
 
-// ── Password — PBKDF2-SHA512 ───────────────────────────────────────────────────
+// ── Password - PBKDF2-SHA512 ───────────────────────────────────────────────────
 // Stored format: "pbkdf2:sha512:100000:<salt_hex>:<key_hex>"
 
 export async function hashPassword(plain: string): Promise<string> {
@@ -78,7 +78,7 @@ function pbkdf2(
   });
 }
 
-// ── Session token — HMAC-SHA256 ────────────────────────────────────────────────
+// ── Session token - HMAC-SHA256 ────────────────────────────────────────────────
 // Token format: "<timestamp_ms>.<hmac_sha256_hex>"
 
 export function generateSessionToken(): string {
@@ -115,7 +115,7 @@ export function verifySessionToken(token: string): boolean {
   );
 }
 
-// ── TOTP — RFC 6238 ────────────────────────────────────────────────────────────
+// ── TOTP - RFC 6238 ────────────────────────────────────────────────────────────
 
 function decodeBase32(input: string): Buffer {
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';

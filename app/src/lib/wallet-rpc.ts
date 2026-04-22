@@ -1,5 +1,5 @@
 /**
- * Wallet RPC client — server-side only.
+ * Wallet RPC client - server-side only.
  *
  * Method names and parameter shapes are taken directly from the daemon's own
  * generated docs at wallet-rpc-daemon/docs/RPC.md.
@@ -151,7 +151,7 @@ export function isWalletNotOpenError(err: unknown): boolean {
 /**
  * Attempt to auto-open /home/mintlayer/mintlayer.wallet.
  * Only call this after confirming the error is a wallet-not-open error
- * (use isWalletNotOpenError first) — otherwise you risk redirect loops.
+ * (use isWalletNotOpenError first) - otherwise you risk redirect loops.
  * Logs all outcomes to the server console for diagnostics.
  */
 export async function ensureWalletOpen(walletPath = '/home/mintlayer/mintlayer.wallet'): Promise<WalletOpenResult> {
@@ -206,7 +206,7 @@ export async function nodeBestBlockHeight(): Promise<number> {
   return rpcCall<number>('node_best_block_height', {});
 }
 
-/** Node chainstate info — includes is_initial_block_download for sync status. */
+/** Node chainstate info - includes is_initial_block_download for sync status. */
 export async function nodeChainstateInfo(): Promise<ChainstateInfo> {
   return rpcCall<ChainstateInfo>('node_chainstate_info', {});
 }
@@ -249,6 +249,26 @@ export async function sendToAddress(
     address,
     amount: { decimal: amount },
     selected_utxos: [],
+    options: {},
+  });
+}
+
+export interface SweepResult {
+  tx_id: string;
+  fees: { coins: { decimal: string }; tokens: Record<string, { decimal: string }> };
+  broadcasted: boolean;
+}
+
+export async function sweepSpendable(
+  destinationAddress: string,
+  fromAddresses: string[],
+  account = 0,
+): Promise<SweepResult> {
+  return rpcCall('address_sweep_spendable', {
+    account,
+    destination_address: destinationAddress,
+    from_addresses: fromAddresses,
+    all: fromAddresses.length === 0,
     options: {},
   });
 }

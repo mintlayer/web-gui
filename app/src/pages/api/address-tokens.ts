@@ -39,7 +39,7 @@ export const GET: APIRoute = async ({ url }) => {
   }
 
   try {
-    // Fan-out to indexer — one request per address, all in parallel
+    // Fan-out to indexer - one request per address, all in parallel
     const perAddress = await Promise.all(
       addresses.map(async (addr) => {
         const res = await fetch(

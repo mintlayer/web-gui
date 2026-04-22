@@ -1,5 +1,5 @@
 /**
- * /api/token-search?ticker=... — Proxy to the indexer's ticker search.
+ * /api/token-search?ticker=... - Proxy to the indexer's ticker search.
  * Returns a JSON array of token IDs matching the ticker substring.
  */
 

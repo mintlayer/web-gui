@@ -1,0 +1,7 @@
+{
+  "id": "tools",
+  "name": "Wallet Tools",
+  "navLabel": "Tools",
+  "version": "1.0.0",
+  "entry": "index.mjs"
+}

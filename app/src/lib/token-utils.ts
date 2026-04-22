@@ -1,8 +1,8 @@
 /**
- * Pure token utility helpers — safe to import in both server and browser code.
+ * Pure token utility helpers - safe to import in both server and browser code.
  */
 
-/** Decode a `{ text, hex }` RPC field — text may be null even when data is present. */
+/** Decode a `{ text, hex }` RPC field - text may be null even when data is present. */
 export function hexToText(field: { text: string | null; hex: string } | null | undefined): string | null {
   if (!field) return null;
   if (field.text) return field.text;

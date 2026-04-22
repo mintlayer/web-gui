@@ -73,9 +73,32 @@ const plugins = getInstalledPlugins().map((p) => ({
     <div>
       <h2 class="text-lg font-semibold text-gray-100 mb-1">Plugins</h2>
       <p class="text-sm text-gray-400">
-        Install community plugins to extend the wallet UI. Plugins run server-side with full access
-        to your wallet — only install plugins you trust.
+        Install community plugins to extend the wallet UI.
       </p>
+    </div>
+
+    <!-- Security warning -->
+    <div class="rounded-xl border-2 border-red-600 bg-red-950/60 px-6 py-5">
+      <div class="flex items-start gap-4">
+        <span class="text-3xl leading-none select-none mt-0.5">⚠️</span>
+        <div class="space-y-2">
+          <p class="text-base font-bold text-red-400 uppercase tracking-wide">
+            Plugins can steal everything
+          </p>
+          <p class="text-sm text-red-300 leading-relaxed">
+            A plugin runs with <strong class="text-red-200">full, unrestricted server-side access</strong> to this wallet.
+            It can read your <strong class="text-red-200">seed phrase</strong>, drain your
+            <strong class="text-red-200">entire balance</strong>, exfiltrate your
+            <strong class="text-red-200">private keys</strong>, and send your funds anywhere -
+            with no confirmation, no warning, and no way to recover them.
+          </p>
+          <p class="text-sm text-red-300 leading-relaxed">
+            Installing a plugin means <strong class="text-red-200">trusting its developer with complete control
+            over your wallet</strong>, exactly as if you had given them your seed phrase directly.
+            Only install plugins you wrote yourself or whose source code you have fully read and understood.
+          </p>
+        </div>
+      </div>
     </div>
 
     {result.action !== 'none' && (
@@ -153,16 +176,15 @@ const plugins = getInstalledPlugins().map((p) => ({
                   {plugin.enabled ? 'Disable' : 'Enable'}
                 </button>
               </form>
-              <form method="post" onsubmit="return confirm('Uninstall this plugin?')">
-                <input type="hidden" name="action" value="uninstall" />
-                <input type="hidden" name="plugin_id" value={plugin.id} />
-                <button
-                  type="submit"
-                  class="px-3 py-1.5 rounded text-sm font-medium bg-red-900/40 hover:bg-red-900/70 text-red-400 border border-red-900 transition-colors"
-                >
-                  Uninstall
-                </button>
-              </form>
+              <button
+                type="button"
+                data-plugin-id={plugin.id}
+                data-plugin-name={plugin.name}
+                onclick="openUninstallModal(this.dataset.pluginId, this.dataset.pluginName)"
+                class="px-3 py-1.5 rounded text-sm font-medium bg-red-900/40 hover:bg-red-900/70 text-red-400 border border-red-900 transition-colors"
+              >
+                Uninstall
+              </button>
             </div>
           </div>
         ))}
@@ -170,4 +192,49 @@ const plugins = getInstalledPlugins().map((p) => ({
     )}
 
   </div>
+
+  <!-- Uninstall confirmation modal -->
+  <div id="uninstall-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+    <div class="absolute inset-0 bg-black/60" onclick="closeUninstallModal()"></div>
+    <div class="relative bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-sm mx-4 p-6 space-y-4">
+      <h3 class="text-base font-semibold text-gray-100">Uninstall plugin?</h3>
+      <p class="text-sm text-gray-400">
+        This will permanently remove <strong id="uninstall-plugin-name" class="text-gray-200"></strong> and delete all its files. This action cannot be undone.
+      </p>
+      <div class="flex justify-end gap-3 pt-1">
+        <button
+          type="button"
+          onclick="closeUninstallModal()"
+          class="px-4 py-2 rounded text-sm font-medium bg-gray-700 hover:bg-gray-600 text-gray-200 transition-colors"
+        >
+          Cancel
+        </button>
+        <form id="uninstall-form" method="post">
+          <input type="hidden" name="action" value="uninstall" />
+          <input type="hidden" id="uninstall-plugin-id" name="plugin_id" value="" />
+          <button
+            type="submit"
+            class="px-4 py-2 rounded text-sm font-medium bg-red-700 hover:bg-red-600 text-white transition-colors"
+          >
+            Uninstall
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <script is:inline>
+    function openUninstallModal(id, name) {
+      document.getElementById('uninstall-plugin-id').value = id;
+      document.getElementById('uninstall-plugin-name').textContent = name;
+      document.getElementById('uninstall-modal').classList.remove('hidden');
+    }
+    function closeUninstallModal() {
+      document.getElementById('uninstall-modal').classList.add('hidden');
+    }
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') closeUninstallModal();
+    });
+  </script>
+
 </ManagementLayout>

@@ -139,7 +139,7 @@ export default function IssueTokenModal({ ipfsEnabled, onClose, onIssued }: Prop
         const stored = JSON.parse(localStorage.getItem('ml_issued_tokens') ?? '[]') as Array<{ tokenId: string; ticker: string; decimals: number; issuedAt: number }>;
         stored.unshift({ tokenId: newTokenId, ticker, decimals, issuedAt: Date.now() });
         localStorage.setItem('ml_issued_tokens', JSON.stringify(stored));
-      } catch { /* ignore — non-critical */ }
+      } catch { /* ignore - non-critical */ }
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -339,7 +339,7 @@ export default function IssueTokenModal({ ipfsEnabled, onClose, onIssued }: Prop
               required
               className={input}
             />
-            <p className="text-xs text-gray-500 mt-1">Your address — will have authority to mint, freeze, and modify this token.</p>
+            <p className="text-xs text-gray-500 mt-1">Your address - will have authority to mint, freeze, and modify this token.</p>
           </div>
 
           {error && (

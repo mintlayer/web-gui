@@ -1,13 +1,17 @@
 ---
 import ManagementLayout from '@/layouts/ManagementLayout.astro';
-import { showAddresses, newAddress, isWalletNotOpenError, WalletRpcError, type AddressEntry } from '@/lib/wallet-rpc';
+import { showAddresses, newAddress, sweepSpendable, isWalletNotOpenError, WalletRpcError, type AddressEntry, type SweepResult } from '@/lib/wallet-rpc';
 
 let addresses: AddressEntry[] = [];
 let error: string | null = null;
 let newAddrResult: string | null = null;
 let newAddrError: string | null = null;
+let sweepResult: SweepResult | null = null;
+let sweepTxCount = 0;
 
-// Handle "Generate new address" form submission
+const SWEEP_BATCH = 20;
+
+// Handle form submissions
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
   const action = form.get('action');
@@ -18,10 +22,28 @@ if (Astro.request.method === 'POST') {
     } catch (err) {
       newAddrError = (err as Error).message;
     }
+  } else if (action === 'consolidate') {
+    try {
+      const allAddrs = await showAddresses(0, true);
+      const funded = allAddrs.filter(a => a.coins.decimal !== '0').map(a => a.address);
+      const dest = await newAddress(0);
+      newAddrResult = dest.address;
+      if (funded.length === 0) {
+        sweepResult = await sweepSpendable(dest.address, [], 0);
+        sweepTxCount = 1;
+      } else {
+        for (let i = 0; i < funded.length; i += SWEEP_BATCH) {
+          sweepResult = await sweepSpendable(dest.address, funded.slice(i, i + SWEEP_BATCH), 0);
+          sweepTxCount++;
+        }
+      }
+    } catch (err) {
+      newAddrError = err instanceof WalletRpcError ? err.message : (err as Error).message;
+    }
   }
 }
 
-// Fetch current address list (include change addresses — funds often land there)
+// Fetch current address list (include change addresses - funds often land there)
 try {
   addresses = await showAddresses(0, true);
 } catch (err) {
@@ -36,20 +58,45 @@ try {
   <div class="flex items-center justify-between mb-6">
     <h1 class="text-2xl font-bold text-gray-100">Addresses</h1>
 
-    <!-- Generate new address button (submits form) -->
-    <form method="POST">
-      <input type="hidden" name="action" value="new_address" />
-      <button
-        type="submit"
-        class="rounded-lg bg-mint-700 hover:bg-mint-600 px-4 py-2 text-sm text-white font-medium transition-colors"
-      >
-        + New Address
-      </button>
-    </form>
+    <div class="flex items-center gap-2">
+      <!-- Consolidate button -->
+      <form method="POST">
+        <input type="hidden" name="action" value="consolidate" />
+        <button
+          type="submit"
+          class="rounded-lg bg-gray-700 hover:bg-gray-600 px-4 py-2 text-sm text-white font-medium transition-colors"
+          title="Sweep all UTXOs into a single new address"
+        >
+          Consolidate
+        </button>
+      </form>
+      <!-- Generate new address button -->
+      <form method="POST">
+        <input type="hidden" name="action" value="new_address" />
+        <button
+          type="submit"
+          class="rounded-lg bg-mint-700 hover:bg-mint-600 px-4 py-2 text-sm text-white font-medium transition-colors"
+        >
+          + New Address
+        </button>
+      </form>
+    </div>
   </div>
 
+  <!-- Consolidate result banner -->
+  {sweepResult && newAddrResult && (
+    <div class="rounded-lg border border-mint-700 bg-mint-900/30 p-4 mb-5 space-y-1">
+      <p class="text-xs text-mint-400 uppercase tracking-wider">
+        Consolidation submitted{sweepTxCount > 1 ? ` · ${sweepTxCount} transactions` : ''}
+      </p>
+      <p class="text-xs text-gray-400">Destination: <span class="font-mono text-gray-300 break-all">{newAddrResult}</span></p>
+      <p class="text-xs text-gray-400">Last tx: <span class="font-mono text-gray-300 break-all">{sweepResult.tx_id}</span></p>
+      <p class="text-xs text-gray-400">Last fee: <span class="font-mono text-gray-300">{sweepResult.fees.coins.decimal} ML</span></p>
+    </div>
+  )}
+
   <!-- Newly generated address banner -->
-  {newAddrResult && (
+  {newAddrResult && !sweepResult && (
     <div class="rounded-lg border border-mint-700 bg-mint-900/30 p-4 mb-5">
       <p class="text-xs text-mint-400 uppercase tracking-wider mb-1">New address generated</p>
       <p class="font-mono text-sm text-mint-300 break-all">{newAddrResult}</p>

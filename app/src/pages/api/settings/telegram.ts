@@ -23,7 +23,7 @@ export const POST: APIRoute = async ({ request }) => {
 
   if (test) {
     try {
-      await sendTelegramMessage(botToken, chatId, '✅ Test message from <b>Mintlayer GUI-X</b> — Telegram notifications are working.');
+      await sendTelegramMessage(botToken, chatId, '✅ Test message from <b>Mintlayer GUI-X</b> - Telegram notifications are working.');
     } catch (err) {
       return json({ ok: false, error: `Saved, but test message failed: ${(err as Error).message}` }, 200);
     }

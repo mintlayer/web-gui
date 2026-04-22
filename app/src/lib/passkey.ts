@@ -1,15 +1,15 @@
 /**
- * passkey.ts — WebAuthn / Passkeys server-side utilities.
+ * passkey.ts - WebAuthn / Passkeys server-side utilities.
  *
  * Uses @simplewebauthn/server (which relies on Node's built-in crypto).
  *
  * Exports:
  *  - StoredCredential type
- *  - getCredentials / saveCredentials — prefs-db persistence
- *  - createChallenge / consumeChallenge — in-memory challenge store
- *  - getRpId / getOrigin — env-var-with-request-fallback helpers
- *  - isValidRpId — rejects raw IP addresses
- *  - PASSKEY_CHALLENGE_COOKIE — cookie name for pending challenges
+ *  - getCredentials / saveCredentials - prefs-db persistence
+ *  - createChallenge / consumeChallenge - in-memory challenge store
+ *  - getRpId / getOrigin - env-var-with-request-fallback helpers
+ *  - isValidRpId - rejects raw IP addresses
+ *  - PASSKEY_CHALLENGE_COOKIE - cookie name for pending challenges
  */
 
 import crypto from 'node:crypto';
