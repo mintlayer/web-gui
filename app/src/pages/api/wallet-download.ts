@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro';
 
 const WALLET_FILENAME = 'mintlayer.wallet';
-// ./mintlayer-data/ on host is mounted read-only at /app/mintlayer-data/ in the web-gui container
+// ./mintlayer-data/ on host is mounted at /app/mintlayer-data/ in the web-gui container
 const LOCAL_PATH = `/app/mintlayer-data/${WALLET_FILENAME}`;
 
 export const GET: APIRoute = async () => {

@@ -194,6 +194,25 @@ export async function createWallet(
   });
 }
 
+/**
+ * Recover an existing wallet from a mnemonic by scanning the full blockchain.
+ * Blocks until the scan completes — can take many minutes on mainnet.
+ */
+export async function recoverWallet(
+  path: string,
+  mnemonic: string,
+  storeSeedPhrase: boolean = true,
+  passphrase?: string,
+): Promise<CreateWalletResult> {
+  return rpcCall<CreateWalletResult>('wallet_recover', {
+    path,
+    store_seed_phrase: storeSeedPhrase,
+    mnemonic,
+    passphrase: passphrase ?? null,
+    hardware_wallet: null,
+  });
+}
+
 // ── Sync / node info ──────────────────────────────────────────────────────────
 
 /** Wallet's view of the best block (reflects wallet sync state). */
@@ -520,6 +539,10 @@ export async function walletLockPrivateKeys(): Promise<void> {
 
 export async function walletUnlockPrivateKeys(password: string): Promise<void> {
   return rpcCall('wallet_unlock_private_keys', { password });
+}
+
+export async function walletClose(): Promise<void> {
+  return rpcCall('wallet_close', {});
 }
 
 export async function walletSetLookaheadSize(lookaheadSize: number): Promise<void> {

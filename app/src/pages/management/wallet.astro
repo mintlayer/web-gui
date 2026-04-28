@@ -6,6 +6,9 @@ import {
   walletLockPrivateKeys,
   walletUnlockPrivateKeys,
   walletSetLookaheadSize,
+  walletClose,
+  openWallet,
+  recoverWallet,
   getStakingStatus,
   WalletRpcError,
   type WalletInfo,
@@ -13,6 +16,39 @@ import {
 } from '@/lib/wallet-rpc';
 import { verifyTOTP } from '@/lib/auth';
 import { getStringPref, getPref, setPref } from '@/lib/prefs-db';
+import { createRequire } from 'node:module';
+import { join } from 'node:path';
+
+// ── WASM mnemonic validator ────────────────────────────────────────────────────
+const _req = createRequire(import.meta.url);
+const { make_default_account_privkey, Network } = _req(
+  join(process.cwd(), 'wasm-wrappers', 'wasm_wrappers.js'),
+) as {
+  make_default_account_privkey: (mnemonic: string, network: number) => Uint8Array;
+  Network: { Mainnet: 0; Testnet: 1; Regtest: 2; Signet: 3 };
+};
+
+function detectNetwork(): number {
+  const cmd = process.env.WALLET_RPC_CMD ?? '';
+  if (cmd.includes('testnet')) return Network.Testnet;
+  if (cmd.includes('regtest')) return Network.Regtest;
+  if (cmd.includes('signet')) return Network.Signet;
+  return Network.Mainnet;
+}
+
+function validateMnemonic(words: string): boolean {
+  try {
+    make_default_account_privkey(words.trim(), detectNetwork());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ── State ──────────────────────────────────────────────────────────────────────
+
+const WALLET_RPC_PATH = '/home/mintlayer/mintlayer.wallet';
+const WALLET_LOCAL_PATH = '/app/mintlayer-data/mintlayer.wallet';
 
 let info: WalletInfo | null = null;
 let infoError: string | null = null;
@@ -65,6 +101,34 @@ if (Astro.request.method === 'POST') {
       lookaheadSize = size;
       setPref('wallet.lookahead_size', size);
       actionSuccess = `Lookahead size set to ${size}.`;
+    } else if (action === 'close_wallet') {
+      await walletClose();
+      info = null;
+      actionSuccess = 'Wallet closed.';
+    } else if (action === 'reopen_wallet') {
+      await openWallet(WALLET_RPC_PATH);
+      info = await walletInfo().catch(() => null);
+      actionSuccess = 'Wallet reopened.';
+    } else if (action === 'import_seed') {
+      const confirm = (form.get('confirm') as string | null) ?? '';
+      const mnemonic = ((form.get('mnemonic') as string | null) ?? '').trim();
+      if (confirm !== 'I CONFIRM') {
+        actionError = 'You must type "I CONFIRM" exactly to proceed.';
+      } else if (!mnemonic) {
+        actionError = 'Seed phrase is required.';
+      } else if (!validateMnemonic(mnemonic)) {
+        actionError = 'Invalid seed phrase — check that all words are valid BIP39 words and the checksum is correct.';
+      } else {
+        // 1. Close wallet (ignore error if already closed)
+        try { await walletClose(); } catch { /* already closed */ }
+        // 2. Delete wallet file
+        const { unlink } = await import('node:fs/promises');
+        await unlink(WALLET_LOCAL_PATH);
+        // 3. Recover wallet from seed — scans the full blockchain before returning
+        await recoverWallet(WALLET_RPC_PATH, mnemonic);
+        info = await walletInfo().catch(() => null);
+        actionSuccess = 'Wallet recovered from seed phrase and blockchain scan complete.';
+      }
     }
   } catch (err) {
     actionError = err instanceof WalletRpcError ? err.message : (err as Error).message;
@@ -264,6 +328,34 @@ if (isLocked === null) {
       </a>
     </div>
 
+    <!-- Wallet session: close / reopen -->
+    <div class="rounded-xl border border-gray-800 bg-gray-900 p-5">
+      <h2 class="text-sm font-medium text-gray-200 mb-1">Wallet Session</h2>
+      <p class="text-xs text-gray-500 mb-4">
+        Close or reopen the wallet file without restarting the daemon.
+      </p>
+      <div class="flex gap-2 flex-wrap">
+        <form method="POST">
+          <input type="hidden" name="action" value="close_wallet" />
+          <button
+            type="submit"
+            class="rounded-lg bg-gray-700 hover:bg-gray-600 px-4 py-2 text-sm text-white font-medium transition-colors"
+          >
+            Close Wallet
+          </button>
+        </form>
+        <form method="POST">
+          <input type="hidden" name="action" value="reopen_wallet" />
+          <button
+            type="submit"
+            class="rounded-lg bg-mint-700 hover:bg-mint-600 px-4 py-2 text-sm text-white font-medium transition-colors"
+          >
+            Reopen Wallet
+          </button>
+        </form>
+      </div>
+    </div>
+
     <!-- Lock / unlock private keys -->
     <div class="rounded-xl border border-gray-800 bg-gray-900 p-5">
       <h2 class="text-sm font-medium text-gray-200 mb-1">Private Keys</h2>
@@ -336,21 +428,133 @@ if (isLocked === null) {
       </form>
     </div>
   </div>
+
+  <!-- Import from Seed — full-width danger section -->
+  <div class="mt-6 rounded-xl border border-red-800 bg-gray-900 p-5">
+    <h2 class="text-sm font-medium text-red-400 mb-3 flex items-center gap-2">
+      <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+      </svg>
+      Import Wallet from Seed Phrase
+    </h2>
+
+    <!-- Red danger warning -->
+    <div class="rounded-lg border border-red-700 bg-red-950/60 p-4 mb-5">
+      <p class="text-sm font-semibold text-red-300 mb-2">⚠ DANGER — This operation is irreversible</p>
+      <p class="text-xs text-red-400 leading-relaxed mb-2">
+        Importing a new seed phrase will perform three destructive steps in sequence:
+      </p>
+      <ol class="text-xs text-red-400 leading-relaxed list-decimal list-inside space-y-1 mb-2">
+        <li>Close the currently open wallet.</li>
+        <li>Permanently delete the current wallet file from disk.</li>
+        <li>Create a new wallet file from the seed phrase you provide.</li>
+      </ol>
+      <p class="text-xs text-red-300 font-medium">
+        The current wallet will be gone forever unless you have a backup.
+        Make sure you have downloaded a backup or know its seed phrase before continuing.
+      </p>
+      <p class="text-xs text-red-400 mt-2">
+        The page will appear to hang while the full blockchain is scanned for your wallet's transactions.
+        This can take several minutes on mainnet — do not close the tab.
+      </p>
+    </div>
+
+    <form method="POST" class="space-y-4" id="import-seed-form">
+      <input type="hidden" name="action" value="import_seed" />
+
+      <div>
+        <label for="seed-input" class="block text-xs text-gray-400 mb-1">
+          Seed Phrase
+          <span class="text-gray-600 ml-1">(numbered lists like "1. word 2. word" are automatically cleaned)</span>
+        </label>
+        <textarea
+          id="seed-input"
+          name="mnemonic"
+          rows="3"
+          required
+          placeholder="Enter your 12 or 24 word seed phrase…"
+          class="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-gray-200
+                 placeholder-gray-600 font-mono focus:outline-none focus:border-red-600 resize-none"
+        ></textarea>
+      </div>
+
+      <div>
+        <label for="confirm-input" class="block text-xs text-gray-400 mb-1">
+          Type <span class="font-mono font-semibold text-red-400">I CONFIRM</span> to enable the import button
+        </label>
+        <input
+          id="confirm-input"
+          type="text"
+          name="confirm"
+          required
+          autocomplete="off"
+          placeholder="I CONFIRM"
+          class="rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-gray-200
+                 placeholder-gray-600 font-mono focus:outline-none focus:border-red-600 w-48"
+        />
+      </div>
+
+      <button
+        id="import-seed-btn"
+        type="submit"
+        disabled
+        class="rounded-lg bg-red-800 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed
+               px-5 py-2 text-sm text-white font-semibold transition-colors"
+      >
+        Delete wallet &amp; import seed
+      </button>
+    </form>
+  </div>
 </ManagementLayout>
 
 <script>
+  // ── Seed modal ──────────────────────────────────────────────────────────────
   function closeSeedModal() {
     const modal = document.getElementById('seed-modal');
     if (modal) modal.remove();
   }
   document.getElementById('close-seed-modal')?.addEventListener('click', closeSeedModal);
   document.getElementById('close-seed-modal-btn')?.addEventListener('click', closeSeedModal);
-  // Close on backdrop click
   document.getElementById('seed-modal')?.addEventListener('click', (e) => {
     if (e.target === e.currentTarget) closeSeedModal();
   });
-  // Close on Escape
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closeSeedModal();
   });
+
+  // ── Seed input: auto-clean numbered prefixes ────────────────────────────────
+  const seedInput = document.getElementById('seed-input') as HTMLTextAreaElement | null;
+  const confirmInput = document.getElementById('confirm-input') as HTMLInputElement | null;
+  const importBtn = document.getElementById('import-seed-btn') as HTMLButtonElement | null;
+
+  function cleanSeed(val: string): string {
+    // "1. alpha 2. bravo" or "1 alpha 2 bravo 3charlie" → "alpha bravo charlie"
+    return val
+      .replace(/\b\d+[.\s]\s*/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  seedInput?.addEventListener('input', () => {
+    if (!seedInput) return;
+    const cleaned = cleanSeed(seedInput.value);
+    if (cleaned !== seedInput.value) seedInput.value = cleaned;
+  });
+
+  // Paste: clean after the browser inserts the pasted text
+  seedInput?.addEventListener('paste', () => {
+    setTimeout(() => {
+      if (!seedInput) return;
+      const cleaned = cleanSeed(seedInput.value);
+      if (cleaned !== seedInput.value) seedInput.value = cleaned;
+    }, 0);
+  });
+
+  // ── Enable import button only when confirmation text matches ────────────────
+  function updateImportBtn() {
+    if (!importBtn || !confirmInput) return;
+    importBtn.disabled = confirmInput.value !== 'I CONFIRM';
+  }
+  confirmInput?.addEventListener('input', updateImportBtn);
+  updateImportBtn();
 </script>

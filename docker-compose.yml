@@ -79,8 +79,8 @@ services:
     depends_on:
       - wallet-rpc-daemon
     volumes:
-      # Read-only access to wallet data for file backup download
-      - "./mintlayer-data:/app/mintlayer-data:ro"
+      # Access to wallet data: backup download (read) and wallet file deletion during seed import (write)
+      - "./mintlayer-data:/app/mintlayer-data"
       # Shared with wallet-rpc-daemon's /home/mintlayer/ so uploaded wallet files
       # are accessible to the daemon at /home/mintlayer/uploads/<filename>
       - "./mintlayer-data/uploads:/app/uploads"

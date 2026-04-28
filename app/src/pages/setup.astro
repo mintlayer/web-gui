@@ -1,7 +1,30 @@
 ---
 import Layout from '@/layouts/Layout.astro';
-import { openWallet, createWallet } from '@/lib/wallet-rpc';
+import { openWallet, createWallet, recoverWallet } from '@/lib/wallet-rpc';
 import SeedBackupStep from '@/components/SeedBackupStep';
+import { createRequire } from 'node:module';
+import { join } from 'node:path';
+
+const _req = createRequire(import.meta.url);
+const { make_default_account_privkey, Network } = _req(
+  join(process.cwd(), 'wasm-wrappers', 'wasm_wrappers.js'),
+) as {
+  make_default_account_privkey: (mnemonic: string, network: number) => Uint8Array;
+  Network: { Mainnet: 0; Testnet: 1; Regtest: 2; Signet: 3 };
+};
+
+function detectNetwork(): number {
+  const cmd = process.env.WALLET_RPC_CMD ?? '';
+  if (cmd.includes('testnet')) return Network.Testnet;
+  if (cmd.includes('regtest')) return Network.Regtest;
+  if (cmd.includes('signet')) return Network.Signet;
+  return Network.Mainnet;
+}
+
+function validateMnemonic(words: string): boolean {
+  try { make_default_account_privkey(words.trim(), detectNetwork()); return true; }
+  catch { return false; }
+}
 
 const WALLET_PATH = '/home/mintlayer/mintlayer.wallet';
 
@@ -53,9 +76,11 @@ if (Astro.request.method === 'POST') {
 
     if (!mnemonic) {
       result = { action: 'error', message: 'Seed phrase is required.' };
+    } else if (!validateMnemonic(mnemonic)) {
+      result = { action: 'error', message: 'Invalid seed phrase — check that all words are valid BIP39 words and the checksum is correct.' };
     } else {
       try {
-        await createWallet(WALLET_PATH, storeSeed, mnemonic, passphrase);
+        await recoverWallet(WALLET_PATH, mnemonic, storeSeed, passphrase);
         result = { action: 'import_success' };
       } catch (err) {
         result = { action: 'error', message: (err as Error).message };
@@ -435,6 +460,28 @@ if (Astro.request.method === 'POST') {
       </style>
 
       <script>
+        // ── Seed textarea: auto-clean numbered prefixes ───────────────────────
+        const mnemonicInput = document.getElementById('import-mnemonic') as HTMLTextAreaElement | null;
+
+        function cleanSeed(val: string): string {
+          return val.replace(/\b\d+[.\s]\s*/g, ' ').replace(/\s+/g, ' ').trim();
+        }
+
+        mnemonicInput?.addEventListener('input', () => {
+          if (!mnemonicInput) return;
+          const cleaned = cleanSeed(mnemonicInput.value);
+          if (cleaned !== mnemonicInput.value) mnemonicInput.value = cleaned;
+        });
+
+        mnemonicInput?.addEventListener('paste', () => {
+          setTimeout(() => {
+            if (!mnemonicInput) return;
+            const cleaned = cleanSeed(mnemonicInput.value);
+            if (cleaned !== mnemonicInput.value) mnemonicInput.value = cleaned;
+          }, 0);
+        });
+
+        // ── Upload modal ──────────────────────────────────────────────────────
         const uploadModal = document.getElementById('upload-modal') as HTMLDialogElement | null;
         const overwriteSection = document.getElementById('overwrite-section');
         const confirmCb = document.getElementById('confirm-overwrite-cb') as HTMLInputElement | null;

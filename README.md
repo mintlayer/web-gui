@@ -189,6 +189,59 @@ To expose the wallet RPC port to the host, uncomment the `ports` block for `wall
 
 ---
 
+## Credential recovery
+
+### Change password (you know the current one)
+
+Go to **Settings → Change password** (`/management/settings`) while logged in.
+
+### Reset password (locked out)
+
+If you are locked out and cannot log in, generate a new PBKDF2 hash and write it directly to the prefs database:
+
+```bash
+# 1. Generate a hash for your new password
+NEW_HASH=$(docker run --rm node:22-alpine node -e "
+  const crypto = require('crypto');
+  const salt = crypto.randomBytes(16).toString('hex');
+  crypto.pbkdf2('YOUR_NEW_PASSWORD', salt, 100000, 64, 'sha512', (_, key) => {
+    process.stdout.write('pbkdf2:sha512:100000:' + salt + ':' + key.toString('hex'));
+  });
+")
+
+# 2. Write it to the database
+docker run --rm \
+  -v "$(pwd)/mintlayer-data/prefs:/prefs" \
+  alpine sh -c "apk add -q sqlite && sqlite3 /prefs/mintlayer_prefs.sqlite \
+  \"INSERT OR REPLACE INTO prefs VALUES ('auth.password_hash', '\\\"${NEW_HASH}\\\"');\""
+```
+
+### Reset TOTP 2FA (lost authenticator)
+
+Use the bundled `update-totp` script — it generates a new secret, shows a scannable QR code, and only saves after you confirm with a valid code:
+
+```bash
+# Inside a running container
+docker compose exec web-gui node scripts/update-totp.mjs
+
+# One-shot (stack does not need to be running)
+docker run --rm -it \
+  -v "$(pwd)/mintlayer-data/prefs:/app/prefs" \
+  <web-gui-image> node scripts/update-totp.mjs
+
+# On the host (if Node is available)
+PREFS_DB_PATH=./mintlayer-data/prefs/mintlayer_prefs.sqlite \
+  node app/scripts/update-totp.mjs
+```
+
+After saving, restart the web-gui container so the new secret takes effect:
+
+```bash
+docker compose restart web-gui
+```
+
+---
+
 ## Security
 
 - Run `./init.sh` or set strong passwords in `.env` before exposing this to any network.
