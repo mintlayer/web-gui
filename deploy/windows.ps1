@@ -206,9 +206,22 @@ function Invoke-CheckPrereqs {
             $install = Confirm-ML "Install Docker Desktop automatically via winget?" 'Y'
             if ($install -eq 'yes') {
                 Step-ML "Installing Docker Desktop"
-                winget install --id Docker.DockerDesktop --accept-source-agreements --accept-package-agreements
+                # --scope machine avoids a known winget/UAC elevation issue (exit 4294967291)
+                winget install --id Docker.DockerDesktop --scope machine `
+                    --accept-source-agreements --accept-package-agreements
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host ""
+                    Err-ML "Docker Desktop installation failed (winget exit code $LASTEXITCODE)."
+                    Write-Host ""
+                    Warn-ML "This often happens when running as a non-admin user."
+                    Hint-ML "Try one of these:"
+                    Hint-ML "  1. Re-run this script from a PowerShell window opened as Administrator"
+                    Hint-ML "  2. Download and install Docker Desktop manually, then re-run:"
+                    Hint-ML "     https://docs.docker.com/desktop/install/windows-install/"
+                    Exit-ML 1
+                }
                 Write-Host ""
-                Warn-ML "Docker Desktop installed. Please:"
+                Ok-ML "Docker Desktop installed. Please:"
                 Hint-ML "1. Launch Docker Desktop from the Start Menu"
                 Hint-ML "2. Complete the first-run setup wizard"
                 Hint-ML "3. Wait for the whale icon in the system tray"
