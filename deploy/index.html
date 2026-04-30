@@ -590,7 +590,7 @@
 <main>
   <div class="badge">
     <span class="badge-dot"></span>
-    Linux &amp; macOS installer
+    <span id="badge-text">Linux &amp; macOS installer</span>
   </div>
 
   <h1>One command.<br>Full <span class="accent">Mintlayer</span> stack.</h1>
@@ -603,7 +603,7 @@
   <!-- Install command -->
   <div class="install-wrap">
     <div class="install-box">
-      <span class="terminal-prompt">$</span>
+      <span class="terminal-prompt" id="terminal-prompt">$</span>
       <code id="install-cmd">bash &lt;(curl -sSL https://get.mintlayer.org/linux.sh)</code>
       <button class="copy-btn" id="copy-btn" onclick="copyCmd()" aria-label="Copy install command">
         <svg id="copy-icon" width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -678,7 +678,7 @@
   <!-- Requirements -->
   <div class="requirements">
     <p class="section-label">Requirements</p>
-    <div class="req-list">
+    <div class="req-list" id="req-list">
       <div class="req-pill"><span class="dot"></span>Linux or macOS</div>
       <div class="req-pill"><span class="dot"></span>Docker Desktop or Engine</div>
       <div class="req-pill"><span class="dot"></span>Docker Compose v2</div>
@@ -747,7 +747,7 @@
     </div>
     <div class="modal-footer">
       <span id="modal-line-count" class="modal-line-count"></span>
-      <span>bash &lt;(curl -sSL https://get.mintlayer.org/<span id="modal-footer-file">linux.sh</span>)</span>
+      <span id="modal-footer-cmd">bash &lt;(curl -sSL https://get.mintlayer.org/<span id="modal-footer-file">linux.sh</span>)</span>
     </div>
   </div>
 </div>
@@ -755,27 +755,60 @@
 <script>
   // ── OS detection ────────────────────────────────────────────────────────
   const OS = (() => {
-    const p = (navigator.platform || '').toLowerCase();
     const u = navigator.userAgent.toLowerCase();
-    if (p.includes('mac') || u.includes('mac os')) return 'macos';
+    const p = (navigator.platform || '').toLowerCase();
+    if (u.includes('win') || p.includes('win')) return 'windows';
+    if (p.includes('mac') || u.includes('mac os'))  return 'macos';
     return 'linux';
   })();
 
-  const SCRIPT_FILE = OS === 'macos' ? 'mac.sh' : 'linux.sh';
-  const INSTALL_CMD = `bash <(curl -sSL https://get.mintlayer.org/${SCRIPT_FILE})`;
+  const SCRIPT_FILE  = OS === 'windows' ? 'windows.ps1' : (OS === 'macos' ? 'mac.sh' : 'linux.sh');
+  const INSTALL_CMD  = OS === 'windows'
+    ? 'irm https://get.mintlayer.org/windows.ps1 | iex'
+    : `bash <(curl -sSL https://get.mintlayer.org/${SCRIPT_FILE})`;
+
+  function pill(text) {
+    return `<div class="req-pill"><span class="dot"></span>${text}</div>`;
+  }
 
   // ── Patch hero on load ───────────────────────────────────────────────────
   document.addEventListener('DOMContentLoaded', () => {
     // Command box
     document.getElementById('install-cmd').textContent = INSTALL_CMD;
 
-    // OS label
-    document.getElementById('os-label').textContent =
-      OS === 'macos' ? 'macOS detected' : 'Linux detected';
+    // Terminal prompt character
+    document.getElementById('terminal-prompt').textContent = OS === 'windows' ? '>' : '$';
+
+    // Badge + OS label
+    if (OS === 'windows') {
+      document.getElementById('badge-text').textContent  = 'Windows installer';
+      document.getElementById('os-label').textContent    = 'Windows detected';
+    } else {
+      document.getElementById('badge-text').textContent  = OS === 'macos' ? 'macOS installer' : 'Linux installer';
+      document.getElementById('os-label').textContent    = OS === 'macos' ? 'macOS detected' : 'Linux detected';
+    }
+
+    // Requirements
+    if (OS === 'windows') {
+      document.getElementById('req-list').innerHTML =
+        pill('Windows 10 / 11') +
+        pill('Docker Desktop for Windows') +
+        pill('Docker Compose v2') +
+        pill('.NET 4.7.2 or later') +
+        pill('~50 GB free disk (mainnet)') +
+        pill('~5 GB free disk (testnet)');
+    }
 
     // Modal filenames
-    document.getElementById('modal-filename').textContent    = SCRIPT_FILE;
-    document.getElementById('modal-footer-file').textContent = SCRIPT_FILE;
+    document.getElementById('modal-filename').textContent = SCRIPT_FILE;
+
+    // Modal footer command
+    if (OS === 'windows') {
+      document.getElementById('modal-footer-cmd').textContent =
+        `irm https://get.mintlayer.org/${SCRIPT_FILE} | iex`;
+    } else {
+      document.getElementById('modal-footer-file').textContent = SCRIPT_FILE;
+    }
   });
 
   // ── Copy install command ─────────────────────────────────────────────────
@@ -861,38 +894,49 @@
       `<pre>${highlighted}</pre>`;
   }
 
-  // ── Lightweight bash syntax highlighter ─────────────────────────────────
+  // ── Syntax highlighter (bash + PowerShell) ──────────────────────────────
   function highlight(raw) {
-    // Escape HTML first
     const esc = raw
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;');
 
     const lines = esc.split('\n');
-    return lines.map(line => {
-      // Full-line comment
-      if (/^\s*#/.test(line)) {
-        return `<span class="sh-comment">${line}</span>`;
-      }
 
+    if (OS === 'windows') {
+      // PowerShell highlighter
+      return lines.map(line => {
+        if (/^\s*#/.test(line))
+          return `<span class="sh-comment">${line}</span>`;
+        return line
+          .replace(/(#.*)/g, '<span class="sh-comment">$1</span>')
+          .replace(/@['"]/g, '<span class="sh-string">$&</span>')
+          .replace(/"((?:[^"\\`]|`.)*)"/g, '<span class="sh-string">"$1"</span>')
+          .replace(/'([^']*)'/g, '<span class="sh-string">\'$1\'</span>')
+          .replace(/\b(if|else|elseif|foreach|for|while|do|switch|function|return|param|begin|process|end|try|catch|finally|throw|break|continue|exit)\b/gi,
+            '<span class="sh-keyword">$1</span>')
+          .replace(/\b(Write-Host|Write-Error|Read-Host|New-Item|Set-Location|Get-Command|Get-Item|Remove-Item|Start-Process|Clear-Host|Out-Null|Out-File|Select-Object|Where-Object|ForEach-Object|Invoke-Expression|docker|winget)\b/g,
+            '<span class="sh-builtin">$1</span>')
+          .replace(/(\$(?:script:|env:)?[A-Za-z_][A-Za-z0-9_]*)/g,
+            '<span class="sh-var">$1</span>')
+          .replace(/\b(\d+)\b/g, '<span class="sh-number">$1</span>');
+      }).join('\n');
+    }
+
+    // Bash highlighter
+    return lines.map(line => {
+      if (/^\s*#/.test(line))
+        return `<span class="sh-comment">${line}</span>`;
       return line
-        // Inline comment (after code)
         .replace(/((?:^|[^&])\s)(#[^{].*)/g, '$1<span class="sh-comment">$2</span>')
-        // Double-quoted strings
         .replace(/"((?:[^"\\]|\\.)*)"/g, '<span class="sh-string">"$1"</span>')
-        // Single-quoted strings
         .replace(/'([^']*)'/g, '<span class="sh-string">\'$1\'</span>')
-        // Shell keywords
         .replace(/\b(if|then|else|elif|fi|for|while|do|done|case|esac|in|function|return|local|break|exit)\b/g,
           '<span class="sh-keyword">$1</span>')
-        // Builtins / commands
         .replace(/\b(echo|printf|read|source|export|declare|shift|set|unset|cd|mkdir|cat|curl|chmod|command|sleep)\b/g,
           '<span class="sh-builtin">$1</span>')
-        // Variable references  ${VAR}  or  $VAR
         .replace(/(\$\{[^}]+\}|\$[A-Za-z_][A-Za-z0-9_]*)/g,
           '<span class="sh-var">$1</span>')
-        // Numbers (standalone)
         .replace(/\b(\d+)\b/g, '<span class="sh-number">$1</span>');
     }).join('\n');
   }

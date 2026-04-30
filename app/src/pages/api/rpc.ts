@@ -69,6 +69,7 @@ const ALLOWED_METHODS = new Set([
   // Transactions
   'transaction_list_by_address',
   'transaction_list_pending',
+  'transaction_abandon',
   // UTXOs
   'account_utxos',
   'address_sweep_spendable',

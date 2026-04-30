@@ -1,4 +1,6 @@
-.PHONY: up down restart nuke restart-gui build logs dev dev-build wallet-cli nft-images-public
+.PHONY: up down restart nuke restart-gui build logs dev dev-build dev-local wallet-cli nft-images-public pending-transactions list-utxos
+
+ACCOUNT ?= 0
 
 ## Start all services
 up:
@@ -48,6 +50,10 @@ dev:
 	docker compose --profile indexer -f docker-compose.yml -f docker-compose.dev.yml down --remove-orphans 2>/dev/null || true
 	docker compose --profile indexer -f docker-compose.yml -f docker-compose.dev.yml up --build
 
+## Like dev, but uses locally-built core images (run ./build-core-images.sh first)
+dev-local:
+	docker compose --profile indexer -f docker-compose.yml -f docker-compose.dev.yml up
+
 ## Rebuild dev image only (run after adding npm packages, then re-run make dev)
 dev-build:
 	docker compose --profile indexer -f docker-compose.yml -f docker-compose.dev.yml build web-gui
@@ -55,6 +61,26 @@ dev-build:
 ## Open an interactive wallet-cli session connected to the running wallet-rpc-daemon
 wallet-cli:
 	docker compose --profile wallet_cli run --rm wallet-cli
+
+## List pending transactions for account ACCOUNT (default 0) via wallet RPC.
+## Usage: make pending-transactions  or  make pending-transactions ACCOUNT=1
+pending-transactions:
+	docker run --rm \
+		--network web-gui_default \
+		-v "$(CURDIR)/tools:/tools:ro" \
+		-v "$(CURDIR)/.env:/.env:ro" \
+		-e WALLET_RPC_HOST=wallet-rpc-daemon \
+		alpine sh -c 'apk add -q bash curl jq >/dev/null && bash /tools/list-pending-transactions.sh $(ACCOUNT)'
+
+## List UTXOs for account ACCOUNT (default 0) via wallet RPC.
+## Usage: make list-utxos  or  make list-utxos ACCOUNT=1
+list-utxos:
+	docker run --rm \
+		--network web-gui_default \
+		-v "$(CURDIR)/tools:/tools:ro" \
+		-v "$(CURDIR)/.env:/.env:ro" \
+		-e WALLET_RPC_HOST=wallet-rpc-daemon \
+		alpine sh -c 'apk add -q bash curl jq >/dev/null && bash /tools/list-utxos.sh $(ACCOUNT)'
 
 ## Ensure all NFT images stored on Pinata are publicly accessible.
 ## Runs inside Docker so it can reach wallet-rpc-daemon on the internal network.

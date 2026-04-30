@@ -91,7 +91,12 @@ function useAction() {
       setMsg('Transaction submitted.');
     } catch (err) {
       setState('error');
-      setMsg((err as Error).message);
+      const raw = (err as Error).message;
+      setMsg(
+        raw.includes('Orphan transaction')
+          ? 'A pending transaction is blocking this action. Wait for it to confirm, then try again.'
+          : raw
+      );
     }
   };
 

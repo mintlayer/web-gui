@@ -230,6 +230,16 @@ export async function nodeChainstateInfo(): Promise<ChainstateInfo> {
   return rpcCall<ChainstateInfo>('node_chainstate_info', {});
 }
 
+/** Number of peers currently connected to the node. */
+export async function nodePeerCount(): Promise<number> {
+  return rpcCall<number>('node_peer_count', {});
+}
+
+/** Node software version string. */
+export async function nodeVersion(): Promise<string> {
+  return rpcCall<{ version: string }>('node_version', {}).then(r => r.version);
+}
+
 // ── Account ───────────────────────────────────────────────────────────────────
 
 export async function getBalance(account = 0, withLocked: 'Unlocked' | 'Locked' | 'Any' = 'Unlocked'): Promise<WalletBalance> {

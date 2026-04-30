@@ -1,5 +1,7 @@
 /**
- * /api/token-authority?addresses=addr1,addr2,...
+ * /api/token-authority  (POST)
+ *
+ * Body: { addresses: string[] }
  *
  * Queries the indexer for all tokens where any of the given addresses is the
  * authority. Used by IssuedTokensPanel to discover tokens issued from other
@@ -12,12 +14,22 @@ import type { APIRoute } from 'astro';
 
 const INDEXER_URL = process.env.INDEXER_URL ?? 'http://api-web-server:3000';
 
-export const GET: APIRoute = async ({ url }) => {
-  const raw = url.searchParams.get('addresses') ?? '';
-  const addresses = raw.split(',').map(a => a.trim()).filter(Boolean);
+export const POST: APIRoute = async ({ request }) => {
+  let addresses: string[] = [];
+  try {
+    const body = await request.json() as { addresses?: unknown };
+    if (Array.isArray(body.addresses)) {
+      addresses = (body.addresses as unknown[])
+        .filter((a): a is string => typeof a === 'string')
+        .map(a => a.trim())
+        .filter(Boolean);
+    }
+  } catch {
+    return json({ ok: false, error: 'Invalid JSON body' }, 400);
+  }
 
   if (addresses.length === 0) {
-    return json({ ok: false, error: 'Missing addresses param' }, 400);
+    return json({ ok: false, error: 'Missing addresses' }, 400);
   }
 
   try {

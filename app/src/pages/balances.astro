@@ -61,7 +61,10 @@ function isNFT(info: TokenInfo | undefined): boolean {
 
 function nftIconUrl(info: TokenInfo | undefined): string | null {
   if (info?.type !== 'NonFungibleToken') return null;
-  return hexToText(info.content.metadata.icon_uri) ?? null;
+  const raw = hexToText(info.content.metadata.icon_uri) ?? null;
+  if (!raw) return null;
+  if (raw.startsWith("ipfs://")) return "https://ipfs.io/ipfs/" + raw.slice(7);
+  return raw;
 }
 ---
 

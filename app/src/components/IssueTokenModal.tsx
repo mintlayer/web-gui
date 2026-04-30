@@ -115,7 +115,7 @@ export default function IssueTokenModal({ ipfsEnabled, onClose, onIssued }: Prop
       }
 
       let newTokenId = '';
-      await submitWithToast(async () => {
+      const newTxId = await submitWithToast(async () => {
         const res = await rpc<{ token_id: string; tx_id: string }>('token_issue_new', {
           account: 0,
           destination_address: destAddress,
@@ -136,8 +136,8 @@ export default function IssueTokenModal({ ipfsEnabled, onClose, onIssued }: Prop
 
       // Persist to localStorage so "My Issued Tokens" can show it even at zero balance
       try {
-        const stored = JSON.parse(localStorage.getItem('ml_issued_tokens') ?? '[]') as Array<{ tokenId: string; ticker: string; decimals: number; issuedAt: number }>;
-        stored.unshift({ tokenId: newTokenId, ticker, decimals, issuedAt: Date.now() });
+        const stored = JSON.parse(localStorage.getItem('ml_issued_tokens') ?? '[]') as Array<{ tokenId: string; ticker: string; decimals: number; issuedAt: number; txId?: string }>;
+        stored.unshift({ tokenId: newTokenId, ticker, decimals, issuedAt: Date.now(), txId: newTxId });
         localStorage.setItem('ml_issued_tokens', JSON.stringify(stored));
       } catch { /* ignore - non-critical */ }
     } catch (err) {

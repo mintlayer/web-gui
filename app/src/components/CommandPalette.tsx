@@ -94,8 +94,15 @@ export default function CommandPalette({ items }: Props) {
     return result;
   }, [displayItems]);
 
-  // Flat ordered list for keyboard nav
-  const flat = useMemo(() => displayItems, [displayItems]);
+  // Flat ordered list for keyboard nav — must match visual section-grouped render order
+  const flat = useMemo(() => {
+    const order = ['WALLET', 'ASSETS', 'TRADE', 'PLUGINS'];
+    const secs = [
+      ...order.filter(s => grouped[s]),
+      ...Object.keys(grouped).filter(s => !order.includes(s)),
+    ];
+    return secs.flatMap(s => grouped[s] ?? []);
+  }, [grouped]);
 
   const navigate = useCallback((item: NavItem) => {
     setOpen(false);

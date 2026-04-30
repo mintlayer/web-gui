@@ -1,6 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# If invoked via process substitution (bash <(curl ...)), $0 is /dev/fd/N —
+# inaccessible in any child process spawned by sg/newgrp. Copy to a temp file
+# immediately while the fd is still open, then use that path for re-exec.
+_SELF="$0"
+if [[ "$_SELF" == /dev/fd/* ]] || [[ "$_SELF" == /proc/*/fd/* ]]; then
+  _tmp=$(mktemp /tmp/mintlayer-install-XXXXXX.sh)
+  cp "$_SELF" "$_tmp"
+  chmod +x "$_tmp"
+  _SELF="$_tmp"
+fi
+# When re-executed from the temp file (after sg docker), clean it up on exit.
+if [[ "$_SELF" == /tmp/mintlayer-install-*.sh ]]; then
+  trap 'rm -f "$_SELF"' EXIT
+fi
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Mintlayer Web GUI — remote installer
 # Served at https://get.mintlayer.org/linux.sh  (also mac.sh)
@@ -427,7 +442,7 @@ check_prereqs() {
           # need a full logout/login just to use docker in the current shell.
           if ! docker info &>/dev/null 2>&1; then
             hint "Activating docker group membership without logout…"
-            exec sg docker "$0" "$@"
+            exec sg docker "$_SELF" "$@"
           fi
 
           divider
@@ -490,8 +505,8 @@ compose_cmd() {
 # ─────────────────────────────────────────────────────────────────────────────
 # Bootstrap + prereqs
 # ─────────────────────────────────────────────────────────────────────────────
-bootstrap_remote
 check_prereqs
+bootstrap_remote
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Banner
@@ -1126,6 +1141,47 @@ if [[ "$SETUP_FIREWALL" == "yes" ]]; then
     else
       ok "firewalld enabled — SSH, HTTP, HTTPS allowed"
     fi
+  fi
+fi
+
+divider
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Desktop shortcut (Linux only, skip on headless servers)
+# ─────────────────────────────────────────────────────────────────────────────
+if [[ "$OS" == "linux" ]] && command -v xdg-open &>/dev/null; then
+  _create_shortcut="no"
+  confirm _create_shortcut "Create a desktop shortcut in your app launcher?" "Y"
+
+  if [[ "$_create_shortcut" == "yes" ]]; then
+    _icon_dir="$HOME/.local/share/icons"
+    _app_dir="$HOME/.local/share/applications"
+    mkdir -p "$_icon_dir" "$_app_dir"
+
+    # Download the Mintlayer SVG icon (best quality for Linux desktops)
+    _icon_path="$_icon_dir/mintlayer.svg"
+    if command -v curl &>/dev/null; then
+      curl -fsSL https://get.mintlayer.org/apple-touch-icon.svg -o "$_icon_path" 2>/dev/null || true
+    fi
+    [[ ! -f "$_icon_path" ]] && _icon_name="applications-internet" || _icon_name="mintlayer"
+
+    _gui_url="http://localhost:4321"
+    [[ "$HTTPS_SETUP" == "yes" && -n "$DOMAIN" ]] && _gui_url="https://${DOMAIN}"
+
+    cat > "$_app_dir/mintlayer-web-gui.desktop" <<EOF
+[Desktop Entry]
+Version=1.0
+Name=Mintlayer Web GUI
+Comment=Mintlayer wallet interface
+Exec=xdg-open ${_gui_url}
+Icon=${_icon_name}
+Terminal=false
+Type=Application
+Categories=Finance;
+EOF
+
+    update-desktop-database "$_app_dir" 2>/dev/null || true
+    ok "Shortcut created — look for Mintlayer Web GUI in your app launcher"
   fi
 fi
 

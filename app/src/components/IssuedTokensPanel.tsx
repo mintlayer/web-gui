@@ -11,6 +11,7 @@ interface StoredToken {
   ticker: string;
   decimals: number;
   issuedAt: number;
+  txId?: string;
 }
 
 type FungibleContent = {
@@ -32,6 +33,10 @@ interface Props {
   network: string;
 }
 
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const TEN_MINUTES = 10 * 60 * 1000;
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 const LS_KEY = 'ml_issued_tokens';
@@ -45,7 +50,10 @@ function loadStored(): StoredToken[] {
 }
 
 function saveStored(list: StoredToken[]) {
-  localStorage.setItem(LS_KEY, JSON.stringify(list));
+  // Deduplicate by tokenId before persisting
+  const seen = new Set<string>();
+  const deduped = list.filter(t => !seen.has(t.tokenId) && seen.add(t.tokenId));
+  localStorage.setItem(LS_KEY, JSON.stringify(deduped));
 }
 
 async function rpc<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
@@ -83,6 +91,7 @@ export default function IssuedTokensPanel({ network }: Props) {
   const [liveInfos, setLiveInfos] = useState<Map<string, TokenLiveInfo>>(new Map());
   const [loading, setLoading] = useState(true);
   const [manageTokenId, setManageTokenId] = useState<string | null>(null);
+  const [failedTokenIds, setFailedTokenIds] = useState<Set<string>>(new Set());
 
   const explorerBase = network === 'testnet'
     ? 'https://lovelace.explorer.mintlayer.org'
@@ -96,16 +105,60 @@ export default function IssuedTokensPanel({ network }: Props) {
     return map;
   }
 
+  async function checkFailedTxs(tokens: StoredToken[], map: Map<string, TokenLiveInfo>) {
+    const pendingWithTx = tokens.filter(t => map.get(t.tokenId) === null && t.txId);
+    if (pendingWithTx.length === 0) return;
+    try {
+      const pendingTxIds = await rpc<string[]>('transaction_list_pending', { account: 0 });
+      const pendingSet = new Set(pendingTxIds);
+      const failed = pendingWithTx.filter(t => !pendingSet.has(t.txId!));
+      if (failed.length > 0) {
+        setFailedTokenIds(prev => {
+          const next = new Set(prev);
+          failed.forEach(t => next.add(t.tokenId));
+          return next;
+        });
+      }
+    } catch { /* ignore - best effort */ }
+  }
+
   async function loadLiveInfos(tokens: StoredToken[]) {
     if (tokens.length === 0) { setLoading(false); return; }
     try {
       const map = await fetchLiveInfos(tokens.map(t => t.tokenId));
       setLiveInfos(map);
+      sweepStaleTokens(tokens, map);
+      await checkFailedTxs(tokens, map);
     } catch {
       // silently fail - we still show stored data
     } finally {
       setLoading(false);
     }
+  }
+
+  function sweepStaleTokens(tokens: StoredToken[], map: Map<string, TokenLiveInfo>) {
+    const now = Date.now();
+    const staleIds = new Set(
+      tokens
+        .filter(t => map.get(t.tokenId) === null && t.issuedAt > 0 && now - t.issuedAt > TEN_MINUTES)
+        .map(t => t.tokenId)
+    );
+    if (staleIds.size === 0) return;
+    setStored(prev => {
+      const updated = prev.filter(t => !staleIds.has(t.tokenId));
+      saveStored(updated);
+      return updated;
+    });
+    setLiveInfos(prev => { const next = new Map(prev); staleIds.forEach(id => next.delete(id)); return next; });
+    setFailedTokenIds(prev => { const next = new Set(prev); staleIds.forEach(id => next.delete(id)); return next; });
+  }
+
+  function removeToken(tokenId: string) {
+    const updated = stored.filter(t => t.tokenId !== tokenId);
+    saveStored(updated);
+    setStored(updated);
+    setLiveInfos(prev => { const next = new Map(prev); next.delete(tokenId); return next; });
+    setFailedTokenIds(prev => { const next = new Set(prev); next.delete(tokenId); return next; });
   }
 
   /** Scan the indexer for tokens where any of our wallet addresses is authority. */
@@ -122,8 +175,11 @@ export default function IssuedTokensPanel({ network }: Props) {
       );
       if (addresses.length === 0) return;
 
-      const addrList = addresses.map(a => a.address).join(',');
-      const res = await fetch(`/api/token-authority?addresses=${encodeURIComponent(addrList)}`);
+      const res = await fetch('/api/token-authority', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ addresses: addresses.map(a => a.address) }),
+      });
       const data = await res.json() as { ok: boolean; result?: string[]; error?: string };
       if (!data.ok || !data.result) return;
 
@@ -137,7 +193,7 @@ export default function IssuedTokensPanel({ network }: Props) {
         const info = infoMap.get(id);
         const ticker = info?.type === 'FungibleToken' ? (hexToText(info.content.token_ticker) ?? '???') : '???';
         const decimals = info?.type === 'FungibleToken' ? info.content.number_of_decimals : 0;
-        return { tokenId: id, ticker, decimals, issuedAt: 0 };
+        return { tokenId: id, ticker, decimals, issuedAt: Date.now() };
       });
 
       const merged = [...current, ...newEntries];
@@ -153,11 +209,76 @@ export default function IssuedTokensPanel({ network }: Props) {
     }
   }
 
+  /**
+   * Scan the wallet's UTXO set for IssueFungibleToken outputs.
+   * Works without the indexer — falls back to this when the indexer is not running.
+   */
+  async function augmentFromWallet(current: StoredToken[]) {
+    try {
+      const res = await fetch('/api/scan-issued-tokens');
+      const data = await res.json() as {
+        ok: boolean;
+        fungible?: Array<{ tokenId: string; ticker: string; decimals: number }>;
+      };
+      if (!data.ok || !data.fungible || data.fungible.length === 0) return;
+
+      // Use current to filter what's already known at call time
+      const knownIds = new Set(current.map(t => t.tokenId));
+      const newEntries: StoredToken[] = data.fungible
+        .filter(t => !knownIds.has(t.tokenId))
+        .map(t => ({ tokenId: t.tokenId, ticker: t.ticker, decimals: t.decimals, issuedAt: Date.now() }));
+
+      if (newEntries.length === 0) return;
+
+      const infoMap = await fetchLiveInfos(newEntries.map(t => t.tokenId));
+
+      // Use functional updater to merge with whatever state is current (avoids races with augmentFromIndexer)
+      setStored(prev => {
+        const existingIds = new Set(prev.map(t => t.tokenId));
+        const addable = newEntries.filter(t => !existingIds.has(t.tokenId));
+        if (addable.length === 0) return prev;
+        const merged = [...prev, ...addable];
+        saveStored(merged);
+        return merged;
+      });
+      setLiveInfos(prev => {
+        const next = new Map(prev);
+        infoMap.forEach((v, k) => next.set(k, v));
+        return next;
+      });
+    } catch {
+      // UTXO augmentation is best-effort - don't surface errors
+    }
+  }
+
   useEffect(() => {
     const list = loadStored();
     setStored(list);
     loadLiveInfos(list);
     augmentFromIndexer(list);
+    augmentFromWallet(list);
+
+    const es = new EventSource('/api/block-stream');
+    es.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data as string) as { type: string };
+        if (msg.type === 'NewBlock') {
+          setLiveInfos(current => {
+            const hasPending = [...current.values()].some(v => v === null);
+            if (hasPending) loadLiveInfos(loadStored());
+            return current;
+          });
+        }
+      } catch { /* ignore */ }
+    };
+
+    const resyncInterval = setInterval(() => {
+      const list = loadStored();
+      loadLiveInfos(list);
+      augmentFromWallet(list);
+    }, 2 * 60 * 1000);
+
+    return () => { es.close(); clearInterval(resyncInterval); };
   }, []);
 
   function refresh() {
@@ -171,7 +292,7 @@ export default function IssuedTokensPanel({ network }: Props) {
   if (stored.length === 0) {
     return (
       <p className="text-sm text-gray-500">
-        No tokens issued from this browser yet. Use <strong className="text-gray-400">Mint Token</strong> above to create one.
+        No authoritable tokens found. Use <strong className="text-gray-400">Mint Token</strong> above to create one.
       </p>
     );
   }
@@ -197,6 +318,8 @@ export default function IssuedTokensPanel({ network }: Props) {
               const circulating = content ? atomsToDecimal(content.circulating_supply.atoms, decimals) : '-';
               const badges = content ? supplyBadge(content) : [];
               const supplyType = content?.total_supply.type ?? '-';
+              const isPending = live === null;
+              const isFailed = failedTokenIds.has(token.tokenId);
 
               return (
                 <tr key={token.tokenId} className="bg-gray-900 hover:bg-gray-800/60 transition-colors">
@@ -214,6 +337,16 @@ export default function IssuedTokensPanel({ network }: Props) {
                           {b}
                         </span>
                       ))}
+                      {isPending && !isFailed && (
+                        <span className="text-xs rounded px-1.5 py-0.5 border bg-yellow-900/40 text-yellow-300 border-yellow-800">
+                          pending
+                        </span>
+                      )}
+                      {isFailed && (
+                        <span className="text-xs rounded px-1.5 py-0.5 border bg-red-900/40 text-red-300 border-red-800">
+                          tx failed
+                        </span>
+                      )}
                     </span>
                   </td>
                   <td className="px-4 py-3">
@@ -235,12 +368,25 @@ export default function IssuedTokensPanel({ network }: Props) {
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    <button
-                      onClick={() => setManageTokenId(token.tokenId)}
-                      className="rounded-lg bg-mint-700/30 hover:bg-mint-700/60 border border-mint-800 px-3 py-1 text-xs font-semibold text-mint-300 transition-colors"
-                    >
-                      Manage
-                    </button>
+                    {isPending ? (
+                      <button
+                        onClick={() => removeToken(token.tokenId)}
+                        className={`rounded-lg border px-3 py-1 text-xs font-semibold transition-colors ${
+                          isFailed
+                            ? 'border-red-800 text-red-400 hover:bg-red-900/30'
+                            : 'border-gray-700 text-gray-400 hover:bg-gray-800/50'
+                        }`}
+                      >
+                        Remove
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => setManageTokenId(token.tokenId)}
+                        className="rounded-lg border bg-mint-700/30 hover:bg-mint-700/60 border-mint-800 text-mint-300 px-3 py-1 text-xs font-semibold transition-colors"
+                      >
+                        Manage
+                      </button>
+                    )}
                   </td>
                 </tr>
               );

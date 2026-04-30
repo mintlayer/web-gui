@@ -4,7 +4,8 @@ import SyncStatus from '@/components/SyncStatus';
 import ReceiveModal from '@/components/ReceiveModal';
 import {
   getBalance, walletBestBlock, getStakingStatus, listCreatedBlocks,
-  nodeChainstateInfo, getTokensInfo, openWallet, isWalletNotOpenError, WalletRpcError,
+  nodeChainstateInfo, nodePeerCount, nodeVersion, getTokensInfo,
+  listPendingTransactions, openWallet, isWalletNotOpenError, WalletRpcError,
   type BlockInfo, type ChainstateInfo,
 } from '@/lib/wallet-rpc';
 
@@ -35,6 +36,9 @@ let blockInfo: BlockInfo | null = null;
 let chainstate: ChainstateInfo | null = null;
 let stakingStatus: string | null = null;
 let blocksFound: number | null = null;
+let peerCount: number | null = null;
+let version: string | null = null;
+let pendingTxCount: number | null = null;
 let walletError: string | null = null;
 let daemonOffline = false;
 let needsPassword = false;
@@ -42,12 +46,15 @@ let fungibleCount = 0;
 let nftCount = 0;
 
 try {
-  [balance, blockInfo, stakingStatus, chainstate] = await Promise.all([
+  [balance, blockInfo, stakingStatus, chainstate, peerCount, version] = await Promise.all([
     getBalance(0),
     walletBestBlock(),
     getStakingStatus(0),
     nodeChainstateInfo(),
+    nodePeerCount().catch(() => null),
+    nodeVersion().catch(() => null),
   ]);
+  pendingTxCount = await listPendingTransactions(0).then(txs => txs.length).catch(() => null);
   blocksFound = await listCreatedBlocks(0).then(b => b.length).catch(() => null);
 
   if (balance && Object.keys(balance.tokens).length > 0) {
@@ -119,12 +126,12 @@ const indexerEnabled = process.env.INDEXER_ENABLED === 'true';
   )}
 
   <!-- Stats grid -->
-  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
     <div class="rounded-xl bg-gray-900 border border-gray-800 p-5">
       <p class="text-xs text-gray-500 uppercase tracking-wider mb-1">Balance (confirmed)</p>
       {balance ? (
         <p class="text-3xl font-bold text-mint-400 font-mono">
-          {parseFloat(balance.coins.decimal).toFixed(4)}
+          ~{Math.floor(parseFloat(balance.coins.decimal)).toLocaleString()}
           <span class="text-base text-gray-400 ml-1">ML</span>
         </p>
       ) : (
@@ -182,7 +189,37 @@ const indexerEnabled = process.env.INDEXER_ENABLED === 'true';
         <p class="text-3xl font-bold text-gray-700">-</p>
       )}
     </div>
+
+    <div class="rounded-xl bg-gray-900 border border-gray-800 p-5">
+      <p class="text-xs text-gray-500 uppercase tracking-wider mb-1">Connected Peers</p>
+      {peerCount !== null ? (
+        <p class="text-3xl font-bold text-gray-100 font-mono">{peerCount.toLocaleString()}</p>
+      ) : (
+        <p class="text-3xl font-bold text-gray-700">-</p>
+      )}
+    </div>
   </div>
+
+  <!-- Node info block -->
+  {(version !== null || pendingTxCount !== null) && (
+    <div class="rounded-xl bg-gray-900 border border-gray-800 p-5 mb-4">
+      <p class="text-xs text-gray-500 uppercase tracking-wider mb-3">Node Info</p>
+      <div class="grid grid-cols-2 sm:grid-cols-3 gap-4">
+        {version !== null && (
+          <div>
+            <p class="text-xs text-gray-500 mb-0.5">Version</p>
+            <p class="text-sm font-mono text-gray-200">{version}</p>
+          </div>
+        )}
+        {pendingTxCount !== null && (
+          <div>
+            <p class="text-xs text-gray-500 mb-0.5">Pending Txs (wallet)</p>
+            <p class="text-sm font-mono text-gray-200">{pendingTxCount}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  )}
 
   {blockInfo && (
     <div class="rounded-xl bg-gray-900 border border-gray-800 p-5 mb-4">

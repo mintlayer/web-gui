@@ -282,39 +282,6 @@ export default function TokenSearch({ network }: Props) {
 
   return (
     <div>
-      {/* ── Favourites section ─────────────────────────────────────────────── */}
-      {favourites.length > 0 && (
-        <div className="mb-6">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-semibold text-yellow-400">★ Favourites</h3>
-            <button
-              onClick={() => fetchFavInfos(favourites.map(f => f.tokenId))}
-              disabled={favLoading}
-              className="text-xs text-gray-500 hover:text-gray-300 transition-colors disabled:opacity-40"
-            >
-              {favLoading ? 'Refreshing…' : 'Refresh'}
-            </button>
-          </div>
-          <div className="space-y-2">
-            {favourites.map(({ tokenId, ticker }) => {
-              const info = favInfos.get(tokenId) ?? null;
-              const displayInfo: TokenInfo | null = info ?? null;
-              return (
-                <TokenCard
-                  key={tokenId}
-                  tokenId={tokenId}
-                  info={displayInfo}
-                  explorerBase={explorerBase}
-                  isFavourite={true}
-                  onToggleFavourite={toggleFavourite}
-                />
-              );
-            })}
-          </div>
-          <hr className="border-gray-800 mt-4" />
-        </div>
-      )}
-
       {/* ── Search form ────────────────────────────────────────────────────── */}
       <form onSubmit={handleSearch} className="flex gap-2">
         <input
@@ -360,6 +327,38 @@ export default function TokenSearch({ network }: Props) {
               onToggleFavourite={toggleFavourite}
             />
           ))}
+        </div>
+      )}
+
+      {/* ── Favourites section ─────────────────────────────────────────────── */}
+      {favourites.length > 0 && (
+        <div className="mt-6">
+          <hr className="border-gray-800 mb-4" />
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-semibold text-yellow-400">★ Favourites</h3>
+            <button
+              onClick={() => fetchFavInfos(favourites.map(f => f.tokenId))}
+              disabled={favLoading}
+              className="text-xs text-gray-500 hover:text-gray-300 transition-colors disabled:opacity-40"
+            >
+              {favLoading ? 'Refreshing…' : 'Refresh'}
+            </button>
+          </div>
+          <div className="space-y-2">
+            {favourites.map(({ tokenId, ticker }) => {
+              const info = favInfos.get(tokenId) ?? null;
+              return (
+                <TokenCard
+                  key={tokenId}
+                  tokenId={tokenId}
+                  info={info}
+                  explorerBase={explorerBase}
+                  isFavourite={true}
+                  onToggleFavourite={toggleFavourite}
+                />
+              );
+            })}
+          </div>
         </div>
       )}
     </div>
