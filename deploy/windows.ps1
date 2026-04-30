@@ -17,14 +17,14 @@ if (-not [string]::IsNullOrEmpty($PSCommandPath)) {
         Write-Host "ExecutionPolicy is Restricted. Run this first:" -ForegroundColor Yellow
         Write-Host "  Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned" -ForegroundColor Cyan
         Write-Host "Then re-run the script." -ForegroundColor Gray
-        exit 1
+        Exit-ML 1
     }
 }
 
 # ── Interactive check ─────────────────────────────────────────────────────────
 if (-not [Environment]::UserInteractive) {
     Write-Error "This script requires an interactive terminal."
-    exit 1
+    Exit-ML 1
 }
 
 # ── Admin detection ───────────────────────────────────────────────────────────
@@ -56,6 +56,12 @@ function Ok-ML    { Write-Host "${GREEN}◈${RESET} $($args -join ' ')" }
 function Warn-ML  { Write-Host "${YELLOW}▲${RESET}  $($args -join ' ')" }
 function Err-ML   { Write-Host "${RED}✗${RESET}  $($args -join ' ')" }
 function Divider-ML { Write-Host "${GRAY}└─────────────────────────────────────────${RESET}" }
+
+function Exit-ML([int]$Code = 0) {
+    Write-Host ""
+    Read-Host "Press Enter to close"
+    exit $Code
+}
 
 function Prompt-ML([string]$Question, [string]$Default = '') {
     if ($Default) { Write-Host "${CYAN}│${RESET}  $Question ${GRAY}($Default)${RESET} " -NoNewline }
@@ -177,7 +183,7 @@ function Get-ComposeCmd {
     if ($LASTEXITCODE -eq 0) { return 'docker compose' }
     if (Get-Command docker-compose -ErrorAction SilentlyContinue) { return 'docker-compose' }
     Err-ML "Docker Compose is not available."
-    exit 1
+    Exit-ML 1
 }
 
 # ── check_prereqs ─────────────────────────────────────────────────────────────
@@ -185,7 +191,7 @@ function Invoke-CheckPrereqs {
     if (-not $script:Sha512Available) {
         Err-ML ".NET 4.7.2 or later is required for password hashing."
         Write-Host "  Download: https://dotnet.microsoft.com/download/dotnet-framework" -ForegroundColor Cyan
-        exit 1
+        Exit-ML 1
     }
 
     $dockerInstalled = (Get-ItemProperty 'HKLM:\SOFTWARE\Docker Inc.\Docker Desktop' `
@@ -207,26 +213,26 @@ function Invoke-CheckPrereqs {
                 Hint-ML "2. Complete the first-run setup wizard"
                 Hint-ML "3. Wait for the whale icon in the system tray"
                 Hint-ML "4. Re-run this script"
-                exit 0
+                Exit-ML 0
             }
         }
         Err-ML "Docker Desktop is required."
         Write-Host "  Download: https://docs.docker.com/desktop/install/windows-install/" -ForegroundColor Cyan
-        exit 1
+        Exit-ML 1
     }
 
     if (-not (Test-DockerRunning)) {
         Err-ML "Docker Desktop is installed but not running."
         Write-Host "  Start Docker Desktop from the Start Menu, wait for it to finish loading," -ForegroundColor Yellow
         Write-Host "  then re-run this script." -ForegroundColor Yellow
-        exit 1
+        Exit-ML 1
     }
 
     docker compose version 2>$null | Out-Null
     if ($LASTEXITCODE -ne 0 -and -not (Get-Command docker-compose -ErrorAction SilentlyContinue)) {
         Err-ML "Docker Compose is not available."
         Write-Host "  Reinstall Docker Desktop from https://docs.docker.com/desktop/install/windows-install/" -ForegroundColor Gray
-        exit 1
+        Exit-ML 1
     }
 }
 
@@ -438,6 +444,15 @@ volumes:
         Ok-ML "docker-compose.yml written to $($script:InstallDir)"
     }
     Divider-ML
+}
+
+# ── Trap unhandled exceptions so the window never silently closes ─────────────
+trap {
+    Write-Host ""
+    Err-ML "Unexpected error: $_"
+    Write-Host ""
+    Read-Host "Press Enter to close"
+    exit 1
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -689,7 +704,7 @@ $proceed = Confirm-ML "Write .env and continue?" 'Y'
 if ($proceed -ne 'yes') {
     Write-Host ""
     Warn-ML "Setup cancelled. Nothing was written."
-    exit 0
+    Exit-ML 0
 }
 Divider-ML
 
@@ -849,3 +864,4 @@ Write-Host ""
 Write-Host "  ${DIM}Note: mainnet sync takes hours on first run.${RESET}"
 Write-Host "  ${DIM}Balance and history appear once the node is fully synced.${RESET}"
 Write-Host ""
+Read-Host "Press Enter to close"
