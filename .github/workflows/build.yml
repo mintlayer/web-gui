@@ -133,8 +133,9 @@ jobs:
           mkdir _site
           cp deploy/index.html _site/
           cp deploy/CNAME      _site/
-          cp deploy/linux.sh   _site/linux.sh
-          cp deploy/mac.sh     _site/mac.sh
+          cp deploy/linux.sh      _site/linux.sh
+          cp deploy/mac.sh        _site/mac.sh
+          cp deploy/windows.ps1   _site/windows.ps1
           chmod +x _site/linux.sh _site/mac.sh
 
       - name: Upload Pages artifact
