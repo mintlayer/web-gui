@@ -186,6 +186,43 @@ function Get-ComposeCmd {
     Exit-ML 1
 }
 
+# ── WSL2 / virtualization preflight ──────────────────────────────────────────
+function Invoke-EnsureWsl2 {
+    # CPU virtualization — if off, nothing else will work
+    try {
+        $cpu = Get-WmiObject -Class Win32_Processor | Select-Object -First 1
+        if ($cpu -and $cpu.VirtualizationFirmwareEnabled -eq $false) {
+            Err-ML "CPU virtualization is disabled."
+            Hint-ML "Enable VT-x (Intel) or AMD-V in your BIOS/UEFI settings, then reboot and re-run."
+            Exit-ML 1
+        }
+    } catch { }
+
+    # VirtualMachinePlatform + WSL optional features
+    $vmp = Get-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform  -ErrorAction SilentlyContinue
+    $wsl = Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux -ErrorAction SilentlyContinue
+
+    $needEnable = @()
+    if ($vmp -and $vmp.State -ne 'Enabled') { $needEnable += 'VirtualMachinePlatform' }
+    if ($wsl -and $wsl.State -ne 'Enabled') { $needEnable += 'Microsoft-Windows-Subsystem-Linux' }
+
+    if ($needEnable.Count -gt 0) {
+        Warn-ML "Required Windows features are not enabled: $($needEnable -join ', ')"
+        Hint-ML "Docker Desktop requires WSL2 (Virtual Machine Platform + WSL)."
+        Write-Host ""
+        $enable = Confirm-ML "Enable these features now? (a reboot will be required)" 'Y'
+        if ($enable -eq 'yes') {
+            foreach ($f in $needEnable) {
+                Enable-WindowsOptionalFeature -Online -FeatureName $f -NoRestart | Out-Null
+            }
+            Ok-ML "Features enabled. Please reboot, then re-run this script."
+            Exit-ML 0
+        }
+        Err-ML "Cannot install Docker Desktop without these features. Enable them in Windows Features and reboot."
+        Exit-ML 1
+    }
+}
+
 # ── check_prereqs ─────────────────────────────────────────────────────────────
 function Invoke-CheckPrereqs {
     if (-not $script:Sha512Available) {
@@ -205,19 +242,16 @@ function Invoke-CheckPrereqs {
         if ($winget) {
             $install = Confirm-ML "Install Docker Desktop automatically via winget?" 'Y'
             if ($install -eq 'yes') {
+                Invoke-EnsureWsl2
                 Step-ML "Installing Docker Desktop"
-                # --scope machine avoids a known winget/UAC elevation issue (exit 4294967291)
                 winget install --id Docker.DockerDesktop --scope machine `
                     --accept-source-agreements --accept-package-agreements
                 if ($LASTEXITCODE -ne 0) {
                     Write-Host ""
-                    Err-ML "Docker Desktop installation failed (winget exit code $LASTEXITCODE)."
+                    Err-ML "Docker Desktop installation failed (exit code $LASTEXITCODE)."
                     Write-Host ""
-                    Warn-ML "This often happens when running as a non-admin user."
-                    Hint-ML "Try one of these:"
-                    Hint-ML "  1. Re-run this script from a PowerShell window opened as Administrator"
-                    Hint-ML "  2. Download and install Docker Desktop manually, then re-run:"
-                    Hint-ML "     https://docs.docker.com/desktop/install/windows-install/"
+                    Hint-ML "Download and install manually, then re-run this script:"
+                    Hint-ML "  https://docs.docker.com/desktop/install/windows-install/"
                     Exit-ML 1
                 }
                 Write-Host ""
