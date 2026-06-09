@@ -8,10 +8,8 @@ export default defineConfig({
     mode: 'standalone',
   }),
   integrations: [react()],
-  // Disable CSRF origin check — this is a self-hosted internal tool accessed
-  // via a custom port/host, so the Origin header routinely won't match.
   security: {
-    checkOrigin: false,
+    checkOrigin: true,
   },
   server: {
     host: process.env.HOST || '0.0.0.0',
