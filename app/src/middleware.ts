@@ -8,7 +8,6 @@ import {
   SESSION_COOKIE_NAME,
 } from '@/lib/auth';
 
-// Paths that do not require authentication
 const PUBLIC_PATHS = new Set([
   '/login',
   '/api/login',
@@ -17,24 +16,27 @@ const PUBLIC_PATHS = new Set([
 ]);
 const PUBLIC_PREFIXES = ['/_astro/', '/favicon', '/_image'];
 
+const SECURITY_HEADERS: Record<string, string> = {
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'no-referrer',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+};
+
 export const onRequest = defineMiddleware(async (context, next) => {
   const { pathname } = new URL(context.request.url);
 
-  // Pass through public paths and static assets
   if (PUBLIC_PATHS.has(pathname) || PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) {
-    return next();
+    const response = await next();
+    applySecurityHeaders(response);
+    return response;
   }
 
-  // Extract session cookie
   const cookieHeader = context.request.headers.get('cookie') ?? '';
   const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${SESSION_COOKIE_NAME}=([^;]+)`));
   const token = match?.[1] ?? '';
 
   if (!verifySessionToken(token)) {
-    // Return a raw Response so the Location header is a plain relative path.
-    // context.redirect() resolves relative URLs against context.request.url which
-    // can drop the port when the Node adapter builds the URL from a Host header
-    // that omits it (e.g. "localhost" instead of "localhost:4322").
     const nextParam =
       pathname !== '/' && !pathname.startsWith('/api/')
         ? `?next=${encodeURIComponent(pathname)}`
@@ -45,11 +47,8 @@ export const onRequest = defineMiddleware(async (context, next) => {
     });
   }
 
-  // Valid session - proceed
   const response = await next();
 
-  // Refresh cookie (sliding window) - skip if the response already sets its own cookie
-  // (e.g. logout clears it, login sets a fresh one) or if it's a streaming SSE response.
   const contentType = response.headers.get('content-type') ?? '';
   const alreadySetsCookie = response.headers.has('Set-Cookie');
   if (!contentType.includes('text/event-stream') && !alreadySetsCookie) {
@@ -57,5 +56,17 @@ export const onRequest = defineMiddleware(async (context, next) => {
     response.headers.set('Set-Cookie', makeSessionCookieHeader(newToken));
   }
 
+  if (!contentType.includes('text/event-stream')) {
+    applySecurityHeaders(response);
+  }
+
   return response;
 });
+
+function applySecurityHeaders(response: Response): void {
+  for (const [key, value] of Object.entries(SECURITY_HEADERS)) {
+    if (!response.headers.has(key)) {
+      response.headers.set(key, value);
+    }
+  }
+}
