@@ -235,6 +235,14 @@ try {
     amount: { decimal: string };
   }
 
+  function escHtml(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
   async function enrichWithTokens() {
     // Check indexer is available
     const statusRes = await fetch('/api/indexer-status').then(r => r.json()).catch(() => ({ up: false })) as { up: boolean };
@@ -269,14 +277,19 @@ try {
       const overflow = tokens.length - MAX_VISIBLE;
 
       cell.innerHTML = visible.map(t => {
-        const label = t.isNFT ? `NFT · ${t.ticker}` : `${t.amount.decimal} ${t.ticker}`;
+        const label = t.isNFT
+          ? `NFT · ${escHtml(t.ticker)}`
+          : `${escHtml(t.amount.decimal)} ${escHtml(t.ticker)}`;
         const colorCls = t.isNFT
           ? 'bg-purple-900/40 text-purple-300 border-purple-800'
           : 'bg-gray-800 text-gray-300 border-gray-700';
-        const midId = t.token_id.length > 16 ? `${t.token_id.slice(0, 7)}\u2026${t.token_id.slice(-7)}` : t.token_id;
+        const rawMidId = t.token_id.length > 16
+          ? `${t.token_id.slice(0, 7)}\u2026${t.token_id.slice(-7)}`
+          : t.token_id;
+        const midId = escHtml(rawMidId);
         return `<span class="tok-badge inline-block rounded px-1.5 py-0.5 text-xs border font-sans ${colorCls}">${label}${INFO_SVG}<span class="tok-tip"><span class="tok-tip-label">Token ID</span><span class="tok-tip-id">${midId}</span></span></span>`;
       }).join('') + (overflow > 0
-        ? `<span class="inline-block rounded px-1.5 py-0.5 text-xs border bg-gray-800 text-gray-500 border-gray-700">+${overflow} more</span>`
+        ? `<span class="inline-block rounded px-1.5 py-0.5 text-xs border bg-gray-800 text-gray-500 border-gray-700">+${escHtml(String(overflow))} more</span>`
         : '');
     }
   }
