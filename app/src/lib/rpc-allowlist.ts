@@ -7,7 +7,6 @@ export const ALLOWED_RPC_METHODS = new Set([
   // Addresses
   'address_new',
   'address_show',
-  // Transactions
   'address_send',
   // Staking
   'staking_status',

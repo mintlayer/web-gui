@@ -51,8 +51,8 @@ export const POST: APIRoute = async ({ request }) => {
   }
 };
 
-function jsonError(message: string, status: number) {
-  return new Response(JSON.stringify({ ok: false, error: { message } }), {
+function jsonError(message: string, status: number, code: number = 0) {
+  return new Response(JSON.stringify({ ok: false, error: { message, code } }), {
     status,
     headers: { 'Content-Type': 'application/json' },
   });

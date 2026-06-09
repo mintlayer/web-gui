@@ -6,7 +6,7 @@
  * Request, no Astro runtime needed.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ALLOWED_RPC_METHODS } from '@/lib/rpc-allowlist';
 
 // vi.mock is hoisted before imports by Vitest
@@ -29,6 +29,10 @@ vi.mock('@/lib/auth', () => ({
 import { POST } from '@/pages/api/rpc';
 import { rpcCall, WalletRpcError } from '@/lib/wallet-rpc';
 import { checkRpcRateLimit } from '@/lib/auth';
+
+afterEach(() => {
+  vi.clearAllMocks();
+});
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
