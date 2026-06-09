@@ -21,11 +21,10 @@ export const ALLOWED_RPC_METHODS = new Set([
   'delegation_stake',
   'delegation_withdraw',
   'staking_sweep_delegation',
-  // Wallet
+  // Wallet — open/create are handled server-side only (setup.astro, wallet.astro)
+  // and must not be callable through the browser proxy or plugin context.
   'wallet_info',
   'wallet_best_block',
-  'wallet_open',      // was: open_wallet (wrong name)
-  'wallet_create',    // was: create_wallet (wrong name)
   // Tokens
   'node_get_tokens_info',
   'token_send',

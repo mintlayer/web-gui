@@ -121,12 +121,22 @@ export async function installPlugin(buffer: Buffer): Promise<PluginManifest> {
     }
 
     // Verify no extracted path escapes tmpDir (catches symlinks and ../ entries)
-    const allExtracted = execFileSync('find', [tmpDir, '-print0'], { timeout: 5_000 })
-      .toString()
-      .split('\0')
-      .filter(Boolean);
+    let allExtracted: string[];
+    try {
+      allExtracted = execFileSync('find', [tmpDir, '-print0'], { timeout: 10_000 })
+        .toString()
+        .split('\0')
+        .filter(Boolean);
+    } catch (err) {
+      throw new Error(`Failed to enumerate archive contents: ${(err as Error).message}`);
+    }
     for (const p of allExtracted) {
-      const real = realpathSync(p);
+      let real: string;
+      try {
+        real = realpathSync(p);
+      } catch {
+        throw new Error(`Archive contains path escaping extraction directory: ${p}`);
+      }
       if (!real.startsWith(tmpDir + '/') && real !== tmpDir) {
         throw new Error(`Archive contains path escaping extraction directory: ${p}`);
       }

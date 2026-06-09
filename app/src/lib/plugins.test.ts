@@ -193,6 +193,23 @@ describe('installPlugin', () => {
     );
   });
 
+  it('rejects archives containing a dangling symlink', async () => {
+    // tar succeeds; find returns a path that realpathSync cannot resolve
+    vi.mocked(execFileSync)
+      .mockReturnValueOnce(Buffer.from('')) // tar
+      .mockImplementationOnce((_cmd, args) => {
+        const dir = (args as string[])[0];
+        return Buffer.from(`${dir}\0${dir}/dangling-link\0`);
+      }); // find
+    vi.mocked(realpathSync)
+      .mockImplementationOnce((p) => p as string) // tmpDir itself resolves fine
+      .mockImplementationOnce(() => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); });
+
+    await expect(installPlugin(Buffer.from('fake'))).rejects.toThrow(
+      'Archive contains path escaping extraction directory',
+    );
+  });
+
   it('throws when plugin.json is missing (flat layout)', async () => {
     setupSuccessfulExtract();
     mockReaddirSync.mockReturnValue([] as unknown as string[]);

@@ -149,6 +149,8 @@ describe('allowlist enforcement - blocked methods', () => {
     'WALLET_INFO', // case-sensitive - uppercase not allowed
     'open_wallet',             // old wrong name — must be blocked
     'create_wallet',           // old wrong name — must be blocked
+    'wallet_open',             // server-side only — must not be callable via proxy
+    'wallet_create',           // server-side only — must not be callable via proxy
     'wallet_show_seed_phrase', // sensitive — server-side only
     'wallet_unlock_private_keys', // sensitive — server-side only
   ])('blocks method "%s"', async (method) => {
