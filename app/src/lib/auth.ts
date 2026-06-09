@@ -19,14 +19,14 @@ import crypto from 'node:crypto';
 
 export const SESSION_COOKIE_NAME = 'session';
 const SESSION_MAX_AGE_MS = 30 * 60 * 1000; // 30 minutes
-const SESSION_COOKIE_ATTRS = 'Path=/; HttpOnly; SameSite=Strict; Max-Age=1800';
+const SESSION_COOKIE_ATTRS = 'Path=/; HttpOnly; SameSite=Strict; Secure; Max-Age=1800';
 
 export function makeSessionCookieHeader(token: string): string {
   return `${SESSION_COOKIE_NAME}=${token}; ${SESSION_COOKIE_ATTRS}`;
 }
 
 export function clearSessionCookieHeader(): string {
-  return `${SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`;
+  return `${SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Strict; Secure; Max-Age=0`;
 }
 
 // ── Session secret guard ───────────────────────────────────────────────────────
