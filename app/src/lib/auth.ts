@@ -79,16 +79,18 @@ function pbkdf2(
 }
 
 // ── Session token - HMAC-SHA256 ────────────────────────────────────────────────
-// Token format: "<timestamp_ms>.<hmac_sha256_hex>"
+// Token format: "<timestamp_ms>.<version>.<hmac_sha256_hex>"
+// version is included in the HMAC payload so incrementing it invalidates all tokens.
 
-export function generateSessionToken(): string {
+export function generateSessionToken(version: number = 0): string {
   const secret = getSessionSecret();
   const timestamp = Date.now().toString();
-  const hmac = crypto.createHmac('sha256', secret).update(timestamp).digest('hex');
-  return `${timestamp}.${hmac}`;
+  const payload = `${timestamp}.${version}`;
+  const hmac = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+  return `${timestamp}.${version}.${hmac}`;
 }
 
-export function verifySessionToken(token: string): boolean {
+export function verifySessionToken(token: string, version: number = 0): boolean {
   if (!token) return false;
   let secret: string;
   try {
@@ -97,17 +99,17 @@ export function verifySessionToken(token: string): boolean {
     return false;
   }
 
-  const dotIdx = token.lastIndexOf('.');
-  if (dotIdx === -1) return false;
-  const timestamp = token.slice(0, dotIdx);
-  const receivedHmac = token.slice(dotIdx + 1);
+  const parts = token.split('.');
+  if (parts.length !== 3) return false;
+  const [timestamp, tokenVersion, receivedHmac] = parts;
 
-  // Check age
   const ts = parseInt(timestamp, 10);
   if (isNaN(ts) || Date.now() - ts > SESSION_MAX_AGE_MS) return false;
 
-  // Timing-safe HMAC comparison
-  const expectedHmac = crypto.createHmac('sha256', secret).update(timestamp).digest('hex');
+  if (parseInt(tokenVersion, 10) !== version) return false;
+
+  const payload = `${timestamp}.${tokenVersion}`;
+  const expectedHmac = crypto.createHmac('sha256', secret).update(payload).digest('hex');
   if (receivedHmac.length !== expectedHmac.length) return false;
   return crypto.timingSafeEqual(
     Buffer.from(receivedHmac, 'utf8'),

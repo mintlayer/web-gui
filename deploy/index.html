@@ -754,61 +754,30 @@
 
 <script>
   // ── OS detection ────────────────────────────────────────────────────────
-  const OS = (() => {
-    const u = navigator.userAgent.toLowerCase();
-    const p = (navigator.platform || '').toLowerCase();
-    if (u.includes('win') || p.includes('win')) return 'windows';
-    if (p.includes('mac') || u.includes('mac os'))  return 'macos';
-    return 'linux';
-  })();
+  // Windows installer removed for now — Windows users get the Linux
+  // instructions (works under WSL 2, which Docker Desktop requires anyway).
+  const u = navigator.userAgent.toLowerCase();
+  const p = (navigator.platform || '').toLowerCase();
+  const IS_WINDOWS = u.includes('win') || p.includes('win');
+  const OS = !IS_WINDOWS && (p.includes('mac') || u.includes('mac os')) ? 'macos' : 'linux';
 
-  const SCRIPT_FILE  = OS === 'windows' ? 'windows.ps1' : (OS === 'macos' ? 'mac.sh' : 'linux.sh');
-  const INSTALL_CMD  = OS === 'windows'
-    ? 'irm https://get.mintlayer.org/windows.ps1 | iex'
-    : `bash <(curl -sSL https://get.mintlayer.org/${SCRIPT_FILE})`;
-
-  function pill(text) {
-    return `<div class="req-pill"><span class="dot"></span>${text}</div>`;
-  }
+  const SCRIPT_FILE  = OS === 'macos' ? 'mac.sh' : 'linux.sh';
+  const INSTALL_CMD  = `bash <(curl -sSL https://get.mintlayer.org/${SCRIPT_FILE})`;
 
   // ── Patch hero on load ───────────────────────────────────────────────────
   document.addEventListener('DOMContentLoaded', () => {
     // Command box
     document.getElementById('install-cmd').textContent = INSTALL_CMD;
 
-    // Terminal prompt character
-    document.getElementById('terminal-prompt').textContent = OS === 'windows' ? '>' : '$';
-
     // Badge + OS label
-    if (OS === 'windows') {
-      document.getElementById('badge-text').textContent  = 'Windows installer';
-      document.getElementById('os-label').textContent    = 'Windows detected';
-    } else {
-      document.getElementById('badge-text').textContent  = OS === 'macos' ? 'macOS installer' : 'Linux installer';
-      document.getElementById('os-label').textContent    = OS === 'macos' ? 'macOS detected' : 'Linux detected';
-    }
-
-    // Requirements
-    if (OS === 'windows') {
-      document.getElementById('req-list').innerHTML =
-        pill('Windows 10 / 11') +
-        pill('Docker Desktop for Windows') +
-        pill('Docker Compose v2') +
-        pill('.NET 4.7.2 or later') +
-        pill('~50 GB free disk (mainnet)') +
-        pill('~5 GB free disk (testnet)');
-    }
+    document.getElementById('badge-text').textContent  = OS === 'macos' ? 'macOS installer' : 'Linux installer';
+    document.getElementById('os-label').textContent    = IS_WINDOWS
+      ? 'Windows detected — run inside WSL 2'
+      : OS === 'macos' ? 'macOS detected' : 'Linux detected';
 
     // Modal filenames
     document.getElementById('modal-filename').textContent = SCRIPT_FILE;
-
-    // Modal footer command
-    if (OS === 'windows') {
-      document.getElementById('modal-footer-cmd').textContent =
-        `irm https://get.mintlayer.org/${SCRIPT_FILE} | iex`;
-    } else {
-      document.getElementById('modal-footer-file').textContent = SCRIPT_FILE;
-    }
+    document.getElementById('modal-footer-file').textContent = SCRIPT_FILE;
   });
 
   // ── Copy install command ─────────────────────────────────────────────────
@@ -894,7 +863,7 @@
       `<pre>${highlighted}</pre>`;
   }
 
-  // ── Syntax highlighter (bash + PowerShell) ──────────────────────────────
+  // ── Syntax highlighter (bash) ────────────────────────────────────────────
   function highlight(raw) {
     const esc = raw
       .replace(/&/g, '&amp;')
@@ -902,26 +871,6 @@
       .replace(/>/g, '&gt;');
 
     const lines = esc.split('\n');
-
-    if (OS === 'windows') {
-      // PowerShell highlighter
-      return lines.map(line => {
-        if (/^\s*#/.test(line))
-          return `<span class="sh-comment">${line}</span>`;
-        return line
-          .replace(/(#.*)/g, '<span class="sh-comment">$1</span>')
-          .replace(/@['"]/g, '<span class="sh-string">$&</span>')
-          .replace(/"((?:[^"\\`]|`.)*)"/g, '<span class="sh-string">"$1"</span>')
-          .replace(/'([^']*)'/g, '<span class="sh-string">\'$1\'</span>')
-          .replace(/\b(if|else|elseif|foreach|for|while|do|switch|function|return|param|begin|process|end|try|catch|finally|throw|break|continue|exit)\b/gi,
-            '<span class="sh-keyword">$1</span>')
-          .replace(/\b(Write-Host|Write-Error|Read-Host|New-Item|Set-Location|Get-Command|Get-Item|Remove-Item|Start-Process|Clear-Host|Out-Null|Out-File|Select-Object|Where-Object|ForEach-Object|Invoke-Expression|docker|winget)\b/g,
-            '<span class="sh-builtin">$1</span>')
-          .replace(/(\$(?:script:|env:)?[A-Za-z_][A-Za-z0-9_]*)/g,
-            '<span class="sh-var">$1</span>')
-          .replace(/\b(\d+)\b/g, '<span class="sh-number">$1</span>');
-      }).join('\n');
-    }
 
     // Bash highlighter
     return lines.map(line => {

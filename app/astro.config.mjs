@@ -8,6 +8,10 @@ export default defineConfig({
     mode: 'standalone',
   }),
   integrations: [react()],
+  // Astro 7 changed the compressHTML default from `true` to `'jsx'`, which strips
+  // whitespace between inline elements differently. Pin the v6 behavior so the
+  // upgrade doesn't silently alter rendered output. ponytail: drop to default if a jsx-mode audit passes.
+  compressHTML: true,
   security: {
     checkOrigin: true,
   },

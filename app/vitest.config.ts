@@ -14,7 +14,7 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.ts'],
     coverage: {
       provider: 'v8',
-      include: ['src/lib/**', 'src/pages/api/**'],
+      include: ['src/lib/**', 'src/pages/api/**', 'scripts/mcp-server.mjs', 'scripts/mcp-permissions.mjs'],
       exclude: [
         // WASM dependency — requires native binary at runtime
         'src/lib/tx-decoder.ts',

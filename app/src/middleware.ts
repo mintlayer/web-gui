@@ -7,6 +7,7 @@ import {
   makeSessionCookieHeader,
   SESSION_COOKIE_NAME,
 } from '@/lib/auth';
+import { getPref } from '@/lib/prefs-db';
 
 const PUBLIC_PATHS = new Set([
   '/login',
@@ -36,7 +37,8 @@ export const onRequest = defineMiddleware(async (context, next) => {
   const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${SESSION_COOKIE_NAME}=([^;]+)`));
   const token = match?.[1] ?? '';
 
-  if (!verifySessionToken(token)) {
+  const sessionVersion = getPref<number>('auth.session_version') ?? 0;
+  if (!verifySessionToken(token, sessionVersion)) {
     const nextParam =
       pathname !== '/' && !pathname.startsWith('/api/')
         ? `?next=${encodeURIComponent(pathname)}`
@@ -52,7 +54,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
   const contentType = response.headers.get('content-type') ?? '';
   const alreadySetsCookie = response.headers.has('Set-Cookie');
   if (!contentType.includes('text/event-stream') && !alreadySetsCookie) {
-    const newToken = generateSessionToken();
+    const newToken = generateSessionToken(sessionVersion);
     response.headers.set('Set-Cookie', makeSessionCookieHeader(newToken));
   }
 
