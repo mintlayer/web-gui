@@ -79,11 +79,11 @@ describe('generateSessionToken / verifySessionToken', () => {
     vi.restoreAllMocks();
   });
 
-  it('generates a token matching <timestamp>.<64-hex> format', async () => {
+  it('generates a token matching <timestamp>.<version>.<64-hex> format', async () => {
     vi.resetModules();
     const { generateSessionToken } = await import('@/lib/auth');
     const token = generateSessionToken();
-    expect(token).toMatch(/^\d+\.[0-9a-f]{64}$/);
+    expect(token).toMatch(/^\d+\.\d+\.[0-9a-f]{64}$/);
   });
 
   it('throws when SESSION_SECRET is missing', async () => {
@@ -147,6 +147,28 @@ describe('generateSessionToken / verifySessionToken', () => {
     vi.resetModules();
     const { verifySessionToken } = await import('@/lib/auth');
     expect(verifySessionToken(token)).toBe(false);
+  });
+
+  it('returns false for token with only 2 parts (old format)', async () => {
+    vi.resetModules();
+    const { verifySessionToken } = await import('@/lib/auth');
+    const fakeOldToken = `${Date.now()}.${'a'.repeat(64)}`;
+    expect(verifySessionToken(fakeOldToken)).toBe(false);
+  });
+
+  it('rejects a token generated with version 0 when verifying against version 1', async () => {
+    vi.resetModules();
+    const { generateSessionToken, verifySessionToken } = await import('@/lib/auth');
+    const token = generateSessionToken(0);
+    expect(verifySessionToken(token, 1)).toBe(false);
+  });
+
+  it('generateSessionToken(1) produces a token accepted by verifySessionToken(token, 1) but rejected by verifySessionToken(token, 0)', async () => {
+    vi.resetModules();
+    const { generateSessionToken, verifySessionToken } = await import('@/lib/auth');
+    const token = generateSessionToken(1);
+    expect(verifySessionToken(token, 1)).toBe(true);
+    expect(verifySessionToken(token, 0)).toBe(false);
   });
 });
 

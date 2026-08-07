@@ -95,9 +95,9 @@ export function getOrigin(requestUrl: string): string {
 // ── Challenge cookie header helpers ───────────────────────────────────────────
 
 export function makeChallengeCookieHeader(token: string): string {
-  return `${PASSKEY_CHALLENGE_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=300`;
+  return `${PASSKEY_CHALLENGE_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict; Secure; Max-Age=300`;
 }
 
 export function clearChallengeCookieHeader(): string {
-  return `${PASSKEY_CHALLENGE_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`;
+  return `${PASSKEY_CHALLENGE_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Secure; Max-Age=0`;
 }

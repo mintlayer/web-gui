@@ -7,12 +7,13 @@ vi.mock('@/lib/auth', () => ({
 
 vi.mock('@/lib/prefs-db', () => ({
   getStringPref: vi.fn(),
+  getPref: vi.fn(),
   setPref: vi.fn(),
 }));
 
 import { POST } from '@/pages/api/settings/password';
 import { verifyPassword, hashPassword } from '@/lib/auth';
-import { getStringPref, setPref } from '@/lib/prefs-db';
+import { getStringPref, getPref, setPref } from '@/lib/prefs-db';
 
 function makeForm(fields: Record<string, string>) {
   const form = new FormData();
@@ -31,6 +32,7 @@ beforeEach(() => {
   vi.mocked(verifyPassword).mockReset();
   vi.mocked(hashPassword).mockReset();
   vi.mocked(getStringPref).mockReset();
+  vi.mocked(getPref).mockReset();
   vi.mocked(setPref).mockReset();
 });
 
@@ -72,11 +74,28 @@ describe('POST /api/settings/password', () => {
     vi.mocked(getStringPref).mockReturnValue('stored-hash');
     vi.mocked(verifyPassword).mockResolvedValue(true);
     vi.mocked(hashPassword).mockResolvedValue('new-hash');
+    vi.mocked(getPref).mockReturnValue(2);
     const res = await POST(makeCtx(makeForm({ current_password: 'current', new_password: 'newpassword', confirm_password: 'newpassword' })));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(true);
     expect(setPref).toHaveBeenCalledWith('auth.password_hash', 'new-hash');
+    expect(setPref).toHaveBeenCalledWith('auth.session_version', 3);
+  });
+
+  it('rejects a File part for new_password instead of crashing', async () => {
+    vi.mocked(getStringPref).mockReturnValue('stored-hash');
+    vi.mocked(verifyPassword).mockResolvedValue(true);
+    // A File part must not bypass the length check or reach hashPassword (which
+    // would throw a 500); it is coerced to '' and fails validation cleanly.
+    const form = new FormData();
+    form.append('current_password', 'current');
+    form.append('new_password', new Blob(['a-real-8-char-secret']), 'evil.bin');
+    form.append('confirm_password', 'a-real-8-char-secret');
+    const req = new Request('http://localhost/api/settings/password', { method: 'POST', body: form });
+    const res = await POST(makeCtx(req));
+    expect(res.status).toBe(400);
+    expect(hashPassword).not.toHaveBeenCalled();
   });
 
   it('returns 400 on invalid form body', async () => {

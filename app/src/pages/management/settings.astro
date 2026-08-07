@@ -5,6 +5,7 @@ import { verifyPassword, hashPassword, verifyTOTP, generateTotpSecret } from '@/
 import { getPref, getStringPref, setPref } from '@/lib/prefs-db';
 import { sendTelegramMessage } from '@/lib/telegram';
 import { getCredentials, saveCredentials, isValidRpId, getRpId } from '@/lib/passkey';
+import { resolveMcpSettings } from '@/lib/mcp-settings';
 
 type ActionResult =
   | { action: 'none' }
@@ -15,12 +16,15 @@ let result: ActionResult = { action: 'none' };
 
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
-  const section = (form.get('section') as string | null) ?? '';
+  // form.get() returns string | File | null; coerce non-strings to '' so a File
+  // part can't bypass validation or crash crypto/DB calls downstream.
+  const str = (v: FormDataEntryValue | null) => (typeof v === 'string' ? v : '');
+  const section = str(form.get('section'));
 
   if (section === 'password') {
-    const currentPassword = (form.get('current_password') as string | null) ?? '';
-    const newPassword     = (form.get('new_password')     as string | null) ?? '';
-    const confirmPassword = (form.get('confirm_password') as string | null) ?? '';
+    const currentPassword = str(form.get('current_password'));
+    const newPassword     = str(form.get('new_password'));
+    const confirmPassword = str(form.get('confirm_password'));
     const storedHash = getStringPref('auth.password_hash');
 
     if (!storedHash) {
@@ -33,6 +37,8 @@ if (Astro.request.method === 'POST') {
       result = { action: 'error', section, message: 'New passwords do not match.' };
     } else {
       setPref('auth.password_hash', await hashPassword(newPassword));
+      // Invalidate all existing sessions (mirrors /api/settings/password).
+      setPref('auth.session_version', (getPref<number>('auth.session_version') ?? 0) + 1);
       result = { action: 'success', section, message: 'Password updated successfully.' };
     }
 
@@ -114,6 +120,22 @@ if (Astro.request.method === 'POST') {
         result = { action: 'success', section, message: 'Telegram settings saved.' };
       }
     }
+
+  } else if (section === 'mcp') {
+    // Decision logic (incl. the TOTP gate for write/spend) lives in lib/mcp-settings
+    // so it's unit-tested; here we just persist the result.
+    const decision = resolveMcpSettings({
+      enabled:      form.get('mcp_enabled') === '1',
+      allowActions: form.get('mcp_allow_actions') === '1',
+      allowSpend:   form.get('mcp_allow_spend') === '1',
+      totpCode:     str(form.get('totp_code')),
+    });
+    if (!decision.ok) {
+      result = { action: 'error', section, message: decision.error };
+    } else {
+      for (const [key, value] of Object.entries(decision.prefs)) setPref(key, value);
+      result = { action: 'success', section, message: 'MCP settings saved. Changes apply on the next tool call — no restart needed.' };
+    }
   }
 }
 
@@ -138,6 +160,21 @@ const notifLargeSend     = notifPref('large_send',     false);
 const largeSendThreshold = getStringPref('telegram.notify.large_send_threshold') || '100';
 const stakingStatus      = getPref<boolean>('telegram.staking.status')   ?? true;
 const stakingControls    = getPref<boolean>('telegram.staking.controls')  ?? false;
+
+// MCP server prefs (default: everything off)
+const mcpEnabled      = getPref<boolean>('mcp.enabled')       ?? false;
+const mcpAllowActions = getPref<boolean>('mcp.allow_actions') ?? false;
+const mcpAllowSpend   = getPref<boolean>('mcp.allow_spend')   ?? false;
+const mcpConfigSnippet = `{
+  "mcpServers": {
+    "mintlayer-wallet": {
+      "command": "docker",
+      "args": ["compose", "-f", "/path/to/mintlayer-web-gui/docker-compose.yml",
+               "run", "--rm", "-T", "--no-deps",
+               "web-gui", "node", "scripts/mcp-server.mjs"]
+    }
+  }
+}`;
 
 // Extract new TOTP data if reset was successful
 const newTotpUri    = result.action === 'success' && result.section === 'reset_2fa' ? (result.extra?.uri ?? '')    : '';
@@ -556,6 +593,106 @@ const passkeysSupported = isValidRpId(passkeyRpId);
           Save Notification Preferences
         </button>
       </form>
+    </section>
+
+    <!-- ── MCP Server (AI assistants) ─────────────────────────────────────────── -->
+    <section class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+      <h2 class="text-lg font-semibold text-gray-100 mb-1">MCP Server (AI Assistants)</h2>
+      <p class="text-sm text-gray-500 mb-5">
+        Lets AI assistants like Claude query this wallet via the Model Context Protocol.
+        Sensitive operations (seed phrase, key unlock, wallet open/create) are never exposed,
+        regardless of these settings. Permission changes apply immediately.
+      </p>
+
+      {result.action === 'success' && result.section === 'mcp' && (
+        <div class="mb-4 px-3 py-2 rounded-lg border border-emerald-800 bg-emerald-950/50 text-emerald-300 text-sm">
+          {result.message}
+        </div>
+      )}
+      {result.action === 'error' && result.section === 'mcp' && (
+        <div class="mb-4 px-3 py-2 rounded-lg border border-red-800 bg-red-950/50 text-red-300 text-sm">
+          {result.message}
+        </div>
+      )}
+
+      <form method="post" class="space-y-4 max-w-xl">
+        <input type="hidden" name="section" value="mcp" />
+
+        <label class="flex items-center gap-3 cursor-pointer group">
+          <input
+            type="checkbox" name="mcp_enabled" value="1" checked={mcpEnabled}
+            class="w-4 h-4 rounded border-gray-600 bg-gray-800 text-mint-600
+                   focus:ring-mint-500 focus:ring-offset-gray-900"
+          />
+          <span class="text-sm text-gray-300 group-hover:text-gray-100 transition-colors">
+            Enable MCP server <span class="text-gray-500">(read-only access: balances, addresses, transactions, staking, orders)</span>
+          </span>
+        </label>
+
+        <label class="flex items-center gap-3 cursor-pointer group">
+          <input
+            type="checkbox" name="mcp_allow_actions" value="1" checked={mcpAllowActions}
+            class="w-4 h-4 rounded border-gray-600 bg-gray-800 text-mint-600
+                   focus:ring-mint-500 focus:ring-offset-gray-900"
+          />
+          <span class="text-sm text-gray-300 group-hover:text-gray-100 transition-colors">
+            Allow wallet actions <span class="text-gray-500">(new address, start/stop staking, abandon transaction)</span>
+          </span>
+        </label>
+
+        <label class="flex items-center gap-3 cursor-pointer group">
+          <input
+            type="checkbox" name="mcp_allow_spend" value="1" checked={mcpAllowSpend}
+            class="w-4 h-4 rounded border-gray-600 bg-gray-800 text-mint-600
+                   focus:ring-mint-500 focus:ring-offset-gray-900"
+          />
+          <span class="text-sm text-amber-300 group-hover:text-amber-200 transition-colors">
+            Allow fund-moving operations <span class="text-amber-500/70">(send coins, staking pools, delegations, tokens, orders — use with care)</span>
+          </span>
+        </label>
+
+        <p class="text-xs text-amber-500/70 pl-7">
+          An AI client reads attacker-controlled on-chain data (token names, order metadata).
+          Only enable fund-moving access for assistants and wallets you trust.
+        </p>
+
+        <div class="pt-2">
+          <label class="block text-xs text-gray-400 mb-1" for="mcp_totp_code">
+            Authenticator code <span class="text-gray-600">(required to enable wallet actions or fund-moving operations)</span>
+          </label>
+          <input
+            id="mcp_totp_code" name="totp_code" type="text"
+            inputmode="numeric" maxlength="6" pattern="[0-9]{6}" placeholder="000000"
+            autocomplete="one-time-code"
+            class="w-40 px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 text-sm
+                   placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-mint-600 focus:border-transparent
+                   tracking-[0.3em] text-center font-mono transition"
+          />
+        </div>
+
+        <button
+          type="submit"
+          class="py-2 px-4 rounded-lg bg-mint-600 hover:bg-mint-700 text-white text-sm font-medium
+                 transition-colors focus:outline-none focus:ring-2 focus:ring-mint-500 focus:ring-offset-2 focus:ring-offset-gray-900"
+        >
+          Save MCP Settings
+        </button>
+      </form>
+
+      <details class="mt-6 pt-6 border-t border-gray-800">
+        <summary class="text-sm text-gray-400 cursor-pointer hover:text-gray-300 transition-colors">
+          Client setup (Claude Desktop / Claude Code)
+        </summary>
+        <p class="text-xs text-gray-500 mt-3 mb-2">
+          Add this to your MCP client configuration on the machine where Docker runs,
+          replacing <code class="font-mono">/path/to/mintlayer-web-gui</code> with this project's directory:
+        </p>
+        <pre class="bg-gray-800 rounded-lg p-3 text-xs text-gray-200 font-mono overflow-x-auto">{mcpConfigSnippet}</pre>
+        <p class="text-xs text-gray-500 mt-2">
+          The server runs inside the existing web-gui image — no extra installation. It uses the
+          wallet RPC credentials from <code class="font-mono">.env</code> and the permissions above.
+        </p>
+      </details>
     </section>
 
   </div>

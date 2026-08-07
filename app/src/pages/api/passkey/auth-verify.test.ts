@@ -20,10 +20,15 @@ vi.mock('@/lib/auth', () => ({
   makeSessionCookieHeader: vi.fn(),
 }));
 
+vi.mock('@/lib/prefs-db', () => ({
+  getPref: vi.fn(() => 0),
+}));
+
 import { POST } from '@/pages/api/passkey/auth-verify';
 import { verifyAuthenticationResponse } from '@simplewebauthn/server';
 import { getCredentials, saveCredentials, consumeChallenge, getRpId, getOrigin, isValidRpId, clearChallengeCookieHeader } from '@/lib/passkey';
 import { generateSessionToken, makeSessionCookieHeader } from '@/lib/auth';
+import { getPref } from '@/lib/prefs-db';
 
 const STORED_CRED = { id: 'cred1', publicKey: 'cHVibGlja2V5', counter: 0, name: 'test', createdAt: 1 };
 
@@ -61,6 +66,14 @@ describe('POST /api/passkey/auth-verify', () => {
     expect(body.ok).toBe(true);
     expect(saveCredentials).toHaveBeenCalled();
     expect(generateSessionToken).toHaveBeenCalled();
+  });
+
+  it('issues the session token at the current DB session_version', async () => {
+    vi.mocked(getPref).mockReturnValueOnce(7 as never);
+    await POST(makeCtx({ id: 'cred1', type: 'public-key' }));
+    // Regression guard: must use the stored version, not a hardcoded 0, or the
+    // token is rejected by middleware after any password change.
+    expect(generateSessionToken).toHaveBeenCalledWith(7);
   });
 
   it('returns 400 when RP ID is an IP', async () => {

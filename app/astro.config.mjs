@@ -8,10 +8,12 @@ export default defineConfig({
     mode: 'standalone',
   }),
   integrations: [react()],
-  // Disable CSRF origin check — this is a self-hosted internal tool accessed
-  // via a custom port/host, so the Origin header routinely won't match.
+  // Astro 7 changed the compressHTML default from `true` to `'jsx'`, which strips
+  // whitespace between inline elements differently. Pin the v6 behavior so the
+  // upgrade doesn't silently alter rendered output. ponytail: drop to default if a jsx-mode audit passes.
+  compressHTML: true,
   security: {
-    checkOrigin: false,
+    checkOrigin: true,
   },
   server: {
     host: process.env.HOST || '0.0.0.0',

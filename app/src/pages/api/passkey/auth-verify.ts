@@ -12,6 +12,7 @@ import {
   clearChallengeCookieHeader,
 } from '@/lib/passkey';
 import { generateSessionToken, makeSessionCookieHeader } from '@/lib/auth';
+import { getPref } from '@/lib/prefs-db';
 
 export const POST: APIRoute = async ({ request }) => {
   const rpId = getRpId(request.url);
@@ -89,8 +90,9 @@ export const POST: APIRoute = async ({ request }) => {
   storedCred.counter = verification.authenticationInfo.newCounter;
   saveCredentials(creds);
 
-  // Issue session
-  const sessionToken = generateSessionToken();
+  // Issue session at the current version (matches middleware's session-version check)
+  const sessionVersion = getPref<number>('auth.session_version') ?? 0;
+  const sessionToken = generateSessionToken(sessionVersion);
 
   const headers = new Headers({ 'Content-Type': 'application/json' });
   headers.append('Set-Cookie', makeSessionCookieHeader(sessionToken));

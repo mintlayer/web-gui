@@ -6,12 +6,13 @@
  * how Astro integrations and VS Code extensions work.
  */
 
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -19,6 +20,7 @@ import {
 import { join } from 'node:path';
 import { getPref, setPref } from './prefs-db';
 import { rpcCall } from './wallet-rpc';
+import { ALLOWED_RPC_METHODS } from './rpc-allowlist';
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -113,9 +115,31 @@ export async function installPlugin(buffer: Buffer): Promise<PluginManifest> {
     mkdirSync(tmpDir, { recursive: true });
 
     try {
-      execSync(`tar -xzf "${tmpTgz}" -C "${tmpDir}"`, { timeout: 30_000 });
+      execFileSync('tar', ['-xzf', tmpTgz, '-C', tmpDir, '--no-same-owner'], { timeout: 30_000 });
     } catch (err) {
       throw new Error(`Failed to extract archive: ${(err as Error).message}`);
+    }
+
+    // Verify no extracted path escapes tmpDir (catches symlinks and ../ entries)
+    let allExtracted: string[];
+    try {
+      allExtracted = execFileSync('find', [tmpDir, '-print0'], { timeout: 10_000 })
+        .toString()
+        .split('\0')
+        .filter(Boolean);
+    } catch (err) {
+      throw new Error(`Failed to enumerate archive contents: ${(err as Error).message}`);
+    }
+    for (const p of allExtracted) {
+      let real: string;
+      try {
+        real = realpathSync(p);
+      } catch {
+        throw new Error(`Archive contains path escaping extraction directory: ${p}`);
+      }
+      if (!real.startsWith(tmpDir + '/') && real !== tmpDir) {
+        throw new Error(`Archive contains path escaping extraction directory: ${p}`);
+      }
     }
 
     // Support both flat layout and single-directory layout (npm pack style)
@@ -149,7 +173,7 @@ export async function installPlugin(buffer: Buffer): Promise<PluginManifest> {
 
     const destDir = join(PLUGINS_DIR, manifest.id);
     mkdirSync(PLUGINS_DIR, { recursive: true });
-    execSync(`cp -r "${pluginRoot}" "${destDir}"`, { timeout: 10_000 });
+    execFileSync('cp', ['-r', pluginRoot, destDir], { timeout: 10_000 });
 
     existing.push(manifest);
     setPref('plugins.registry', existing);
@@ -211,7 +235,12 @@ export async function loadPluginHandler(id: string): Promise<PluginModule> {
 
 export function makePluginContext(pluginId: string, request: Request): PluginContext {
   return {
-    walletRpc: (method, params = {}) => rpcCall(method, params),
+    walletRpc: (method, params = {}) => {
+      if (!ALLOWED_RPC_METHODS.has(method)) {
+        return Promise.reject(new Error(`Method "${method}" is not permitted for plugins`));
+      }
+      return rpcCall(method, params);
+    },
     getPref: (key) => getPref(`plugins.${pluginId}.data.${key}`),
     setPref: (key, value) => setPref(`plugins.${pluginId}.data.${key}`, value),
     indexerBaseUrl:

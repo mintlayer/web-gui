@@ -10,12 +10,16 @@ import {
   SESSION_COOKIE_NAME,
   verifySessionToken,
 } from '@/lib/auth';
-import { getStringPref } from '@/lib/prefs-db';
+import { getStringPref, getPref } from '@/lib/prefs-db';
 import { getCredentials, isValidRpId, getRpId } from '@/lib/passkey';
+
+// Current session version; incremented on password change to invalidate old tokens.
+// Must match middleware.ts, which checks the same value on every request.
+const sessionVersion = getPref<number>('auth.session_version') ?? 0;
 
 // If already authenticated, go home
 const existingToken = Astro.cookies.get(SESSION_COOKIE_NAME)?.value ?? '';
-if (verifySessionToken(existingToken)) {
+if (verifySessionToken(existingToken, sessionVersion)) {
   return Astro.redirect('/', 302);
 }
 
@@ -53,7 +57,7 @@ if (Astro.request.method === 'POST' && !unconfigured) {
     ]);
 
     if (passwordOk && totpOk) {
-      const token = generateSessionToken();
+      const token = generateSessionToken(sessionVersion);
       const safeDest = nextParam.startsWith('/') && !nextParam.startsWith('//') ? nextParam : '/';
       return new Response(null, {
         status: 302,

@@ -1,6 +1,6 @@
 import type { APIRoute } from 'astro';
 import { verifyPassword, hashPassword } from '@/lib/auth';
-import { getStringPref, setPref } from '@/lib/prefs-db';
+import { getStringPref, getPref, setPref } from '@/lib/prefs-db';
 
 export const POST: APIRoute = async ({ request }) => {
   let form: FormData;
@@ -10,9 +10,12 @@ export const POST: APIRoute = async ({ request }) => {
     return json({ ok: false, error: 'Invalid request body' }, 400);
   }
 
-  const currentPassword = (form.get('current_password') as string | null) ?? '';
-  const newPassword     = (form.get('new_password')     as string | null) ?? '';
-  const confirmPassword = (form.get('confirm_password') as string | null) ?? '';
+  // form.get() returns string | File | null; a File part would bypass the length
+  // check and crash hashPassword. Coerce non-strings to '' so they fail cleanly.
+  const str = (v: FormDataEntryValue | null) => (typeof v === 'string' ? v : '');
+  const currentPassword = str(form.get('current_password'));
+  const newPassword     = str(form.get('new_password'));
+  const confirmPassword = str(form.get('confirm_password'));
 
   const storedHash = getStringPref('auth.password_hash');
   if (!storedHash) {
@@ -34,6 +37,8 @@ export const POST: APIRoute = async ({ request }) => {
 
   const newHash = await hashPassword(newPassword);
   setPref('auth.password_hash', newHash);
+  const currentVersion = getPref<number>('auth.session_version') ?? 0;
+  setPref('auth.session_version', currentVersion + 1);
 
   return json({ ok: true }, 200);
 };

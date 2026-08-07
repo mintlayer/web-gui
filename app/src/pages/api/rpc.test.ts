@@ -6,7 +6,8 @@
  * Request, no Astro runtime needed.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { ALLOWED_RPC_METHODS } from '@/lib/rpc-allowlist';
 
 // vi.mock is hoisted before imports by Vitest
 vi.mock('@/lib/wallet-rpc', () => ({
@@ -28,6 +29,10 @@ vi.mock('@/lib/auth', () => ({
 import { POST } from '@/pages/api/rpc';
 import { rpcCall, WalletRpcError } from '@/lib/wallet-rpc';
 import { checkRpcRateLimit } from '@/lib/auth';
+
+afterEach(() => {
+  vi.clearAllMocks();
+});
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -118,55 +123,8 @@ describe('request validation', () => {
 
 // ── Allowlist enforcement ─────────────────────────────────────────────────────
 
-// These are all the methods in ALLOWED_METHODS (copied from rpc.ts)
-const ALLOWED_METHODS = [
-  'node_best_block_height',
-  'node_chainstate_info',
-  'account_balance',
-  'address_new',
-  'address_show',
-  'address_send',
-  'staking_status',
-  'staking_start',
-  'staking_stop',
-  'staking_list_pools',
-  'staking_list_created_block_ids',
-  'staking_decommission_pool',
-  'staking_create_pool',
-  'delegation_list_ids',
-  'delegation_create',
-  'delegation_stake',
-  'delegation_withdraw',
-  'staking_sweep_delegation',
-  'wallet_info',
-  'wallet_best_block',
-  'open_wallet',
-  'create_wallet',
-  'node_get_tokens_info',
-  'token_send',
-  'token_issue_new',
-  'token_nft_issue_new',
-  'token_mint',
-  'token_unmint',
-  'token_lock_supply',
-  'token_freeze',
-  'token_unfreeze',
-  'token_change_authority',
-  'token_change_metadata_uri',
-  'order_list_own',
-  'order_list_all_active',
-  'order_create',
-  'order_fill',
-  'order_conclude',
-  'order_freeze',
-  'wallet_show_seed_phrase',
-  'wallet_lock_private_keys',
-  'wallet_unlock_private_keys',
-  'wallet_set_lookahead_size',
-  'transaction_list_by_address',
-  'transaction_list_pending',
-  'account_utxos',
-];
+// Derive the test list from the canonical allowlist so they stay in sync
+const ALLOWED_METHODS = [...ALLOWED_RPC_METHODS];
 
 describe('allowlist enforcement - allowed methods', () => {
   beforeEach(() => {
@@ -189,6 +147,12 @@ describe('allowlist enforcement - blocked methods', () => {
     '__proto__',
     'constructor',
     'WALLET_INFO', // case-sensitive - uppercase not allowed
+    'open_wallet',             // old wrong name — must be blocked
+    'create_wallet',           // old wrong name — must be blocked
+    'wallet_open',             // server-side only — must not be callable via proxy
+    'wallet_create',           // server-side only — must not be callable via proxy
+    'wallet_show_seed_phrase', // sensitive — server-side only
+    'wallet_unlock_private_keys', // sensitive — server-side only
   ])('blocks method "%s"', async (method) => {
     const { status, json } = await postRpc({ method, params: {} });
     expect(status).toBe(403);
@@ -258,6 +222,15 @@ describe('error paths', () => {
     const { status, json } = await postRpc({ method: 'wallet_info', params: {} });
     expect(status).toBe(502);
     expect(json).toMatchObject({ ok: false, error: { code: -1 } });
+  });
+
+  it('does not leak internal error messages from generic errors', async () => {
+    vi.mocked(rpcCall).mockRejectedValueOnce(new Error('connect ECONNREFUSED wallet-rpc-daemon:3034'));
+    const { json } = await postRpc({ method: 'wallet_info', params: {} });
+    const error = (json as { error: { message: string } }).error;
+    expect(error.message).not.toContain('wallet-rpc-daemon');
+    expect(error.message).not.toContain('ECONNREFUSED');
+    expect(error.message).toBe('An internal error occurred');
   });
 
   it('returns Content-Type: application/json on error responses', async () => {
