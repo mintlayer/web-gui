@@ -21,6 +21,14 @@ fi
 # Served at https://get.mintlayer.org/linux.sh  (also mac.sh)
 # Usage: bash <(curl -sSL https://get.mintlayer.org/linux.sh)
 #        bash <(curl -sSL https://get.mintlayer.org/mac.sh)
+#
+# Non-interactive (for AI agents / automation):
+#   ML_NONINTERACTIVE=1 NETWORK=mainnet \
+#     INSTALL_DIR=~/mintlayer WEB_UI_PASSWORD=... \
+#     ML_USER_ID=$(id -u) ML_GROUP_ID=$(id -g) \
+#     bash <(curl -sSL https://get.mintlayer.org/linux.sh)
+# The web UI password is printed once in the final summary; the TOTP secret is
+# written to <INSTALL_DIR>/mintlayer-totp.txt. See agent-prompt.txt.
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── OS detection ──────────────────────────────────────────────────────────────
@@ -46,6 +54,24 @@ ok()      { printf "${GREEN}◈${RESET} %s\n" "$*"; }
 warn()    { printf "${YELLOW}▲${RESET}  %s\n" "$*"; }
 err()     { printf "${RED}✗${RESET}  %s\n" "$*" >&2; }
 divider() { printf "${GRAY}└─────────────────────────────────────────${RESET}\n"; }
+
+die() {
+  err "$*"
+  exit 1
+}
+
+# ── Non-interactive mode ──────────────────────────────────────────────────────
+# ML_NONINTERACTIVE=1 (alias: NONINTERACTIVE=1) skips every prompt. Values are
+# taken from the environment with sane defaults:
+#   INSTALL_DIR (~/mintlayer)  NETWORK (mainnet)  WEB_UI_PASSWORD (generated)
+#   ML_USER_ID / ML_GROUP_ID (host ids, floored to 1000)
+# The web UI password is printed once in the final summary; the TOTP secret is
+# written to mintlayer-totp.txt in the install directory (never to stdout).
+# Intended for AI coding agents and automation — see agent-prompt.txt.
+NONINTERACTIVE_MODE="no"
+if [[ "${ML_NONINTERACTIVE:-}" == "1" || "${NONINTERACTIVE:-}" == "1" ]]; then
+  NONINTERACTIVE_MODE="yes"
+fi
 
 prompt() {
   # prompt <var_name> <question> [default]
@@ -122,10 +148,15 @@ rand_pass() {
 bootstrap_remote() {
   printf "\n"
   printf "${CYAN}◆${RESET} ${BOLD}Install location${RESET}\n"
-  printf "${GRAY}│  Where should Mintlayer Web GUI be installed?${RESET}\n"
-  printf "${CYAN}│${RESET}  Directory: ${GRAY}(${HOME}/mintlayer)${RESET} "
-  read -r input
-  INSTALL_DIR="${input:-${HOME}/mintlayer}"
+  if [[ "$NONINTERACTIVE_MODE" == "yes" ]]; then
+    INSTALL_DIR="${INSTALL_DIR:-${HOME}/mintlayer}"
+    printf "${GRAY}│  Non-interactive: installing to %s${RESET}\n" "$INSTALL_DIR"
+  else
+    printf "${GRAY}│  Where should Mintlayer Web GUI be installed?${RESET}\n"
+    printf "${CYAN}│${RESET}  Directory: ${GRAY}(${HOME}/mintlayer)${RESET} "
+    read -r input
+    INSTALL_DIR="${input:-${HOME}/mintlayer}"
+  fi
 
   mkdir -p "$INSTALL_DIR"
   cd "$INSTALL_DIR"
@@ -385,6 +416,9 @@ docker_install_hint() {
 
 # ── Prerequisite checks ───────────────────────────────────────────────────────
 check_prereqs() {
+  if [[ "$NONINTERACTIVE_MODE" == "yes" ]] && ! command -v docker &>/dev/null; then
+    die "Docker is not installed or not in PATH. Install Docker first, then re-run this script."
+  fi
   if ! command -v docker &>/dev/null; then
     if [[ "$OS" == "macos" ]]; then
       err "Docker is not installed or not in PATH."
@@ -514,7 +548,7 @@ bootstrap_remote
 # ─────────────────────────────────────────────────────────────────────────────
 # Banner
 # ─────────────────────────────────────────────────────────────────────────────
-clear
+if [[ "$NONINTERACTIVE_MODE" != "yes" ]]; then clear; fi
 printf "\n"
 printf "${CYAN}${BOLD}"
 printf "  ███╗   ███╗██╗███╗   ██╗████████╗██╗      █████╗ ██╗   ██╗███████╗██████╗ \n"
@@ -538,6 +572,10 @@ if [ "$(id -u)" -eq 0 ]; then
   printf "${YELLOW}│  ⚠  Running as root                                                 │${RESET}\n"
   printf "${YELLOW}└─────────────────────────────────────────────────────────────────────┘${RESET}\n"
   printf "\n"
+  if [[ "$NONINTERACTIVE_MODE" == "yes" ]]; then
+    warn "Running as root — not recommended for a production wallet server. Continuing (non-interactive)."
+    printf "\n"
+  else
   printf "  Running this setup as ${BOLD}root${RESET} is not recommended for a production wallet\n"
   printf "  server. Any vulnerability in the app would give an attacker full host access.\n"
   printf "\n"
@@ -558,11 +596,20 @@ if [ "$(id -u)" -eq 0 ]; then
     exit 0
   fi
   printf "\n"
+  fi
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Step 1 — Network
 # ─────────────────────────────────────────────────────────────────────────────
+if [[ "$NONINTERACTIVE_MODE" == "yes" ]]; then
+  step "Network"
+  NETWORK="${NETWORK:-mainnet}"
+  case "$NETWORK" in
+    mainnet|testnet) ok "Network: ${NETWORK}" ;;
+    *) die "Invalid NETWORK='${NETWORK}'. Must be 'mainnet' or 'testnet'." ;;
+  esac
+else
 step "Network"
 hint "mainnet uses real ML tokens; testnet is for experimentation"
 hint ""
@@ -576,12 +623,23 @@ case "$NETWORK_CHOICE" in
   "mainnet  — real funds") NETWORK="mainnet" ;;
   *)                       NETWORK="testnet" ;;
 esac
+fi
 
 divider
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Step 2 — Passwords
 # ─────────────────────────────────────────────────────────────────────────────
+if [[ "$NONINTERACTIVE_MODE" == "yes" ]]; then
+  step "Passwords"
+  USE_RANDOM_PASSWORDS="yes"
+  NODE_RPC_PASSWORD=$(rand_pass)
+  WALLET_RPC_PASSWORD=$(rand_pass)
+  ok "Generated random passwords (saved to .env)"
+  NODE_RPC_USERNAME="node_user"
+  WALLET_RPC_USERNAME="wallet_user"
+  divider
+else
 step "Passwords"
 hint "Two internal RPC services need authentication."
 hint ""
@@ -615,10 +673,56 @@ NODE_RPC_USERNAME="node_user"
 WALLET_RPC_USERNAME="wallet_user"
 
 divider
+fi
+
+# ── Shared credential generation (password hash + TOTP + session secret) ─────
+generate_ui_secrets() {
+  printf "${CYAN}│${RESET}\n"
+  hint "Hashing password (this may take a moment)..."
+  UI_PASSWORD_HASH=$(python3 -c "
+import hashlib, os, sys
+password = sys.argv[1]
+salt = os.urandom(32).hex()
+key = hashlib.pbkdf2_hmac('sha512', password.encode(), salt.encode(), 100000)
+print('pbkdf2:sha512:100000:' + salt + ':' + key.hex(), end='')
+" "$UI_PASSWORD")
+  ok "Password hashed"
+
+  # Generate TOTP secret (20 random bytes → base32)
+  UI_TOTP_SECRET=$(python3 -c "
+import os, base64
+print(base64.b32encode(os.urandom(20)).decode(), end='')
+")
+
+  # Generate session signing secret
+  SESSION_SECRET=$(openssl rand -hex 32)
+
+  # Construct the otpauth URI
+  TOTP_URI="otpauth://totp/Mintlayer%20GUI-X?secret=${UI_TOTP_SECRET}&issuer=Mintlayer"
+
+  printf "${CYAN}│${RESET}\n"
+  ok "TOTP secret generated"
+}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Step 3 — Web UI access (password + TOTP 2FA)
 # ─────────────────────────────────────────────────────────────────────────────
+if [[ "$NONINTERACTIVE_MODE" == "yes" ]]; then
+  step "Web UI access"
+  if [[ -n "${WEB_UI_PASSWORD:-}" ]]; then
+    UI_PASSWORD="$WEB_UI_PASSWORD"
+    if [[ ${#UI_PASSWORD} -lt 8 ]]; then
+      die "WEB_UI_PASSWORD is set but shorter than 8 characters."
+    fi
+    ok "Using WEB_UI_PASSWORD from environment"
+  else
+    UI_PASSWORD=$(rand_pass)
+    ok "Generated random web UI password (printed once in the summary below)"
+  fi
+  generate_ui_secrets
+  hint "TOTP secret will be written to mintlayer-totp.txt (not shown on screen)"
+  divider
+else
 step "Web UI access"
 hint "Protect the wallet interface with a password and authenticator app (TOTP 2FA)."
 hint ""
@@ -644,31 +748,8 @@ while [[ "$UI_PASSWORD" != "$UI_PASSWORD_CONFIRM" ]]; do
   prompt_secret UI_PASSWORD_CONFIRM "Confirm password:"
 done
 
-printf "${CYAN}│${RESET}\n"
-hint "Hashing password (this may take a moment)..."
-UI_PASSWORD_HASH=$(python3 -c "
-import hashlib, os, sys
-password = sys.argv[1]
-salt = os.urandom(32).hex()
-key = hashlib.pbkdf2_hmac('sha512', password.encode(), salt.encode(), 100000)
-print('pbkdf2:sha512:100000:' + salt + ':' + key.hex(), end='')
-" "$UI_PASSWORD")
-ok "Password hashed"
+generate_ui_secrets
 
-# Generate TOTP secret (20 random bytes → base32)
-UI_TOTP_SECRET=$(python3 -c "
-import os, base64
-print(base64.b32encode(os.urandom(20)).decode(), end='')
-")
-
-# Generate session signing secret
-SESSION_SECRET=$(openssl rand -hex 32)
-
-# Construct the otpauth URI
-TOTP_URI="otpauth://totp/Mintlayer%20GUI-X?secret=${UI_TOTP_SECRET}&issuer=Mintlayer"
-
-printf "${CYAN}│${RESET}\n"
-ok "TOTP secret generated"
 printf "${CYAN}│${RESET}\n"
 printf "${CYAN}│${RESET}  ${BOLD}Scan this with Google Authenticator, Authy, or any TOTP app:${RESET}\n"
 printf "${CYAN}│${RESET}\n"
@@ -724,10 +805,20 @@ done
 ok "2FA configured"
 
 divider
+fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Step 4 — HTTPS / Public access
 # ─────────────────────────────────────────────────────────────────────────────
+if [[ "$NONINTERACTIVE_MODE" == "yes" ]]; then
+  step "HTTPS / Public access"
+  HTTPS_SETUP="no"
+  DOMAIN=""
+  DUCKDNS_SUBDOMAIN=""
+  DUCKDNS_TOKEN=""
+  ok "Skipped (non-interactive) — configure later by re-running the wizard or editing .env"
+  divider
+else
 step "HTTPS / Public access"
 hint "Caddy can automatically provision a free TLS certificate (Let's Encrypt)"
 hint "so the GUI is served over HTTPS — recommended for internet-facing servers."
@@ -783,10 +874,19 @@ if [[ "$HTTPS_SETUP" == "yes" ]]; then
 fi
 
 divider
+fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Step 5 — Indexer
 # ─────────────────────────────────────────────────────────────────────────────
+if [[ "$NONINTERACTIVE_MODE" == "yes" ]]; then
+  step "Indexer stack"
+  ENABLE_INDEXER="yes"
+  USE_RANDOM_PASSWORDS="yes"
+  POSTGRES_PASSWORD=$(rand_pass)
+  ok "Indexer enabled (default) — random PostgreSQL password generated"
+  divider
+else
 step "Indexer stack"
 hint "The indexer adds PostgreSQL + blockchain scanner + REST API."
 hint "It enables Token Management and Trading in the web UI."
@@ -815,10 +915,20 @@ if [[ "$ENABLE_INDEXER" == "yes" ]]; then
 fi
 
 divider
+fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Step — IPFS Storage (optional)
 # ─────────────────────────────────────────────────────────────────────────────
+if [[ "$NONINTERACTIVE_MODE" == "yes" ]]; then
+  step "IPFS Storage (optional)"
+  SETUP_IPFS="no"
+  IPFS_PROVIDER=""
+  FILEBASE_TOKEN=""
+  PINATA_JWT=""
+  ok "Skipped (non-interactive) — configure later in the web UI Settings page"
+  divider
+else
 step "IPFS Storage (optional)"
 hint "Enables automatic upload of token/NFT images and metadata to IPFS."
 hint "Without this, URLs can still be entered manually — you can configure this"
@@ -869,10 +979,19 @@ if [[ "$SETUP_IPFS" == "yes" ]]; then
 fi
 
 divider
+fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Step — Telegram Notifications (optional)
 # ─────────────────────────────────────────────────────────────────────────────
+if [[ "$NONINTERACTIVE_MODE" == "yes" ]]; then
+  step "Telegram Notifications (optional)"
+  SETUP_TELEGRAM="no"
+  TELEGRAM_BOT_TOKEN=""
+  TELEGRAM_CHAT_ID=""
+  ok "Skipped (non-interactive) — configure later in the web UI Settings page"
+  divider
+else
 step "Telegram Notifications (optional)"
 hint "Receive wallet alerts (payments, staking rewards, node status) via a Telegram bot."
 hint "You can configure this later in the web UI Settings page."
@@ -905,6 +1024,7 @@ if [[ "$SETUP_TELEGRAM" == "yes" ]]; then
 fi
 
 divider
+fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Step 7 — Firewall (optional, Linux only)
@@ -912,7 +1032,9 @@ divider
 SETUP_FIREWALL="no"
 OPEN_P2P_PORT="no"
 if [[ "${NETWORK:-mainnet}" == "mainnet" ]]; then _P2P_PORT=3031; else _P2P_PORT=13031; fi
-if [[ "$OS" == "linux" ]]; then
+if [[ "$NONINTERACTIVE_MODE" == "yes" ]]; then
+  ok "Firewall: left unchanged (non-interactive) — the default stack needs zero inbound ports"
+elif [[ "$OS" == "linux" ]]; then
   step "Firewall"
   hint "A firewall restricts inbound traffic to SSH, HTTP, and HTTPS only."
   hint "All other ports (including direct access to node/wallet RPCs) will be blocked."
@@ -973,11 +1095,21 @@ printf "${CYAN}│${RESET}  %-22s %s\n" "IPFS storage:" "${BOLD}$([ -n "$IPFS_PR
 printf "${CYAN}│${RESET}  %-22s %s\n" "Telegram:"     "${BOLD}$([ -n "$TELEGRAM_BOT_TOKEN" ] && echo "configured" || echo "disabled — configure later in Settings")${RESET}"
 printf "${CYAN}│${RESET}\n"
 
+if [[ "$NONINTERACTIVE_MODE" == "yes" ]]; then
+  printf "${CYAN}│${RESET}  ${BOLD}Web UI password: ${RESET}${UI_PASSWORD}\n"
+  printf "${CYAN}│${RESET}  %-22s %s\n" "TOTP secret:" "written to $(pwd)/mintlayer-totp.txt (never shown on screen)"
+  printf "${CYAN}│${RESET}\n"
+  warn "Save the web UI password now — it is printed only this once."
+  printf "${CYAN}│${RESET}\n"
+fi
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Confirm & write
 # ─────────────────────────────────────────────────────────────────────────────
 PROCEED="yes"
-confirm PROCEED "Write .env and continue?" "Y"
+if [[ "$NONINTERACTIVE_MODE" != "yes" ]]; then
+  confirm PROCEED "Write .env and continue?" "Y"
+fi
 
 if [[ "$PROCEED" != "yes" ]]; then
   printf "\n${YELLOW}Setup cancelled. Nothing was written.${RESET}\n\n"
@@ -989,13 +1121,23 @@ divider
 # ─────────────────────────────────────────────────────────────────────────────
 # Write .env
 # ─────────────────────────────────────────────────────────────────────────────
+if [[ "$NONINTERACTIVE_MODE" == "yes" ]]; then
+  _raw_uid="${ML_USER_ID:-$(id -u 2>/dev/null || echo "1000")}"
+  _raw_gid="${ML_GROUP_ID:-$(id -g 2>/dev/null || echo "1000")}"
+  if ! [[ "$_raw_uid" =~ ^[0-9]+$ ]] || ! [[ "$_raw_gid" =~ ^[0-9]+$ ]]; then
+    die "ML_USER_ID and ML_GROUP_ID must be positive integers (got '${_raw_uid}' / '${_raw_gid}')."
+  fi
+else
 _raw_uid=$(id -u 2>/dev/null || echo "1000")
+fi
 if (( _raw_uid < 1000 )); then
   ML_USER_ID=1000
 else
   ML_USER_ID=$_raw_uid
 fi
+if [[ "$NONINTERACTIVE_MODE" != "yes" ]]; then
 _raw_gid=$(id -g 2>/dev/null || echo "1000")
+fi
 if (( _raw_gid < 1000 )); then
   ML_GROUP_ID=1000
 else
@@ -1052,6 +1194,30 @@ EOF
 
 ok ".env written"
 
+# ── Non-interactive: persist TOTP secret to a file instead of stdout ─────────
+if [[ "$NONINTERACTIVE_MODE" == "yes" ]]; then
+  (
+    umask 077
+    cat > mintlayer-totp.txt <<EOF
+Mintlayer Web GUI — TOTP 2FA setup (generated $(date))
+──────────────────────────────────────────────────────
+Before your first login, add this secret to your
+authenticator app (Google Authenticator, Authy, …):
+
+  Secret: ${UI_TOTP_SECRET}
+
+Or scan this URI:
+
+  ${TOTP_URI}
+
+This file contains a secret. Delete it after setup:
+  rm "$(pwd)/mintlayer-totp.txt"
+EOF
+  )
+  chmod 600 mintlayer-totp.txt 2>/dev/null || true
+  ok "TOTP setup file written: $(pwd)/mintlayer-totp.txt"
+fi
+
 # ── Write credentials to SQLite via temporary alpine container ───────────────
 mkdir -p mintlayer-data/prefs
 {
@@ -1078,7 +1244,9 @@ ok "mintlayer-data/ directory ready"
 # ─────────────────────────────────────────────────────────────────────────────
 printf "${CYAN}│${RESET}\n"
 START="yes"
-confirm START "Start services now with docker compose?" "Y"
+if [[ "$NONINTERACTIVE_MODE" != "yes" ]]; then
+  confirm START "Start services now with docker compose?" "Y"
+fi
 
 COMPOSE=$(compose_cmd)
 
@@ -1152,7 +1320,7 @@ divider
 # ─────────────────────────────────────────────────────────────────────────────
 # Desktop shortcut (Linux only, skip on headless servers)
 # ─────────────────────────────────────────────────────────────────────────────
-if [[ "$OS" == "linux" ]] && command -v xdg-open &>/dev/null; then
+if [[ "$OS" == "linux" ]] && [[ "$NONINTERACTIVE_MODE" != "yes" ]] && command -v xdg-open &>/dev/null; then
   _create_shortcut="no"
   confirm _create_shortcut "Create a desktop shortcut in your app launcher?" "Y"
 

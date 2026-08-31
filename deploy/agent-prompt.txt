@@ -1,0 +1,123 @@
+MINTLAYER STACK INSTALL — AGENT PROMPT
+=======================================
+
+You are an AI coding agent installing the Mintlayer stack on this machine:
+node-daemon + wallet-rpc-daemon + web GUI, all in Docker, via the official
+installer script. Work autonomously, verify each step, and report results.
+Do not skip verification.
+
+
+1. CHECK PREREQUISITES
+----------------------
+Run these first and fix what is missing before continuing:
+
+  docker info                 # Docker installed and daemon running
+  docker compose version      # Compose v2 (bundled with Docker Desktop)
+  df -h .                     # ~50 GB free for mainnet, ~5 GB for testnet
+
+If Docker is missing: on Linux run
+  curl -fsSL https://get.docker.com | sh
+then add the current user to the docker group and log back in. On macOS,
+install Docker Desktop. Do not continue until docker info succeeds.
+
+
+2. REVIEW THE INSTALLER BEFORE RUNNING IT
+-----------------------------------------
+Download and read the installer source (it is a single bash file):
+
+  curl -sSL https://get.mintlayer.org/linux.sh -o /tmp/mintlayer-install.sh
+  less /tmp/mintlayer-install.sh          # on macOS use mac.sh instead
+
+Confirm to the operator: it writes only to INSTALL_DIR (default ~/mintlayer),
+generates all credentials locally, and requires no input when run with
+ML_NONINTERACTIVE=1.
+
+
+3. RUN THE INSTALLER (NON-INTERACTIVE)
+--------------------------------------
+  ML_NONINTERACTIVE=1 NETWORK=mainnet bash /tmp/mintlayer-install.sh
+
+Optional env overrides:
+  INSTALL_DIR       install location          (default: ~/mintlayer)
+  NETWORK           mainnet | testnet         (default: mainnet)
+  WEB_UI_PASSWORD   web login password        (default: generated, printed once)
+  ML_USER_ID        container uid             (default: your uid)
+  ML_GROUP_ID       container gid             (default: your gid)
+
+Notes:
+  - On macOS run mac.sh instead of linux.sh.
+  - The installer writes .env, generates a TOTP 2FA secret, and starts the
+    stack with docker compose.
+  - The web UI password is printed ONCE at the end, in the Summary block,
+    labeled "Web UI password:". Capture it and hand it to the operator
+    through a secure channel. Do not repeat it in logs or chat.
+  - The TOTP secret is written to <INSTALL_DIR>/mintlayer-totp.txt
+    (permissions 600). Tell the operator to add it to their authenticator
+    app before first login, then delete the file.
+  - Do not echo any of these values yourself.
+
+
+4. VERIFY THE INSTALL
+---------------------
+  cd <INSTALL_DIR>                          (default ~/mintlayer)
+  docker compose ps                         # node-daemon, wallet-rpc-daemon
+                                            # and web-gui listed as running
+  curl -sI http://localhost:4321            # web GUI answers HTTP 200
+                                            # (bound to 127.0.0.1 only)
+  docker compose logs --tail 20 node-daemon # block height increasing = syncing
+
+First mainnet sync takes hours. Report the current height and move on;
+the wallet UI shows balances only after the node is fully synced.
+
+
+5. OPS CHEAT SHEET (do not guess any of this)
+---------------------------------------------
+Ports:
+  4321   Web GUI. Published on 127.0.0.1 only. Never expose it without a
+         TLS reverse proxy.
+  3030   Node JSON-RPC. Container-internal by default. NEVER expose publicly.
+  3034   Wallet JSON-RPC. Container-internal by default. NEVER expose
+         publicly.
+  13031  P2P (testnet; 3031 on mainnet). Not published by default.
+  3000   Indexer REST API, 80/443 Caddy TLS. Optional compose profiles
+         (indexer, https) only.
+
+Firewall:
+  The default install needs ZERO inbound ports. Open inbound P2P (13031
+  testnet / 3031 mainnet) ONLY if the goal is serving the network to peers.
+
+Paths:
+  <INSTALL_DIR>/mintlayer-data on the host maps to /home/mintlayer inside
+  the containers. Wallet files are referenced in RPC calls as
+  /home/mintlayer/<file>.
+
+Environment (.env):
+  ML_MAINNET_* and ML_TESTNET_* variables are both present; each daemon
+  reads only the ones matching the active NETWORK. Changing NETWORK in
+  .env switches the whole stack after a restart.
+  ML_USER_ID / ML_GROUP_ID must match the host user that owns
+  mintlayer-data, or containers cannot read/write it.
+
+Known failure modes:
+  - Staking setup can exit when the node and wallet are not yet in sync.
+    That is expected, not a crash: wait for sync and retry.
+  - Images are tagged :latest. Run "docker compose pull" to pick up new
+    releases, then "docker compose up -d".
+
+
+6. SAFETY RULES
+---------------
+  - Never print passwords, TOTP secrets, seed phrases, private keys, or
+    wallet file contents into chat, logs, or commit messages. Reference
+    file paths instead.
+  - Never expose the RPC ports (3030, 3034) or edit the compose file to
+    publish them.
+  - Do not create wallets, send funds, or change firewall rules without
+    explicit operator approval.
+
+
+DOCUMENTATION
+-------------
+  Install from Docker:  https://github.com/mintlayer/mintlayer-core/wiki/Install-from-docker
+  Node daemon options:  https://github.com/mintlayer/mintlayer-core/wiki/Node-Daemon-Options-Guide
+  General docs:         https://docs.mintlayer.org

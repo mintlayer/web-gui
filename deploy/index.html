@@ -15,6 +15,10 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 
+  <!-- Umami analytics (self-hosted) -->
+  <script defer src="https://a.tux.it/script.js" data-website-id="b1f4acc3-ad42-4c81-8657-840e1e20179b"></script>
+  <script defer src="https://a.tux.it/recorder.js" data-website-id="b1f4acc3-ad42-4c81-8657-840e1e20179b"></script>
+
   <style>
     /* ── Design tokens (from mintlayer.org) ──────────────────────────── */
     :root {
@@ -195,6 +199,43 @@
     }
 
     .copy-btn svg { flex-shrink: 0; transition: opacity 0.15s; }
+
+    /* ── Terminal | Agent tabs ─────────────────────────────────────────── */
+    .install-tabs {
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .install-tab {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--txt-dim);
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 7px 20px;
+      border-radius: 100px;
+      cursor: pointer;
+      transition: color 0.15s, border-color 0.15s, background 0.15s;
+    }
+
+    .install-tab:hover {
+      color: var(--txt);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    .install-tab.active {
+      background: rgba(55, 219, 140, 0.10);
+      border-color: var(--border-mint);
+      color: var(--mint);
+    }
+
+    .install-box-agent code {
+      white-space: normal;
+      line-height: 1.5;
+    }
 
     .platform-note {
       font-size: 13px;
@@ -602,7 +643,11 @@
 
   <!-- Install command -->
   <div class="install-wrap">
-    <div class="install-box">
+    <div class="install-tabs" role="tablist" aria-label="Install method">
+      <button class="install-tab active" id="tab-terminal" role="tab" aria-selected="true" aria-controls="panel-terminal" onclick="switchTab('terminal')">Terminal</button>
+      <button class="install-tab" id="tab-agent" role="tab" aria-selected="false" aria-controls="panel-agent" onclick="switchTab('agent')">Agent</button>
+    </div>
+    <div class="install-box" id="panel-terminal" role="tabpanel">
       <span class="terminal-prompt" id="terminal-prompt">$</span>
       <code id="install-cmd">bash &lt;(curl -sSL https://get.mintlayer.org/linux.sh)</code>
       <button class="copy-btn" id="copy-btn" onclick="copyCmd()" aria-label="Copy install command">
@@ -613,6 +658,17 @@
         <span id="copy-label">Copy</span>
       </button>
     </div>
+    <div class="install-box install-box-agent" id="panel-agent" role="tabpanel" style="display:none">
+      <span class="terminal-prompt">›</span>
+      <code>Paste this prompt into your AI coding agent (Claude, Codex, Cursor, …) — it installs and verifies the stack autonomously.</code>
+      <button class="copy-btn" id="agent-copy-btn" onclick="copyAgentPrompt()" aria-label="Copy agent prompt">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="4.5" y="4.5" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.4"/>
+          <path d="M2.5 9.5H2C1.44772 9.5 1 9.05228 1 8.5V2C1 1.44772 1.44772 1 2 1H8.5C9.05228 1 9.5 1.44772 9.5 2V2.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        </svg>
+        <span id="agent-copy-label">Copy</span>
+      </button>
+    </div>
   </div>
 
   <p class="platform-note">
@@ -621,6 +677,8 @@
     Requires Docker
     <span class="sep">·</span>
     <a id="view-script-link" onclick="openModal()" role="button" tabindex="0">View script source</a>
+    <span class="sep">·</span>
+    <a href="/agent-prompt.txt" target="_blank" rel="noopener">View agent prompt</a>
   </p>
 
   <!-- What's included -->
@@ -789,6 +847,54 @@
       btn.classList.add('copied');
       setTimeout(() => { label.textContent = 'Copy'; btn.classList.remove('copied'); }, 2200);
     });
+  }
+
+  // ── Terminal | Agent tabs ────────────────────────────────────────────────
+  function switchTab(tab) {
+    const isTerminal = tab === 'terminal';
+    document.getElementById('tab-terminal').classList.toggle('active', isTerminal);
+    document.getElementById('tab-agent').classList.toggle('active', !isTerminal);
+    document.getElementById('tab-terminal').setAttribute('aria-selected', isTerminal);
+    document.getElementById('tab-agent').setAttribute('aria-selected', !isTerminal);
+    document.getElementById('panel-terminal').style.display = isTerminal ? 'flex' : 'none';
+    document.getElementById('panel-agent').style.display    = isTerminal ? 'none' : 'flex';
+  }
+
+  // ── Copy agent prompt ────────────────────────────────────────────────────
+  // Fetched from the same origin at runtime so the copied prompt can never
+  // drift from the served agent-prompt.txt. Cached in memory after first load.
+  let agentPromptContent = null;
+
+  async function loadAgentPrompt() {
+    if (agentPromptContent) return agentPromptContent;
+    const res = await fetch('/agent-prompt.txt');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    agentPromptContent = await res.text();
+    return agentPromptContent;
+  }
+
+  async function copyAgentPrompt() {
+    const btn   = document.getElementById('agent-copy-btn');
+    const label = document.getElementById('agent-copy-label');
+    try {
+      const text = await loadAgentPrompt();
+      writeToClipboard(text, () => {
+        label.textContent = 'Copied!';
+        btn.classList.add('copied');
+        setTimeout(() => { label.textContent = 'Copy'; btn.classList.remove('copied'); }, 2200);
+      });
+      countAgentCopy();
+    } catch (err) {
+      label.textContent = 'Error';
+      setTimeout(() => { label.textContent = 'Copy'; }, 2200);
+    }
+  }
+
+  // Track Agent-copy usage as an Umami event (self-hosted at a.tux.it).
+  // Fire-and-forget: the guard also covers clicks before the deferred
+  // analytics script has finished loading.
+  function countAgentCopy() {
+    try { window.umami && window.umami.track('agent-copy'); } catch (e) {}
   }
 
   // ── Clipboard helper ─────────────────────────────────────────────────────
