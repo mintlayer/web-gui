@@ -141,9 +141,16 @@ jobs:
           mkdir _site
           cp deploy/index.html _site/
           cp deploy/CNAME      _site/
-          cp deploy/linux.sh      _site/linux.sh
-          cp deploy/mac.sh        _site/mac.sh
-          chmod +x _site/linux.sh _site/mac.sh
+          # Installers + agent prompt
+          cp deploy/linux.sh         _site/linux.sh
+          cp deploy/mac.sh           _site/mac.sh
+          cp deploy/windows.ps1      _site/windows.ps1
+          cp deploy/agent-prompt.txt _site/agent-prompt.txt
+          chmod +x _site/linux.sh _site/mac.sh _site/windows.ps1
+          # Favicons (same files as www.mintlayer.org)
+          cp deploy/favicon.ico          _site/favicon.ico
+          cp deploy/favicon.svg          _site/favicon.svg
+          cp deploy/apple-touch-icon.svg _site/apple-touch-icon.svg
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
