@@ -42,12 +42,29 @@ function getSessionSecret(): string {
 }
 
 // ── Password - PBKDF2-SHA512 ───────────────────────────────────────────────────
-// Stored format: "pbkdf2:sha512:100000:<salt_hex>:<key_hex>"
+// Stored format: "pbkdf2:sha512:<iterations>:<salt_hex>:<key_hex>"
+// The iteration count is part of the stored string, so hashes created with
+// older settings keep verifying while new hashes use the current guidance.
+
+/** OWASP guidance for PBKDF2-SHA512 (>= 210k). Raised from 100k. */
+export const PBKDF2_ITERATIONS = 210_000;
 
 export async function hashPassword(plain: string): Promise<string> {
   const salt = crypto.randomBytes(32).toString('hex');
-  const key = await pbkdf2(plain, salt, 100_000, 64, 'sha512');
-  return `pbkdf2:sha512:100000:${salt}:${key.toString('hex')}`;
+  const key = await pbkdf2(plain, salt, PBKDF2_ITERATIONS, 64, 'sha512');
+  return `pbkdf2:sha512:${PBKDF2_ITERATIONS}:${salt}:${key.toString('hex')}`;
+}
+
+/**
+ * True when a stored hash uses fewer iterations than the current guidance.
+ * Callers can rehash-on-login (after a successful verify) to upgrade old
+ * hashes transparently.
+ */
+export function passwordNeedsRehash(stored: string): boolean {
+  const parts = stored.split(':');
+  if (parts.length !== 5 || parts[0] !== 'pbkdf2') return false;
+  const iterations = parseInt(parts[2], 10);
+  return isNaN(iterations) || iterations < PBKDF2_ITERATIONS;
 }
 
 export async function verifyPassword(plain: string, stored: string): Promise<boolean> {
@@ -185,8 +202,27 @@ export function generateTotpSecret(): string {
   return result;
 }
 
-// ── Login rate limiting ────────────────────────────────────────────────────────
-// Max 5 failures per 15 minutes per IP
+// ── Client address resolution ─────────────────────────────────────────────────
+// The GUI is commonly exposed directly (no reverse proxy), which makes the
+// x-forwarded-for header client-controlled: an attacker can rotate it to
+// bypass per-IP lockout. Trust it only behind an explicitly configured proxy.
+
+/**
+ * Resolve the client IP for rate limiting.
+ * Prefers the socket peer address (Astro.clientAddress); x-forwarded-for is
+ * honored only when TRUST_PROXY=true is set in the environment.
+ */
+export function getClientAddress(request: Request, socketAddress?: string): string {
+  if (process.env.TRUST_PROXY === 'true') {
+    const xff = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
+    if (xff) return xff;
+  }
+  return socketAddress ?? 'unknown';
+}
+
+// ── Rate limiting ─────────────────────────────────────────────────────────────
+// Per-IP maps are pruned on every check (mirrors createChallenge in passkey.ts)
+// so failed-attempt and RPC entries cannot grow without bound.
 
 const LOGIN_MAX_ATTEMPTS = 5;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
@@ -198,8 +234,15 @@ interface RateEntry {
 
 const loginAttempts = new Map<string, RateEntry>();
 
+function pruneExpired(map: Map<string, RateEntry>, now: number): void {
+  for (const [key, entry] of map) {
+    if (now >= entry.resetAt) map.delete(key);
+  }
+}
+
 export function checkLoginRateLimit(ip: string): boolean {
   const now = Date.now();
+  pruneExpired(loginAttempts, now);
   const entry = loginAttempts.get(ip);
   if (!entry || now >= entry.resetAt) return true;
   return entry.count < LOGIN_MAX_ATTEMPTS;
@@ -207,6 +250,7 @@ export function checkLoginRateLimit(ip: string): boolean {
 
 export function recordLoginFailure(ip: string): void {
   const now = Date.now();
+  pruneExpired(loginAttempts, now);
   const entry = loginAttempts.get(ip);
   if (!entry || now >= entry.resetAt) {
     loginAttempts.set(ip, { count: 1, resetAt: now + LOGIN_WINDOW_MS });
@@ -225,6 +269,7 @@ const rpcAttempts = new Map<string, RateEntry>();
 
 export function checkRpcRateLimit(ip: string): boolean {
   const now = Date.now();
+  pruneExpired(rpcAttempts, now);
   const entry = rpcAttempts.get(ip);
   if (!entry || now >= entry.resetAt) {
     rpcAttempts.set(ip, { count: 1, resetAt: now + RPC_WINDOW_MS });

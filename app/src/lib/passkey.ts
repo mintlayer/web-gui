@@ -77,8 +77,9 @@ export function isValidRpId(rpId: string): boolean {
   if (rpId === 'localhost') return true;
   // IPv4
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(rpId)) return false;
-  // IPv6 (bracketed or bare)
-  if (/^[\[\]0-9a-fA-F:]+$/.test(rpId)) return false;
+  // IPv6 (bracketed or bare) - require ':' or '[' so all-hex hostnames like
+  // 'deadbeef' are not misclassified as IPv6 (Minor hardening)
+  if (/[:\[]/.test(rpId) && /^[\[\]0-9a-fA-F:]+$/.test(rpId)) return false;
   return rpId.length > 0;
 }
 

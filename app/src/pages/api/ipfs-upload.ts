@@ -37,6 +37,12 @@ export const POST: APIRoute = async ({ request }) => {
     return json({ ok: false, error: { message: 'Missing file field' } }, 400);
   }
 
+  // Reject oversized uploads early (matches the plugin-install cap)
+  const MAX_UPLOAD_SIZE = 50 * 1024 * 1024; // 50 MB
+  if (file.size > MAX_UPLOAD_SIZE) {
+    return json({ ok: false, error: { message: 'File too large (max 50 MB)' } }, 413);
+  }
+
   switch (effectiveProvider) {
     case 'filebase':
       return uploadToFilebase(file, getStringPref('ipfs.filebase_token'));

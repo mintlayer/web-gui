@@ -1,11 +1,12 @@
 ---
 import ManagementLayout from '@/layouts/ManagementLayout.astro';
 import TotpQrCode from '@/components/TotpQrCode';
-import { verifyPassword, hashPassword, verifyTOTP, generateTotpSecret } from '@/lib/auth';
+import { verifyTOTP, generateTotpSecret } from '@/lib/auth';
 import { getPref, getStringPref, setPref } from '@/lib/prefs-db';
 import { sendTelegramMessage } from '@/lib/telegram';
 import { getCredentials, saveCredentials, isValidRpId, getRpId } from '@/lib/passkey';
 import { resolveMcpSettings } from '@/lib/mcp-settings';
+import { resolvePasswordChange, applyPasswordChange } from '@/lib/password-change';
 
 type ActionResult =
   | { action: 'none' }
@@ -20,30 +21,26 @@ if (Astro.request.method === 'POST') {
   // part can't bypass validation or crash crypto/DB calls downstream.
   const str = (v: FormDataEntryValue | null) => (typeof v === 'string' ? v : '');
   const section = str(form.get('section'));
+  // Route every remaining field through str() as well (Minor hardening).
 
   if (section === 'password') {
-    const currentPassword = str(form.get('current_password'));
-    const newPassword     = str(form.get('new_password'));
-    const confirmPassword = str(form.get('confirm_password'));
-    const storedHash = getStringPref('auth.password_hash');
+    // Shared logic with /api/settings/password (single source of truth).
+    const str = (v: FormDataEntryValue | null) => (typeof v === 'string' ? v : '');
+    const decision = await resolvePasswordChange({
+      currentPassword: str(form.get('current_password')),
+      newPassword:     str(form.get('new_password')),
+      confirmPassword: str(form.get('confirm_password')),
+    });
 
-    if (!storedHash) {
-      result = { action: 'error', section, message: 'Password not configured.' };
-    } else if (!(await verifyPassword(currentPassword, storedHash))) {
-      result = { action: 'error', section, message: 'Current password is incorrect.' };
-    } else if (newPassword.length < 8) {
-      result = { action: 'error', section, message: 'New password must be at least 8 characters.' };
-    } else if (newPassword !== confirmPassword) {
-      result = { action: 'error', section, message: 'New passwords do not match.' };
+    if (!decision.ok) {
+      result = { action: 'error', section, message: decision.error + '.' };
     } else {
-      setPref('auth.password_hash', await hashPassword(newPassword));
-      // Invalidate all existing sessions (mirrors /api/settings/password).
-      setPref('auth.session_version', (getPref<number>('auth.session_version') ?? 0) + 1);
+      applyPasswordChange(decision.newHash); // invalidates all existing sessions
       result = { action: 'success', section, message: 'Password updated successfully.' };
     }
 
   } else if (section === 'reset_2fa') {
-    const totpCode = (form.get('totp_code') as string | null) ?? '';
+    const totpCode = str(form.get('totp_code'));
     const currentSecret = getStringPref('auth.totp_secret');
 
     if (!currentSecret) {
@@ -60,7 +57,7 @@ if (Astro.request.method === 'POST') {
     }
 
   } else if (section === 'remove_passkey') {
-    const credentialId = (form.get('credential_id') as string | null) ?? '';
+    const credentialId = str(form.get('credential_id'));
     if (!credentialId) {
       result = { action: 'error', section, message: 'No credential ID provided.' };
     } else {
@@ -76,7 +73,7 @@ if (Astro.request.method === 'POST') {
 
   } else if (section === 'ipfs') {
     const provider      = (form.get('provider')       as string | null) ?? '';
-    const filebaseToken = (form.get('filebase_token') as string | null) ?? '';
+    const filebaseToken = str(form.get('filebase_token'));
     const pinataJwt     = (form.get('pinata_jwt')     as string | null) ?? '';
 
     if (!['filebase', 'pinata', ''].includes(provider)) {
@@ -100,7 +97,7 @@ if (Astro.request.method === 'POST') {
     result = { action: 'success', section, message: 'Notification preferences saved.' };
 
   } else if (section === 'telegram') {
-    const botToken = (form.get('bot_token') as string | null) ?? '';
+    const botToken = str(form.get('bot_token'));
     const chatId   = (form.get('chat_id')   as string | null) ?? '';
     const test     = form.get('test') === '1';
 

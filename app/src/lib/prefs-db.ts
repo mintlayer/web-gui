@@ -18,7 +18,19 @@ function db(): Database.Database {
 
 export function getPref<T>(key: string): T | null {
   const row = db().prepare('SELECT value FROM prefs WHERE key = ?').get(key) as { value: string } | undefined;
-  return row ? (JSON.parse(row.value) as T) : null;
+  if (!row) return null;
+  try {
+    return JSON.parse(row.value) as T;
+  } catch {
+    // Corrupt row (partial write etc.) - treat as missing rather than
+    // crashing every request that reads this key.
+    console.error(`[prefs] corrupt JSON for key "${key}", ignoring`);
+    return null;
+  }
+}
+
+export function deletePref(key: string): void {
+  db().prepare('DELETE FROM prefs WHERE key = ?').run(key);
 }
 
 export function setPref<T>(key: string, value: T): void {

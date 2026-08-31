@@ -48,6 +48,7 @@ if (Astro.request.method === 'POST') {
     } else if (actionName === 'uninstall') {
       const res  = await fetch(new URL(`/api/plugins/${pluginId}/uninstall`, Astro.url), {
         method: 'POST',
+        body:    form, // carries totp_code for the step-up auth gate
         headers: { cookie: Astro.request.headers.get('cookie') ?? '' },
       });
       const data = await res.json() as { ok: boolean; error?: string };
@@ -117,6 +118,22 @@ const plugins = getInstalledPlugins().map((p) => ({
       <h3 class="text-sm font-semibold text-gray-200 mb-4">Install plugin</h3>
       <form method="post" enctype="multipart/form-data" class="flex items-end gap-3">
         <input type="hidden" name="action" value="install" />
+        <div>
+          <label class="block text-xs text-gray-400 mb-1.5" for="install-totp">
+            2FA code
+          </label>
+          <input
+            id="install-totp"
+            type="text"
+            name="totp_code"
+            inputmode="numeric"
+            autocomplete="one-time-code"
+            pattern="[0-9]*"
+            required
+            placeholder="123456"
+            class="w-28 rounded bg-gray-800 border border-gray-700 text-gray-100 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-mint-600"
+          />
+        </div>
         <div class="flex-1">
           <label class="block text-xs text-gray-400 mb-1.5" for="plugin-file">
             Plugin archive (.tgz)
@@ -201,6 +218,21 @@ const plugins = getInstalledPlugins().map((p) => ({
       <p class="text-sm text-gray-400">
         This will permanently remove <strong id="uninstall-plugin-name" class="text-gray-200"></strong> and delete all its files. This action cannot be undone.
       </p>
+      <div>
+        <label class="block text-xs text-gray-400 mb-1.5" for="uninstall-totp">2FA code</label>
+        <input
+          id="uninstall-totp"
+          type="text"
+          name="totp_code"
+          form="uninstall-form"
+          inputmode="numeric"
+          autocomplete="one-time-code"
+          pattern="[0-9]*"
+          required
+          placeholder="123456"
+          class="w-full rounded bg-gray-800 border border-gray-700 text-gray-100 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-mint-600"
+        />
+      </div>
       <div class="flex justify-end gap-3 pt-1">
         <button
           type="button"

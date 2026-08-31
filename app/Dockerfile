@@ -34,16 +34,24 @@ RUN NPM_ARCH=$([ "$TARGETARCH" = "amd64" ] && echo "x64" || echo "$TARGETARCH") 
 # ── Production image ──────────────────────────────────────────────────────────
 FROM node:22-alpine AS runner
 
+# Run as an unprivileged user (S-M4): never root over wallet data.
+# uid/gid 10001 is used by the image; docker-compose overrides user: with
+# ML_USER_ID/ML_GROUP_ID so the process matches the host-mounted data dirs
+# (they only need the image files to be world-readable, which they are).
+RUN addgroup -g 10001 app && adduser -u 10001 -G app -D -H -s /sbin/nologin app
+
 WORKDIR /app
 
-COPY --from=builder    /app/dist           ./dist
-COPY --from=builder    /app/wasm-wrappers  ./wasm-wrappers
-COPY --from=builder    /app/package.json   ./package.json
-COPY --from=builder    /app/scripts        ./scripts
-COPY --from=prod-deps  /app/node_modules   ./node_modules
+COPY --from=builder --chown=app:app /app/dist           ./dist
+COPY --from=builder --chown=app:app /app/wasm-wrappers  ./wasm-wrappers
+COPY --from=builder --chown=app:app /app/package.json   ./package.json
+COPY --from=builder --chown=app:app /app/scripts        ./scripts
+COPY --from=prod-deps --chown=app:app /app/node_modules ./node_modules
 
 ENV HOST=0.0.0.0
 ENV PORT=4321
 EXPOSE 4321
+
+USER app
 
 CMD ["node", "dist/server/entry.mjs"]

@@ -26,6 +26,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Typecheck (astro sync + tsc --noEmit)
+        run: npm run typecheck
+        env:
+          SESSION_SECRET: 'ci-test-secret-that-is-at-least-32-chars-long'
+          WALLET_RPC_URL: 'http://127.0.0.1:19999'
+
       - name: Run unit tests with coverage
         run: npm run test:coverage
         env:

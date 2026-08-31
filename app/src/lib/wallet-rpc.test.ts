@@ -236,3 +236,129 @@ describe('wrapper functions - correct method names and params', () => {
     expect(params['store_seed_phrase']).toBe(true);
   });
 });
+
+describe('walletNeedsPassword (encrypted wallet detection)', () => {
+  const mockFetch = vi.fn<typeof fetch>();
+
+  beforeEach(async () => {
+    vi.resetModules();
+    process.env.WALLET_RPC_URL = 'http://localhost:3034';
+    vi.stubGlobal('fetch', mockFetch);
+  });
+
+  afterEach(() => {
+    mockFetch.mockReset();
+    vi.unstubAllGlobals();
+    delete process.env.WALLET_RPC_URL;
+  });
+
+  it('returns true when wallet_open fails because the wallet is encrypted', async () => {
+    mockFetch.mockResolvedValueOnce(
+      mockRpcError('Wallet is encrypted: password required to open', -1),
+    );
+    const { walletNeedsPassword } = await import('@/lib/wallet-rpc');
+    await expect(walletNeedsPassword('/home/mintlayer/mintlayer.wallet')).resolves.toBe(true);
+  });
+
+  it('returns false when the wallet file does not exist', async () => {
+    mockFetch.mockResolvedValueOnce(mockRpcError('File does not exist', -1));
+    const { walletNeedsPassword } = await import('@/lib/wallet-rpc');
+    await expect(walletNeedsPassword()).resolves.toBe(false);
+  });
+
+  it('returns false when the wallet opens without a password', async () => {
+    mockFetch.mockResolvedValueOnce(mockOk({}));
+    const { walletNeedsPassword } = await import('@/lib/wallet-rpc');
+    await expect(walletNeedsPassword()).resolves.toBe(false);
+  });
+
+  it('returns false on unrelated RPC errors', async () => {
+    mockFetch.mockResolvedValueOnce(mockRpcError('daemon is shutting down', -32000));
+    const { walletNeedsPassword } = await import('@/lib/wallet-rpc');
+    await expect(walletNeedsPassword()).resolves.toBe(false);
+  });
+});
+
+describe('rpcCall - timeout & JSON guard', () => {
+  const mockFetch = vi.fn<typeof fetch>();
+
+  beforeEach(async () => {
+    vi.resetModules();
+    process.env.WALLET_RPC_URL = 'http://localhost:3034';
+    vi.stubGlobal('fetch', mockFetch);
+  });
+
+  afterEach(() => {
+    mockFetch.mockReset();
+    vi.unstubAllGlobals();
+    delete process.env.WALLET_RPC_URL;
+    delete process.env.WALLET_RPC_TIMEOUT_MS;
+  });
+
+  it('throws WalletRpcError (not SyntaxError) on a non-JSON 200 body', async () => {
+    mockFetch.mockResolvedValueOnce(new Response('<html>gateway error</html>', { status: 200 }));
+    const { rpcCall, WalletRpcError } = await import('@/lib/wallet-rpc');
+    await expect(rpcCall('wallet_info', {})).rejects.toMatchObject({
+      name: 'WalletRpcError',
+      code: -32001,
+    });
+  });
+
+  it('passes an AbortSignal with the default 30s timeout', async () => {
+    delete process.env.WALLET_RPC_TIMEOUT_MS;
+    mockFetch.mockResolvedValueOnce(mockOk(null));
+    const { rpcCall } = await import('@/lib/wallet-rpc');
+    await rpcCall('wallet_info', {});
+    const [, init] = mockFetch.mock.calls[0];
+    expect(init!.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('honors WALLET_RPC_TIMEOUT_MS', async () => {
+    process.env.WALLET_RPC_TIMEOUT_MS = '5000';
+    mockFetch.mockResolvedValueOnce(mockOk(null));
+    const { rpcCall } = await import('@/lib/wallet-rpc');
+    await rpcCall('wallet_info', {});
+    const [, init] = mockFetch.mock.calls[0];
+    expect(init!.signal).toBeDefined();
+  });
+
+  it('passes no signal when timeoutMs is 0 (recoverWallet opt-out)', async () => {
+    mockFetch.mockResolvedValueOnce(mockOk({}));
+    const { recoverWallet } = await import('@/lib/wallet-rpc');
+    await recoverWallet('/tmp/wallet', 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about');
+    const [, init] = mockFetch.mock.calls[0];
+    expect(init!.signal).toBeUndefined();
+    const body = JSON.parse(init!.body as string);
+    expect(body.method).toBe('wallet_recover');
+  });
+
+  it('treats a hung request as an RPC error via AbortSignal timeout', async () => {
+    process.env.WALLET_RPC_TIMEOUT_MS = '20';
+    mockFetch.mockImplementation((_url, init) => new Promise((_resolve, reject) => {
+      init!.signal!.addEventListener('abort', () => reject(new Error('timeout fired')));
+    }));
+    const { rpcCall, WalletRpcError } = await import('@/lib/wallet-rpc');
+    await expect(rpcCall('wallet_info', {})).rejects.toBeInstanceOf(WalletRpcError);
+  });
+});
+
+describe('URL helpers (shared URL construction)', () => {
+  beforeEach(() => vi.resetModules());
+  afterEach(() => {
+    delete process.env.WALLET_RPC_URL;
+  });
+
+  it('defaults to localhost:3034 and converts to ws://', async () => {
+    delete process.env.WALLET_RPC_URL;
+    const { getWalletRpcHttpUrl, getWalletRpcWsUrl } = await import('@/lib/wallet-rpc');
+    expect(getWalletRpcHttpUrl()).toBe('http://localhost:3034');
+    expect(getWalletRpcWsUrl()).toBe('ws://localhost:3034');
+  });
+
+  it('reads the env each call and upgrades https to wss', async () => {
+    process.env.WALLET_RPC_URL = 'https://daemon.example:3034';
+    const { getWalletRpcHttpUrl, getWalletRpcWsUrl } = await import('@/lib/wallet-rpc');
+    expect(getWalletRpcHttpUrl()).toBe('https://daemon.example:3034');
+    expect(getWalletRpcWsUrl()).toBe('wss://daemon.example:3034');
+  });
+});

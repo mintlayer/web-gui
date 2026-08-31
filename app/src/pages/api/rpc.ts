@@ -1,11 +1,12 @@
 import type { APIRoute } from 'astro';
 import { rpcCall, WalletRpcError } from '@/lib/wallet-rpc';
-import { checkRpcRateLimit } from '@/lib/auth';
+import { checkRpcRateLimit, getClientAddress } from '@/lib/auth';
 import { ALLOWED_RPC_METHODS } from '@/lib/rpc-allowlist';
 
-export const POST: APIRoute = async ({ request }) => {
-  const ip =
-    request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown';
+export const POST: APIRoute = async ({ request, clientAddress }) => {
+  // Socket address first; x-forwarded-for only when TRUST_PROXY=true.
+  // Falls back to 'unknown' when the adapter does not expose clientAddress.
+  const ip = getClientAddress(request, clientAddress as string | undefined);
   if (!checkRpcRateLimit(ip)) {
     return jsonError('Rate limit exceeded', 429);
   }

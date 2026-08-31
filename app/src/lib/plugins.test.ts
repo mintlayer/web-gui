@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('@/lib/prefs-db', () => ({
   getPref: vi.fn(),
   setPref: vi.fn(),
+  deletePref: vi.fn(),
 }));
 
 vi.mock('node:fs', () => ({
@@ -24,7 +25,7 @@ vi.mock('@/lib/wallet-rpc', () => ({
   rpcCall: vi.fn(),
 }));
 
-import { getPref, setPref } from '@/lib/prefs-db';
+import { getPref, setPref, deletePref } from '@/lib/prefs-db';
 import { rpcCall } from '@/lib/wallet-rpc';
 import {
   existsSync,
@@ -46,6 +47,7 @@ import {
 
 const mockGetPref = vi.mocked(getPref);
 const mockSetPref = vi.mocked(setPref);
+const mockDeletePref = vi.mocked(deletePref);
 const mockExistsSync = vi.mocked(existsSync);
 const mockReadFileSync = vi.mocked(readFileSync);
 const mockReaddirSync = vi.mocked(readdirSync);
@@ -138,7 +140,7 @@ describe('uninstallPlugin', () => {
     mockGetPref.mockReturnValue([MANIFEST, other]);
     uninstallPlugin('my-plugin');
     expect(mockSetPref).toHaveBeenCalledWith('plugins.registry', [other]);
-    expect(mockSetPref).toHaveBeenCalledWith('plugins.my-plugin.enabled', null);
+    expect(mockDeletePref).toHaveBeenCalledWith('plugins.my-plugin.enabled');
   });
 
   it('tolerates rmSync failure gracefully', () => {
@@ -212,14 +214,14 @@ describe('installPlugin', () => {
 
   it('throws when plugin.json is missing (flat layout)', async () => {
     setupSuccessfulExtract();
-    mockReaddirSync.mockReturnValue([] as unknown as string[]);
+    mockReaddirSync.mockReturnValue([] as unknown as ReturnType<typeof readdirSync>);
     mockExistsSync.mockReturnValue(false);
     await expect(installPlugin(Buffer.from('fake'))).rejects.toThrow('plugin.json not found');
   });
 
   it('throws when plugin.json is invalid JSON', async () => {
     setupSuccessfulExtract();
-    mockReaddirSync.mockReturnValue([] as unknown as string[]);
+    mockReaddirSync.mockReturnValue([] as unknown as ReturnType<typeof readdirSync>);
     mockExistsSync.mockReturnValueOnce(true); // plugin.json exists
     mockReadFileSync.mockReturnValueOnce('not-json');
     await expect(installPlugin(Buffer.from('fake'))).rejects.toThrow('Invalid plugin.json');
@@ -227,7 +229,7 @@ describe('installPlugin', () => {
 
   it('throws when plugin.json is missing required fields', async () => {
     setupSuccessfulExtract();
-    mockReaddirSync.mockReturnValue([] as unknown as string[]);
+    mockReaddirSync.mockReturnValue([] as unknown as ReturnType<typeof readdirSync>);
     mockExistsSync.mockReturnValueOnce(true);
     mockReadFileSync.mockReturnValueOnce(JSON.stringify({ id: 'my-plugin' }));
     await expect(installPlugin(Buffer.from('fake'))).rejects.toThrow('Invalid plugin.json');
@@ -235,7 +237,7 @@ describe('installPlugin', () => {
 
   it('throws when plugin id contains uppercase', async () => {
     setupSuccessfulExtract();
-    mockReaddirSync.mockReturnValue([] as unknown as string[]);
+    mockReaddirSync.mockReturnValue([] as unknown as ReturnType<typeof readdirSync>);
     mockExistsSync.mockReturnValueOnce(true);
     mockReadFileSync.mockReturnValueOnce(
       JSON.stringify({ ...MANIFEST, id: 'MyPlugin' }),
@@ -245,7 +247,7 @@ describe('installPlugin', () => {
 
   it('throws when entry file is missing', async () => {
     setupSuccessfulExtract();
-    mockReaddirSync.mockReturnValue([] as unknown as string[]);
+    mockReaddirSync.mockReturnValue([] as unknown as ReturnType<typeof readdirSync>);
     mockExistsSync
       .mockReturnValueOnce(true)   // plugin.json
       .mockReturnValueOnce(false); // entry file missing
@@ -256,7 +258,7 @@ describe('installPlugin', () => {
 
   it('throws when plugin is already installed', async () => {
     setupSuccessfulExtract();
-    mockReaddirSync.mockReturnValue([] as unknown as string[]);
+    mockReaddirSync.mockReturnValue([] as unknown as ReturnType<typeof readdirSync>);
     mockExistsSync.mockReturnValueOnce(true).mockReturnValueOnce(true);
     mockReadFileSync.mockReturnValueOnce(JSON.stringify(MANIFEST));
     mockGetPref.mockReturnValue([MANIFEST]); // already installed
@@ -265,7 +267,7 @@ describe('installPlugin', () => {
 
   it('installs plugin successfully and updates registry', async () => {
     setupSuccessfulExtract();
-    mockReaddirSync.mockReturnValue([] as unknown as string[]);
+    mockReaddirSync.mockReturnValue([] as unknown as ReturnType<typeof readdirSync>);
     mockExistsSync.mockReturnValueOnce(true).mockReturnValueOnce(true);
     mockReadFileSync.mockReturnValueOnce(JSON.stringify(MANIFEST));
     mockGetPref.mockReturnValue([]);
@@ -278,7 +280,7 @@ describe('installPlugin', () => {
 
   it('handles single-directory npm pack layout', async () => {
     setupSuccessfulExtract();
-    mockReaddirSync.mockReturnValue(['package'] as unknown as string[]);
+    mockReaddirSync.mockReturnValue(['package'] as unknown as ReturnType<typeof readdirSync>);
     mockStatSync.mockReturnValue({ isDirectory: () => true } as ReturnType<typeof statSync>);
     mockExistsSync.mockReturnValueOnce(true).mockReturnValueOnce(true);
     mockReadFileSync.mockReturnValueOnce(JSON.stringify(MANIFEST));
@@ -291,7 +293,7 @@ describe('installPlugin', () => {
   it('treats multi-entry directory as flat layout', async () => {
     setupSuccessfulExtract();
     // Two entries → not single-dir layout
-    mockReaddirSync.mockReturnValue(['plugin.json', 'index.js'] as unknown as string[]);
+    mockReaddirSync.mockReturnValue(['plugin.json', 'index.js'] as unknown as ReturnType<typeof readdirSync>);
     mockExistsSync.mockReturnValueOnce(true).mockReturnValueOnce(true);
     mockReadFileSync.mockReturnValueOnce(JSON.stringify(MANIFEST));
     mockGetPref.mockReturnValue([]);

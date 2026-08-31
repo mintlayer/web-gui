@@ -94,5 +94,16 @@ const { title, html } = result;
 ---
 
 <Layout title={title} activeNav={pluginId}>
-  <Fragment set:html={html} />
+  <!--
+    Plugin HTML is chain/user-extensible content that must not be injected
+    raw into the app origin via set:html. Rendering inside a sandboxed iframe
+    (allow-scripts but NO allow-same-origin) gives the plugin an opaque origin:
+    it cannot reach app cookies, localStorage, or same-origin APIs.
+  -->
+  <iframe
+    sandbox="allow-scripts"
+    srcdoc={html}
+    title={title}
+    class="w-full min-h-[75vh] rounded-xl border border-gray-800 bg-gray-900"
+  ></iframe>
 </Layout>

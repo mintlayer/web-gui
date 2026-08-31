@@ -3,6 +3,7 @@ import { submitWithToast } from '@/lib/toastStore';
 import { watchTx } from '@/lib/txWatcher';
 import { CopyButton } from '@/components/CopyButton';
 import { TokenIdTooltip } from '@/components/TokenIdTooltip';
+import SafeExternalLink from '@/components/SafeExternalLink';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -351,7 +352,7 @@ function ChangeMetadataUriSection({ tokenId, currentUri, onRefresh }: { tokenId:
     <Section title="Update metadata URI">
       {currentUri && (
         <p className="text-xs text-gray-500 mb-3">
-          Current: <a href={currentUri} target="_blank" rel="noopener" className="text-mint-400 hover:text-mint-300 break-all">{currentUri}</a>
+          Current: <SafeExternalLink uri={currentUri} className="text-mint-400 hover:text-mint-300 break-all" />
         </p>
       )}
       <div className="space-y-3">
@@ -475,10 +476,8 @@ export default function TokenManagePanel({ tokenId, onClose, onRefresh }: Props)
                 {info.metadata_uri.text && (
                   <div className="flex justify-between gap-4">
                     <span className="text-gray-500 shrink-0">Metadata URI</span>
-                    <a href={info.metadata_uri.text} target="_blank" rel="noopener"
-                       className="text-mint-400 hover:text-mint-300 text-xs font-mono break-all text-right">
-                      {info.metadata_uri.text}
-                    </a>
+                    <SafeExternalLink uri={info.metadata_uri.text}
+                       className="text-mint-400 hover:text-mint-300 text-xs font-mono break-all text-right" />
                   </div>
                 )}
               </div>

@@ -10,9 +10,12 @@ services:
   web-gui:
     build:
       context: ./app
-      dockerfile: Dockerfile.dev
+      dockerfile: Dockerfile
+    # Run as the host user that owns ./mintlayer-data (never root).
+    # Falls back to the image's unprivileged app user (10001).
+    user: "${ML_USER_ID:-10001}:${ML_GROUP_ID:-10001}"
     ports:
-      - "${WEB_GUI_PORT:-4321}:4321"
+      - "${WEB_GUI_BIND:-127.0.0.1}:${WEB_GUI_PORT:-4321}:4321"  # loopback by default; opt in via WEB_GUI_BIND
     volumes:
       # Mount source into container; keep node_modules from the image
       - ./app/src:/app/src

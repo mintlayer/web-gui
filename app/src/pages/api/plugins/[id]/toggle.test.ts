@@ -6,6 +6,7 @@ vi.mock('@/lib/plugins', () => ({
 
 import { POST } from '@/pages/api/plugins/[id]/toggle';
 import { togglePlugin } from '@/lib/plugins';
+import { makeApiContext } from '@/test/api-context';
 
 const mockTogglePlugin = vi.mocked(togglePlugin);
 
@@ -22,10 +23,7 @@ function makeRequest(body: unknown): Request {
 }
 
 function makeCtx(id: string, body: unknown) {
-  return {
-    params: { id },
-    request: makeRequest(body),
-  } as Parameters<typeof POST>[0];
+  return makeApiContext({ params: { id }, request: makeRequest(body) });
 }
 
 describe('POST /api/plugins/[id]/toggle', () => {
@@ -35,7 +33,7 @@ describe('POST /api/plugins/[id]/toggle', () => {
       headers: { 'Content-Type': 'application/json' },
       body: 'not-json',
     });
-    const res = await POST({ params: { id: 'my-plugin' }, request: req } as Parameters<typeof POST>[0]);
+    const res = await POST(makeApiContext({ params: { id: 'my-plugin' }, request: req }));
     const body = await res.json() as Record<string, unknown>;
     expect(res.status).toBe(400);
     expect(body).toMatchObject({ ok: false, error: 'Invalid JSON body' });
@@ -85,10 +83,7 @@ describe('POST /api/plugins/[id]/toggle', () => {
   });
 
   it('uses empty string for id when params.id is undefined', async () => {
-    const res = await POST({
-      params: {},
-      request: makeRequest({ enabled: true }),
-    } as Parameters<typeof POST>[0]);
+    const res = await POST(makeApiContext({ params: {}, request: makeRequest({ enabled: true }) }));
     expect(res.status).toBe(200);
     expect(mockTogglePlugin).toHaveBeenCalledWith('', true);
   });

@@ -9,22 +9,25 @@
 import type { APIRoute } from 'astro';
 import WebSocket from 'ws';
 import { verifySessionToken, SESSION_COOKIE_NAME } from '@/lib/auth';
+import { getPref } from '@/lib/prefs-db';
+import { getWalletRpcWsUrl } from '@/lib/wallet-rpc';
 
 export const GET: APIRoute = async ({ request }) => {
   // Auth check - browsers send cookies with same-origin EventSource (per spec)
   const cookieHeader = request.headers.get('cookie') ?? '';
   const sessionToken =
     cookieHeader.match(new RegExp(`(?:^|;\\s*)${SESSION_COOKIE_NAME}=([^;]+)`))?.[1] ?? '';
-  if (!verifySessionToken(sessionToken)) {
+  // Verify against the CURRENT session version - hardcoding 0 let pre-password-
+  // change tokens stay valid here after revocation (and broke new tokens).
+  const sessionVersion = getPref<number>('auth.session_version') ?? 0;
+  if (!verifySessionToken(sessionToken, sessionVersion)) {
     return new Response('Unauthorized', { status: 401 });
   }
 
-  const rpcUrl    = process.env.WALLET_RPC_URL ?? 'http://wallet-rpc-daemon:3034';
+  // URL construction shared with the RPC client (consistent env + fallback)
+  const wsUrl = getWalletRpcWsUrl();
   const username  = process.env.WALLET_RPC_USERNAME ?? '';
   const password  = process.env.WALLET_RPC_PASSWORD ?? '';
-
-  // Convert http(s) → ws(s)
-  const wsUrl = rpcUrl.replace(/^http/, 'ws');
   const auth  = Buffer.from(`${username}:${password}`).toString('base64');
 
   const encoder = new TextEncoder();
@@ -86,17 +89,26 @@ export const GET: APIRoute = async ({ request }) => {
         }
       });
 
+      // Comment-style heartbeat: keeps intermediaries from idling out the
+      // connection; ignored by EventSource (nit - low impact, but free).
+      const heartbeat = setInterval(() => {
+        try { controller.enqueue(encoder.encode(': ping\n\n')); } catch { /* closed */ }
+      }, 30_000);
+
       ws.on('error', (err) => {
+        clearInterval(heartbeat);
         send({ type: 'error', message: err.message });
         try { controller.close(); } catch { /* already closed */ }
       });
 
       ws.on('close', () => {
+        clearInterval(heartbeat);
         try { controller.close(); } catch { /* already closed */ }
       });
 
       // Clean up when the browser disconnects
       request.signal.addEventListener('abort', () => {
+        clearInterval(heartbeat);
         ws.close();
         try { controller.close(); } catch { /* already closed */ }
       });

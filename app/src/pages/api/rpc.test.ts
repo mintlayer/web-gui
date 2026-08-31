@@ -24,11 +24,13 @@ vi.mock('@/lib/wallet-rpc', () => ({
 
 vi.mock('@/lib/auth', () => ({
   checkRpcRateLimit: vi.fn().mockReturnValue(true),
+  getClientAddress: vi.fn(),
 }));
 
 import { POST } from '@/pages/api/rpc';
 import { rpcCall, WalletRpcError } from '@/lib/wallet-rpc';
-import { checkRpcRateLimit } from '@/lib/auth';
+import { checkRpcRateLimit, getClientAddress } from '@/lib/auth';
+import { makeApiContext } from '@/test/api-context';
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -48,7 +50,10 @@ function makeReq(body: unknown, ip = '1.2.3.4'): Request {
 }
 
 async function postRpc(body: unknown, ip = '1.2.3.4') {
-  const res = await POST({ request: makeReq(body, ip) } as Parameters<typeof POST>[0]);
+  const res = await POST(makeApiContext({
+    request: makeReq(body, ip),
+    clientAddress: '192.168.1.7', // socket peer address, as Astro would provide
+  }));
   const json = await res.json() as Record<string, unknown>;
   return { status: res.status, json, headers: res.headers };
 }
@@ -63,22 +68,27 @@ describe('rate limiting', () => {
     expect(json).toMatchObject({ ok: false, error: { message: 'Rate limit exceeded' } });
   });
 
-  it('passes the correct IP from x-forwarded-for to checkRpcRateLimit', async () => {
-    vi.mocked(rpcCall).mockResolvedValueOnce({});
-    await postRpc({ method: 'wallet_info', params: {} }, '10.0.0.5, 1.1.1.1');
-    expect(checkRpcRateLimit).toHaveBeenCalledWith('10.0.0.5');
+  it('keys the rate limit on the resolved client address (socket first)', async () => {
+    vi.mocked(getClientAddress).mockReturnValueOnce('203.0.113.9');
+    await postRpc({ method: 'node_best_block_height' });
+    expect(getClientAddress).toHaveBeenCalledWith(expect.any(Request), '192.168.1.7');
+    expect(checkRpcRateLimit).toHaveBeenCalledWith('203.0.113.9');
   });
 
-  it('uses "unknown" when x-forwarded-for header is absent', async () => {
-    vi.mocked(rpcCall).mockResolvedValueOnce({});
-    const req = new Request('http://localhost/api/rpc', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ method: 'wallet_info', params: {} }),
-    });
-    await POST({ request: req } as Parameters<typeof POST>[0]);
+  it('delegates address resolution to getClientAddress (TRUST_PROXY handling lives there)', async () => {
+    vi.mocked(getClientAddress).mockReturnValueOnce('203.0.113.10');
+    await postRpc({ method: 'node_best_block_height' }, '5.5.5.5');
+    expect(checkRpcRateLimit).toHaveBeenCalledWith('203.0.113.10');
+  });
+
+
+  it('uses "unknown" when no socket address is available', async () => {
+    vi.mocked(getClientAddress).mockReturnValueOnce('unknown');
+    const res = await POST(makeApiContext({ request: makeReq({ method: 'node_best_block_height' }) }));
+    expect(res.status).toBe(200);
     expect(checkRpcRateLimit).toHaveBeenCalledWith('unknown');
   });
+
 });
 
 // ── Request validation ────────────────────────────────────────────────────────

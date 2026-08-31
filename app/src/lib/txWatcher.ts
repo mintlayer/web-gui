@@ -36,8 +36,11 @@ function ensureStream() {
     } catch { /* ignore malformed */ }
   };
 
-  es.onerror = () => {
-    // Stream closed - reconnect will happen on next watchTx call
+  const source = es;
+  source.onerror = () => {
+    // Close the errored EventSource before dropping the reference - without
+    // this a second watchTx could open a duplicate stream (Minor hardening).
+    source.close();
     es = null;
   };
 }

@@ -14,6 +14,7 @@ import {
   type WalletInfo,
   type SeedPhraseResult,
 } from '@/lib/wallet-rpc';
+import { recoverThenSwapWallet } from '@/lib/wallet-recovery';
 import { verifyTOTP } from '@/lib/auth';
 import { getStringPref, getPref, setPref } from '@/lib/prefs-db';
 import { createRequire } from 'node:module';
@@ -73,7 +74,7 @@ try {
 // Handle POST actions
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
-  const action = form.get('action') as string;
+  const action = (form.get('action') as string | null) ?? '';
 
   try {
     if (action === 'show_seed') {
@@ -119,13 +120,13 @@ if (Astro.request.method === 'POST') {
       } else if (!validateMnemonic(mnemonic)) {
         actionError = 'Invalid seed phrase — check that all words are valid BIP39 words and the checksum is correct.';
       } else {
-        // 1. Close wallet (ignore error if already closed)
-        try { await walletClose(); } catch { /* already closed */ }
-        // 2. Delete wallet file
-        const { unlink } = await import('node:fs/promises');
-        await unlink(WALLET_LOCAL_PATH);
-        // 3. Recover wallet from seed — scans the full blockchain before returning
-        await recoverWallet(WALLET_RPC_PATH, mnemonic);
+        // Recover to a temp path first and swap only after a successful scan -
+        // never destroy the wallet file before recovery has succeeded.
+        const { unlink, rename } = await import('node:fs/promises');
+        await recoverThenSwapWallet(
+          { walletClose, recoverWallet, openWallet, unlink, rename },
+          { rpcPath: WALLET_RPC_PATH, localPath: WALLET_LOCAL_PATH, mnemonic },
+        );
         info = await walletInfo().catch(() => null);
         actionSuccess = 'Wallet recovered from seed phrase and blockchain scan complete.';
       }
@@ -144,6 +145,8 @@ if (isLocked === null) {
     isLocked = true;
   }
 }
+// The show_seed action renders seed-phrase material - never cache this page.
+Astro.response.headers.set('Cache-Control', 'no-store');
 ---
 
 <ManagementLayout title="Wallet" activeTab="wallet">

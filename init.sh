@@ -312,9 +312,9 @@ hint "Hashing password (this may take a moment)..."
 UI_PASSWORD_HASH=$(node -e "
   const c = require('crypto');
   const salt = c.randomBytes(32).toString('hex');
-  c.pbkdf2(process.argv[1], salt, 100000, 64, 'sha512', (err, key) => {
+  c.pbkdf2(process.argv[1], salt, 210000, 64, 'sha512', (err, key) => {
     if (err) { process.stderr.write(err.message + '\n'); process.exit(1); }
-    process.stdout.write('pbkdf2:sha512:100000:' + salt + ':' + key.toString('hex'));
+    process.stdout.write('pbkdf2:sha512:210000:' + salt + ':' + key.toString('hex'));
   });
 " "$UI_PASSWORD")
 ok "Password hashed"
@@ -394,6 +394,22 @@ while ! [[ "$WEB_GUI_PORT" =~ ^[0-9]+$ ]] || (( WEB_GUI_PORT < 1 || WEB_GUI_PORT
   printf "${CYAN}│${RESET}  ${RED}Enter a valid port number (1-65535)${RESET}\n"
   prompt WEB_GUI_PORT "Port:" "4321"
 done
+
+ask "Expose the web GUI to your network?"
+hint "By default the GUI binds to 127.0.0.1 and is reachable only from this machine (recommended)."
+hint "Only expose it if other devices on your LAN need to open the login page."
+hint "Note: LAN access is plain HTTP — browsers reject the Secure session cookie on"
+hint "non-localhost hostnames, so login will fail from other machines anyway."
+prompt WEB_GUI_BIND_ANSWER "Expose to network? [y/N]:" "n"
+case "$WEB_GUI_BIND_ANSWER" in
+  [yY]|[yY][eE][sS])
+    WEB_GUI_BIND="0.0.0.0"
+    warn "GUI will be reachable from other machines (plain HTTP)."
+    ;;
+  *)
+    WEB_GUI_BIND="127.0.0.1"
+    ;;
+esac
 
 ask "Public hostname (optional — required for Passkeys)"
 hint "If you access this GUI via a DNS name (e.g. DuckDNS, your own domain), enter it here."
@@ -641,6 +657,8 @@ WALLET_RPC_PASSWORD=${WALLET_RPC_PASSWORD}
 # Web GUI
 WEB_GUI_PORT=${WEB_GUI_PORT}
 WEB_GUI_HOST=${WEB_GUI_HOST}
+# Bind address for the GUI port: 127.0.0.1 (default) or 0.0.0.0 (opted in above)
+WEB_GUI_BIND=${WEB_GUI_BIND}
 
 # Passkeys (WebAuthn) — derived from WEB_GUI_HOST above
 # Override these if running behind a reverse proxy that changes the visible hostname.

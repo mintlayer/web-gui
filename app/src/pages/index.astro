@@ -5,7 +5,7 @@ import ReceiveModal from '@/components/ReceiveModal';
 import {
   getBalance, walletBestBlock, getStakingStatus, listCreatedBlocks,
   nodeChainstateInfo, nodePeerCount, nodeVersion, getTokensInfo,
-  listPendingTransactions, openWallet, isWalletNotOpenError, WalletRpcError,
+  listPendingTransactions, openWallet, isWalletNotOpenError, walletNeedsPassword, WalletRpcError,
   type BlockInfo, type ChainstateInfo,
 } from '@/lib/wallet-rpc';
 
@@ -58,10 +58,9 @@ try {
   blocksFound = await listCreatedBlocks(0).then(b => b.length).catch(() => null);
 
   if (balance && Object.keys(balance.tokens).length > 0) {
+    // One batched call instead of one RPC per token (Minor hardening).
     const tokenIds = Object.keys(balance.tokens);
-    const infos = await Promise.all(
-      tokenIds.map(id => getTokensInfo([id]).then(([info]) => info ?? null).catch(() => null))
-    );
+    const infos = await getTokensInfo(tokenIds).catch(() => []);
     for (const info of infos) {
       if (!info) continue;
       if (info.type === 'NonFungibleToken') nftCount++;
@@ -70,7 +69,14 @@ try {
   }
 } catch (err) {
   if (isWalletNotOpenError(err)) {
-    // fall through - the client-side opening screen handles it
+    // Probe the wallet file: if it exists but is encrypted, render the
+    // password modal instead of the client-side auto-open screen. Without
+    // this the client reloads forever on "needs_password".
+    if (await walletNeedsPassword(WALLET_PATH)) {
+      needsPassword = true;
+    }
+    // fall through for all other statuses - the client-side opening screen
+    // handles auto-open / not-found navigation
   } else if (err instanceof WalletRpcError && (err.message.includes('Cannot reach') || err.code === -32000)) {
     daemonOffline = true;
   } else {

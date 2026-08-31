@@ -21,7 +21,10 @@ services:
   # ─────────────────────────────────────────
   node-daemon:
     <<: *common
-    image: "mintlayer/node-daemon:latest"
+    # Images update via Watchtower (opt-in, profile "watchtower") or manual pulls.
+    # For strict supply-chain pinning, set ML_*_IMAGE env overrides to a
+    # digest-pinned ref, e.g. ML_NODE_DAEMON_IMAGE=mintlayer/node-daemon@sha256:<digest>.
+    image: "${ML_NODE_DAEMON_IMAGE:-mintlayer/node-daemon:latest}"
     command: "node-daemon ${NETWORK:-mainnet}"
     labels:
       com.centurylinklabs.watchtower.enable: "true"
@@ -42,7 +45,7 @@ services:
   # ─────────────────────────────────────────
   wallet-rpc-daemon:
     <<: *common
-    image: "mintlayer/wallet-rpc-daemon:latest"
+    image: "${ML_WALLET_RPC_DAEMON_IMAGE:-mintlayer/wallet-rpc-daemon:latest}"
     command: "${WALLET_RPC_CMD:-wallet-rpc-daemon mainnet}"
     labels:
       com.centurylinklabs.watchtower.enable: "true"
@@ -76,6 +79,9 @@ services:
     build:
       context: ./app
       dockerfile: Dockerfile
+    # Run as the host user that owns ./mintlayer-data (never root).
+    # Falls back to the image's unprivileged app user (10001).
+    user: "${ML_USER_ID:-10001}:${ML_GROUP_ID:-10001}"
     depends_on:
       - wallet-rpc-daemon
     volumes:
@@ -89,7 +95,7 @@ services:
       # Installed plugins — persists across restarts
       - "./mintlayer-data/plugins:/app/plugins"
     ports:
-      - "${WEB_GUI_PORT:-4321}:4321"
+      - "${WEB_GUI_BIND:-127.0.0.1}:${WEB_GUI_PORT:-4321}:4321"  # loopback by default; opt in via WEB_GUI_BIND
     environment:
       WALLET_RPC_URL: "http://wallet-rpc-daemon:3034"
       WALLET_RPC_USERNAME: "${WALLET_RPC_USERNAME}"
@@ -136,7 +142,7 @@ services:
   # ─────────────────────────────────────────
   wallet-cli:
     <<: *common
-    image: "mintlayer/wallet-cli:latest"
+    image: "${ML_WALLET_CLI_IMAGE:-mintlayer/wallet-cli:latest}"
     command: "wallet-cli"
     depends_on:
       - wallet-rpc-daemon
@@ -166,7 +172,7 @@ services:
 
   api-blockchain-scanner-daemon:
     <<: *common
-    image: "mintlayer/api-blockchain-scanner-daemon:latest"
+    image: "${ML_API_SCANNER_IMAGE:-mintlayer/api-blockchain-scanner-daemon:latest}"
     labels:
       com.centurylinklabs.watchtower.enable: "true"
     depends_on:
@@ -188,7 +194,7 @@ services:
     restart: unless-stopped
 
   api-web-server:
-    image: "mintlayer/api-web-server:latest"
+    image: "${ML_API_WEB_SERVER_IMAGE:-mintlayer/api-web-server:latest}"
     labels:
       com.centurylinklabs.watchtower.enable: "true"
     depends_on:

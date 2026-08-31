@@ -157,7 +157,10 @@ services:
   # ─────────────────────────────────────────
   node-daemon:
     <<: *common
-    image: "mintlayer/node-daemon:latest"
+    # Images update via Watchtower (opt-in, profile "watchtower") or manual pulls.
+    # For strict supply-chain pinning, set ML_*_IMAGE env overrides to a
+    # digest-pinned ref, e.g. ML_NODE_DAEMON_IMAGE=mintlayer/node-daemon@sha256:<digest>.
+    image: "${ML_NODE_DAEMON_IMAGE:-mintlayer/node-daemon:latest}"
     command: "node-daemon ${NETWORK:-mainnet}"
     environment:
       <<: [*common-env, *node-rpc-env]
@@ -173,7 +176,7 @@ services:
   # ─────────────────────────────────────────
   wallet-rpc-daemon:
     <<: *common
-    image: "mintlayer/wallet-rpc-daemon:latest"
+    image: "${ML_WALLET_RPC_DAEMON_IMAGE:-mintlayer/wallet-rpc-daemon:latest}"
     command: "${WALLET_RPC_CMD:-wallet-rpc-daemon mainnet}"
     depends_on:
       - node-daemon
@@ -202,7 +205,7 @@ services:
   # Web GUI (Astro SSR app)
   # ─────────────────────────────────────────
   web-gui:
-    image: "mintlayer/web-gui:latest"
+    image: "${ML_WEB_GUI_IMAGE:-mintlayer/web-gui:latest}"
     depends_on:
       - wallet-rpc-daemon
     volumes:
@@ -242,7 +245,7 @@ services:
   # ─────────────────────────────────────────
   wallet-cli:
     <<: *common
-    image: "mintlayer/wallet-cli:latest"
+    image: "${ML_WALLET_CLI_IMAGE:-mintlayer/wallet-cli:latest}"
     command: "wallet-cli"
     depends_on:
       - wallet-rpc-daemon
@@ -272,7 +275,7 @@ services:
 
   api-blockchain-scanner-daemon:
     <<: *common
-    image: "mintlayer/api-blockchain-scanner-daemon:latest"
+    image: "${ML_API_SCANNER_IMAGE:-mintlayer/api-blockchain-scanner-daemon:latest}"
     depends_on:
       - node-daemon
       - postgres
@@ -292,7 +295,7 @@ services:
     restart: unless-stopped
 
   api-web-server:
-    image: "mintlayer/api-web-server:latest"
+    image: "${ML_API_WEB_SERVER_IMAGE:-mintlayer/api-web-server:latest}"
     depends_on:
       - postgres
       - node-daemon

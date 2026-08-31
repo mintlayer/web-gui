@@ -32,6 +32,7 @@ export async function sendTelegramMessage(botToken: string, chatId: string, text
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' }),
+    signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) {
     const body = await res.text();
@@ -57,6 +58,7 @@ export async function sendTelegramPhoto(
   const res = await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
     method: 'POST',
     body: form,
+    signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) {
     const body = await res.text();

@@ -24,7 +24,7 @@ describe('hashPassword / verifyPassword', () => {
 
   it('produces a hash in the expected format', async () => {
     const hash = await hashPassword('mysecret');
-    expect(hash).toMatch(/^pbkdf2:sha512:100000:[0-9a-f]{64}:[0-9a-f]{128}$/);
+    expect(hash).toMatch(/^pbkdf2:sha512:210000:[0-9a-f]{64}:[0-9a-f]{128}$/);
   });
 
   it('two hashes of the same password differ (random salts)', async () => {
@@ -365,5 +365,129 @@ describe('makeSessionCookieHeader / clearSessionCookieHeader', () => {
     const header = clearSessionCookieHeader();
     expect(header).toContain('session=;');
     expect(header).toContain('Max-Age=0');
+  });
+});
+
+// ── Client address resolution + map pruning ──────────────────────────────────
+
+describe('getClientAddress (spoofable x-forwarded-for)', () => {
+  let getClientAddress: (request: Request, socketAddress?: string) => string;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    process.env.SESSION_SECRET = 'test-secret-that-is-at-least-32-chars-long';
+    const mod = await import('@/lib/auth');
+    getClientAddress = mod.getClientAddress;
+  });
+
+  afterEach(() => {
+    delete process.env.TRUST_PROXY;
+  });
+
+  const req = (xff?: string) =>
+    new Request('http://localhost/', { headers: xff ? { 'x-forwarded-for': xff } : {} });
+
+  it('prefers the socket address and ignores XFF by default', () => {
+    delete process.env.TRUST_PROXY;
+    expect(getClientAddress(req('9.9.9.9'), '10.0.0.5')).toBe('10.0.0.5');
+  });
+
+  it('ignores XFF entirely when TRUST_PROXY is not true', () => {
+    process.env.TRUST_PROXY = '1';
+    expect(getClientAddress(req('9.9.9.9'), '10.0.0.5')).toBe('10.0.0.5');
+  });
+
+  it('uses the first XFF entry when TRUST_PROXY=true', () => {
+    process.env.TRUST_PROXY = 'true';
+    expect(getClientAddress(req('9.9.9.9, 10.0.0.1'), '10.0.0.5')).toBe('9.9.9.9');
+  });
+
+  it('falls back to the socket address when XFF is absent even with TRUST_PROXY=true', () => {
+    process.env.TRUST_PROXY = 'true';
+    expect(getClientAddress(req(), '10.0.0.5')).toBe('10.0.0.5');
+  });
+
+  it('returns "unknown" when nothing is available', () => {
+    delete process.env.TRUST_PROXY;
+    expect(getClientAddress(req())).toBe('unknown');
+  });
+});
+
+describe('rate-limit map pruning (unbounded maps)', () => {
+  it('prunes expired login entries so memory stays bounded', async () => {
+    vi.resetModules();
+    process.env.SESSION_SECRET = 'test-secret-that-is-at-least-32-chars-long';
+    const mod = await import('@/lib/auth');
+    vi.useFakeTimers();
+    // Fill with many unique spoofed-source entries across several windows
+    for (let window = 0; window < 3; window++) {
+      for (let i = 0; i < 500; i++) mod.recordLoginFailure(`10.${window}.${i}.1`);
+      vi.advanceTimersByTime(15 * 60 * 1000 + 1);
+    }
+    // One more check triggers a fresh prune pass over the map
+    expect(mod.checkLoginRateLimit('10.0.0.999')).toBe(true);
+    // Map size observable via a fresh prune-heavy run: entries from earlier
+    // windows must be gone - a request from an old IP starts clean.
+    expect(mod.checkLoginRateLimit('10.0.0.1')).toBe(true);
+    vi.useRealTimers();
+  });
+
+  it('prunes expired RPC entries', async () => {
+    vi.resetModules();
+    const mod = await import('@/lib/auth');
+    vi.useFakeTimers();
+    for (let i = 0; i < 200; i++) mod.checkRpcRateLimit(`10.1.${i}.1`);
+    vi.advanceTimersByTime(60_000 + 1);
+    // All entries expired; a fresh check prunes them and starts clean
+    expect(mod.checkRpcRateLimit('10.1.0.1')).toBe(true);
+    vi.useRealTimers();
+  });
+});
+
+// ── PBKDF2 iteration upgrade ─────────────────────────────────────────────────
+
+describe('passwordNeedsRehash (rehash-on-login)', () => {
+  let passwordNeedsRehash: (stored: string) => boolean;
+  let hashPassword: (plain: string) => Promise<string>;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    process.env.SESSION_SECRET = 'test-secret-that-is-at-least-32-chars-long';
+    const mod = await import('@/lib/auth');
+    passwordNeedsRehash = mod.passwordNeedsRehash;
+    hashPassword = mod.hashPassword;
+  });
+
+  it('flags hashes created with the old 100k iteration count', () => {
+    expect(passwordNeedsRehash('pbkdf2:sha512:100000:abc:def')).toBe(true);
+  });
+
+  it('accepts hashes at the current 210k iteration count', async () => {
+    const stored = await hashPassword('some-password');
+    expect(passwordNeedsRehash(stored)).toBe(false);
+  });
+
+  it('flags well-formed hashes with an unparseable iteration count', () => {
+    // Note: 'garbage' (wrong part count) returns false - the helper only runs
+    // after verifyPassword succeeded, so the hash is necessarily well-formed.
+    expect(passwordNeedsRehash('pbkdf2:sha512:notanumber:abc:def')).toBe(true);
+  });
+
+  it('returns false for malformed hashes (unreachable after successful verify)', () => {
+    expect(passwordNeedsRehash('garbage')).toBe(false);
+  });
+
+  it('still verifies hashes created with the old 100k count (backwards compat)', async () => {
+    const mod = await import('@/lib/auth');
+    // Hand-craft a 100k-format hash with the real pbkdf2
+    const { pbkdf2 } = await import('node:crypto');
+    const promisified = (pw: string, salt: string, iter: number) =>
+      new Promise<string>((res, rej) =>
+        pbkdf2(pw, salt, iter, 64, 'sha512', (e, k) => (e ? rej(e) : res(k.toString('hex')))));
+    const salt = 'aabbccdd';
+    const key = await promisified('legacy-password', salt, 100_000);
+    const stored = `pbkdf2:sha512:100000:${salt}:${key}`;
+    await expect(mod.verifyPassword('legacy-password', stored)).resolves.toBe(true);
+    await expect(mod.verifyPassword('wrong-password', stored)).resolves.toBe(false);
   });
 });

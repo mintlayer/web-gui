@@ -38,9 +38,9 @@ fi
 HASH=$(node -e "
 const crypto = require('crypto');
 const salt = crypto.randomBytes(32).toString('hex');
-crypto.pbkdf2('$PASSWORD', salt, 100000, 64, 'sha512', (err, key) => {
+crypto.pbkdf2('$PASSWORD', salt, 210000, 64, 'sha512', (err, key) => {
   if (err) { process.stderr.write(err.message); process.exit(1); }
-  console.log('pbkdf2:sha512:100000:' + salt + ':' + key.toString('hex'));
+  console.log('pbkdf2:sha512:210000:' + salt + ':' + key.toString('hex'));
 });
 ")
 

@@ -119,6 +119,8 @@ if (Astro.request.method === 'POST') {
     }
   }
 }
+// This page renders seed-phrase material after wallet creation - never cache it.
+Astro.response.headers.set('Cache-Control', 'no-store');
 ---
 
 <Layout title="Wallet Setup" activeNav="setup">

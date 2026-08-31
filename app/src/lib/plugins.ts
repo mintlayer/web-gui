@@ -18,7 +18,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
-import { getPref, setPref } from './prefs-db';
+import { getPref, setPref, deletePref } from './prefs-db';
 import { rpcCall } from './wallet-rpc';
 import { ALLOWED_RPC_METHODS } from './rpc-allowlist';
 
@@ -161,6 +161,10 @@ export async function installPlugin(buffer: Buffer): Promise<PluginManifest> {
       throw new Error(`Invalid plugin.json: ${(err as Error).message}`);
     }
 
+    // Reject traversal attempts in the manifest entry (Minor hardening)
+    if (manifest.entry.includes('..') || manifest.entry.startsWith('/')) {
+      throw new Error(`Invalid plugin.json: entry "${manifest.entry}" must be a relative path without ".."`);
+    }
     const entryPath = join(pluginRoot, manifest.entry);
     if (!existsSync(entryPath)) {
       throw new Error(`Entry file "${manifest.entry}" not found in archive`);
@@ -196,7 +200,7 @@ export function uninstallPlugin(id: string): void {
 
   plugins.splice(idx, 1);
   setPref('plugins.registry', plugins);
-  setPref(`plugins.${id}.enabled`, null);
+  deletePref(`plugins.${id}.enabled`);
   invalidatePluginCache(id);
 }
 
@@ -217,6 +221,11 @@ export async function loadPluginHandler(id: string): Promise<PluginModule> {
 
   const manifest = getInstalledPlugins().find((p) => p.id === id);
   if (!manifest) throw new Error(`Plugin "${id}" is not installed`);
+
+  // Defense in depth: validate at load time too (Minor hardening)
+  if (manifest.entry.includes('..') || manifest.entry.startsWith('/')) {
+    throw new Error(`Plugin "${id}" has an invalid entry path`);
+  }
 
   const entryPath = join(PLUGINS_DIR, id, manifest.entry);
   // Query parameter busts Node's ESM cache after reinstall

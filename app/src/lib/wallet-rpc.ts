@@ -5,8 +5,24 @@
  * generated docs at wallet-rpc-daemon/docs/RPC.md.
  */
 
-const WALLET_RPC_URL =
-  process.env.WALLET_RPC_URL ?? 'http://localhost:3034';
+/** Canonical wallet-rpc-daemon URL construction (http), shared by all callers. */
+export function getWalletRpcHttpUrl(): string {
+  return process.env.WALLET_RPC_URL ?? 'http://localhost:3034';
+}
+
+/** WebSocket form of the daemon URL (ws(s)://) - used by SSE/WebSocket bridges. */
+export function getWalletRpcWsUrl(): string {
+  return getWalletRpcHttpUrl().replace(/^http/, 'ws');
+}
+
+/**
+ * Per-request timeout in ms. 0 disables the timeout (long-running calls like
+ * wallet_recover). Override via WALLET_RPC_TIMEOUT_MS.
+ */
+export function getWalletRpcTimeoutMs(): number {
+  const raw = Number(process.env.WALLET_RPC_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 30_000;
+}
 
 const WALLET_RPC_USERNAME =
   process.env.WALLET_RPC_USERNAME ?? '';
@@ -59,26 +75,35 @@ export type StakingStatus = 'Staking' | 'NotStaking';
 
 let _reqId = 0;
 
+export interface RpcCallOptions {
+  /** Abort the request after this many ms. 0 disables the timeout. */
+  timeoutMs?: number;
+}
+
 export async function rpcCall<T = unknown>(
   method: string,
   params: Record<string, unknown> = {},
+  opts: RpcCallOptions = {},
 ): Promise<T> {
   const id = ++_reqId;
   const auth = Buffer.from(`${WALLET_RPC_USERNAME}:${WALLET_RPC_PASSWORD}`).toString('base64');
+  const url = getWalletRpcHttpUrl();
+  const timeoutMs = opts.timeoutMs ?? getWalletRpcTimeoutMs();
 
   let res: Response;
   try {
-    res = await fetch(WALLET_RPC_URL, {
+    res = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Basic ${auth}`,
       },
       body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
+      ...(timeoutMs > 0 ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
     });
   } catch (err) {
     throw new WalletRpcError(
-      `Cannot reach wallet-rpc-daemon at ${WALLET_RPC_URL}: ${(err as Error).message}`,
+      `Cannot reach wallet-rpc-daemon at ${url}: ${(err as Error).message}`,
       -32000,
     );
   }
@@ -90,7 +115,15 @@ export async function rpcCall<T = unknown>(
     );
   }
 
-  const body = await res.json() as { result?: T; error?: { code: number; message: string } };
+  let body: { result?: T; error?: { code: number; message: string } };
+  try {
+    body = await res.json();
+  } catch (err) {
+    throw new WalletRpcError(
+      `Invalid JSON response from wallet-rpc-daemon: ${(err as Error).message}`,
+      -32001,
+    );
+  }
 
   if (body.error) {
     throw new WalletRpcError(body.error.message, body.error.code);
@@ -149,6 +182,19 @@ export function isWalletNotOpenError(err: unknown): boolean {
 }
 
 /**
+ * Probe the wallet file to decide whether the UI must render the password
+ * modal instead of the auto-open screen (encrypted wallet, needs_password).
+ * Non-destructive from the UI's perspective: an unencrypted wallet is simply
+ * auto-opened, mirroring what POST /api/wallet-open would do.
+ */
+export async function walletNeedsPassword(
+  walletPath = '/home/mintlayer/mintlayer.wallet',
+): Promise<boolean> {
+  const result = await ensureWalletOpen(walletPath);
+  return result.status === 'needs_password';
+}
+
+/**
  * Attempt to auto-open /home/mintlayer/mintlayer.wallet.
  * Only call this after confirming the error is a wallet-not-open error
  * (use isWalletNotOpenError first) - otherwise you risk redirect loops.
@@ -204,13 +250,15 @@ export async function recoverWallet(
   storeSeedPhrase: boolean = true,
   passphrase?: string,
 ): Promise<CreateWalletResult> {
+  // Recovery scans the full blockchain and can run for many minutes - opt out
+  // of the default RPC timeout for this call.
   return rpcCall<CreateWalletResult>('wallet_recover', {
     path,
     store_seed_phrase: storeSeedPhrase,
     mnemonic,
     passphrase: passphrase ?? null,
     hardware_wallet: null,
-  });
+  }, { timeoutMs: 0 });
 }
 
 // ── Sync / node info ──────────────────────────────────────────────────────────

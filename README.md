@@ -107,6 +107,13 @@ Open <http://localhost:4321/setup> and use the **Create new wallet** form.
 
 After creating your wallet at <http://localhost:4321/setup>, the dashboard at <http://localhost:4321> will show your balance and sync status.
 
+> **Accessing the GUI from another machine (LAN)?** The session cookie is marked
+> `Secure`, so browsers only accept it on `localhost` or HTTPS. Login from a
+> plain-HTTP LAN hostname (e.g. `http://192.168.1.50:4321`) will silently fail.
+> By default the GUI also binds to `127.0.0.1` only — set `WEB_GUI_BIND=0.0.0.0`
+> in `.env` to expose it, and put a TLS reverse proxy in front for real remote
+> access.
+
 > **Sync time:** balance and transaction history only appear once the node has fully synced. On first run this takes several hours for mainnet. The dashboard shows the current block height so you can track progress.
 
 ---

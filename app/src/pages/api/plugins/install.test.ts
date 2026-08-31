@@ -3,11 +3,21 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('@/lib/plugins', () => ({
   installPlugin: vi.fn(),
 }));
+vi.mock('@/lib/auth', () => ({
+  verifyTOTP: vi.fn().mockReturnValue(true),
+}));
+vi.mock('@/lib/prefs-db', () => ({
+  getStringPref: vi.fn().mockReturnValue('totp-secret'),
+}));
 
 import { POST } from '@/pages/api/plugins/install';
 import { installPlugin } from '@/lib/plugins';
+import { verifyTOTP } from '@/lib/auth';
+import { getStringPref } from '@/lib/prefs-db';
 
 const mockInstallPlugin = vi.mocked(installPlugin);
+const mockVerifyTOTP = vi.mocked(verifyTOTP);
+const mockGetStringPref = vi.mocked(getStringPref);
 
 const MANIFEST = {
   id: 'my-plugin',
@@ -19,20 +29,53 @@ const MANIFEST = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Restore per-test defaults (mockReturnValue overrides below would stick)
+  mockGetStringPref.mockReturnValue('totp-secret');
+  mockVerifyTOTP.mockReturnValue(true);
 });
 
 function makeFile(size: number, name = 'plugin.tgz'): File {
   return new File([new Uint8Array(size)], name, { type: 'application/gzip' });
 }
 
-function makeRequest(file?: File | null): Request {
+function makeRequest(file?: File | null, totpCode: string | null = '123456'): Request {
   const formData = new FormData();
+  if (totpCode !== null) formData.append('totp_code', totpCode);
   if (file !== undefined && file !== null) formData.append('plugin', file);
   return new Request('http://localhost/api/plugins/install', {
     method: 'POST',
     body: formData,
   });
 }
+
+describe('POST /api/plugins/install - TOTP step-up gate', () => {
+  it('returns 400 when 2FA is not configured', async () => {
+    mockGetStringPref.mockReturnValue('');
+    const res = await POST({ request: makeRequest(makeFile(100)) } as Parameters<typeof POST>[0]);
+    expect(res.status).toBe(400);
+    await expect(res.clone().json()).resolves.toMatchObject({ ok: false, error: '2FA not configured' });
+  });
+
+  it('returns 401 when the TOTP code is invalid', async () => {
+    mockVerifyTOTP.mockReturnValueOnce(false);
+    const res = await POST({ request: makeRequest(makeFile(100)) } as Parameters<typeof POST>[0]);
+    expect(res.status).toBe(401);
+    await expect(res.clone().json()).resolves.toMatchObject({ ok: false, error: 'Invalid authenticator code' });
+  });
+
+  it('returns 401 when the TOTP code is missing', async () => {
+    mockVerifyTOTP.mockReturnValue(false); // an empty code verifies as false
+    const res = await POST({ request: makeRequest(makeFile(100), null) } as Parameters<typeof POST>[0]);
+    expect(res.status).toBe(401);
+    expect(mockInstallPlugin).not.toHaveBeenCalled();
+  });
+
+  it('verifies the code BEFORE touching the uploaded archive', async () => {
+    mockVerifyTOTP.mockReturnValueOnce(false);
+    await POST({ request: makeRequest(makeFile(100)) } as Parameters<typeof POST>[0]);
+    expect(mockInstallPlugin).not.toHaveBeenCalled();
+  });
+});
 
 describe('POST /api/plugins/install', () => {
   it('returns 400 when plugin field is missing', async () => {

@@ -1,5 +1,7 @@
 import type { APIRoute } from 'astro';
 import { installPlugin } from '@/lib/plugins';
+import { verifyTOTP } from '@/lib/auth';
+import { getStringPref } from '@/lib/prefs-db';
 
 export const POST: APIRoute = async ({ request }) => {
   let formData: FormData;
@@ -7,6 +9,18 @@ export const POST: APIRoute = async ({ request }) => {
     formData = await request.formData();
   } catch {
     return json({ ok: false, error: 'Invalid multipart form data' }, 400);
+  }
+
+  // Step-up auth: installing a plugin hands its code full server-side
+  // access (FS/network/wallet-RPC). Require a fresh TOTP code, consistent with
+  // seed reveal and MCP spend authorization.
+  const totpCode = typeof formData.get('totp_code') === 'string' ? (formData.get('totp_code') as string) : '';
+  const totpSecret = getStringPref('auth.totp_secret');
+  if (!totpSecret) {
+    return json({ ok: false, error: '2FA not configured' }, 400);
+  }
+  if (!verifyTOTP(totpCode, totpSecret)) {
+    return json({ ok: false, error: 'Invalid authenticator code' }, 401);
   }
 
   const file = formData.get('plugin') as File | null;

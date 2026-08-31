@@ -29,25 +29,27 @@ function prefsDbPath() {
 
 // ── Permissions (fresh read per call so panel changes apply immediately) ──────
 
-export function readPerms() {
+// Read one pref (JSON value) from the prefs DB. Returns null when the DB is
+// missing or the key is absent - callers fail closed.
+export function readPref(key) {
   let db;
   try {
     db = new Database(prefsDbPath(), { readonly: true, fileMustExist: true });
-    const get = (key) => {
-      const row = db.prepare('SELECT value FROM prefs WHERE key = ?').get(key);
-      return row ? JSON.parse(row.value) : null;
-    };
-    return {
-      enabled: get('mcp.enabled') === true,
-      allowActions: get('mcp.allow_actions') === true,
-      allowSpend: get('mcp.allow_spend') === true,
-    };
+    const row = db.prepare('SELECT value FROM prefs WHERE key = ?').get(key);
+    return row ? JSON.parse(row.value) : null;
   } catch {
-    // No prefs DB → treat as fully disabled (fail closed)
-    return { enabled: false, allowActions: false, allowSpend: false };
+    return null;
   } finally {
     db?.close();
   }
+}
+
+export function readPerms() {
+  return {
+    enabled: readPref('mcp.enabled') === true,
+    allowActions: readPref('mcp.allow_actions') === true,
+    allowSpend: readPref('mcp.allow_spend') === true,
+  };
 }
 
 // ── Minimal JSON-RPC client (same wire format as src/lib/wallet-rpc.ts) ───────
@@ -250,9 +252,18 @@ registerTool(
     },
   },
   ({ account, address, amount }) =>
-    guarded(['address_send'], () =>
-      rpcCall('address_send', { account, address, amount: { decimal: amount }, selected_utxos: [], options: {} }),
-    ),
+    guarded(['address_send'], () => {
+      // Optional per-tx cap (Minor hardening): limits the blast radius of a
+      // hijacked AI client. Set pref "mcp.max_send_amount" (decimal ML) to enable.
+      const capNum = Number(readPref('mcp.max_send_amount'));
+      if (Number.isFinite(capNum) && capNum > 0 && Number(amount) > capNum) {
+          return {
+            content: [{ type: 'text', text: `Rejected: amount ${amount} ML exceeds the per-transaction cap of ${capNum} ML (pref mcp.max_send_amount).` }],
+            isError: true,
+          };
+      }
+      return rpcCall('address_send', { account, address, amount: { decimal: amount }, selected_utxos: [], options: {} });
+    }),
 );
 
 // ── Escape hatch ──────────────────────────────────────────────────────────────

@@ -38,6 +38,13 @@ export const GET: APIRoute = async ({ url }) => {
     return json({ ok: false, error: 'Missing addresses param' }, 400);
   }
 
+  // Cap the fan-out - one indexer request per address, so an unbounded
+  // list would let a single request hammer the indexer.
+  const MAX_ADDRESSES = 200;
+  if (addresses.length > MAX_ADDRESSES) {
+    return json({ ok: false, error: `Too many addresses (max ${MAX_ADDRESSES})` }, 400);
+  }
+
   try {
     // Fan-out to indexer - one request per address, all in parallel
     const perAddress = await Promise.all(
@@ -55,10 +62,15 @@ export const GET: APIRoute = async ({ url }) => {
     // Collect all unique token IDs across all addresses
     const allTokenIds = [...new Set(perAddress.flatMap(p => p.tokens.map(t => t.token_id)))];
 
-    // Enrich with ticker + NFT flag directly from the indexer's /token/{id} and /nft/{id} endpoints
+    // Enrich with ticker + NFT flag directly from the indexer's /token/{id} and /nft/{id}
+    // endpoints - processed in batches so a wallet with many tokens cannot
+    // open hundreds of concurrent sockets at once.
     const tickerMap = new Map<string, { ticker: string; isNFT: boolean }>();
-    await Promise.all(
-      allTokenIds.map(async (id) => {
+    const ENRICH_BATCH = 20;
+    for (let i = 0; i < allTokenIds.length; i += ENRICH_BATCH) {
+      const batch = allTokenIds.slice(i, i + ENRICH_BATCH);
+      await Promise.all(
+        batch.map(async (id) => {
         // Try fungible token first
         const tokenRes = await fetch(
           `${INDEXER_URL}/api/v2/token/${encodeURIComponent(id)}`,
@@ -80,8 +92,9 @@ export const GET: APIRoute = async ({ url }) => {
           const ticker = data.metadata?.ticker?.string ?? data.metadata?.name?.string ?? 'NFT';
           tickerMap.set(id, { ticker, isNFT: true });
         }
-      }),
-    );
+        }),
+      );
+    }
 
     // Build result map
     const result: Record<string, TokenHolding[]> = {};
