@@ -738,6 +738,7 @@
     <p class="section-label">Requirements</p>
     <div class="req-list" id="req-list">
       <div class="req-pill"><span class="dot"></span>Linux or macOS</div>
+      <div class="req-pill"><span class="dot"></span>Windows + PowerShell 5.1+</div>
       <div class="req-pill"><span class="dot"></span>Docker Desktop or Engine</div>
       <div class="req-pill"><span class="dot"></span>Docker Compose v2</div>
       <div class="req-pill"><span class="dot"></span>Python 3</div>
@@ -812,25 +813,30 @@
 
 <script>
   // ── OS detection ────────────────────────────────────────────────────────
-  // Windows installer removed for now — Windows users get the Linux
-  // instructions (works under WSL 2, which Docker Desktop requires anyway).
   const u = navigator.userAgent.toLowerCase();
   const p = (navigator.platform || '').toLowerCase();
   const IS_WINDOWS = u.includes('win') || p.includes('win');
-  const OS = !IS_WINDOWS && (p.includes('mac') || u.includes('mac os')) ? 'macos' : 'linux';
+  const OS = IS_WINDOWS
+    ? 'windows'
+    : (p.includes('mac') || u.includes('mac os')) ? 'macos' : 'linux';
 
-  const SCRIPT_FILE  = OS === 'macos' ? 'mac.sh' : 'linux.sh';
-  const INSTALL_CMD  = `bash <(curl -sSL https://get.mintlayer.org/${SCRIPT_FILE})`;
+  const SCRIPT_FILE = { windows: 'windows.ps1', macos: 'mac.sh', linux: 'linux.sh' }[OS];
+  const INSTALL_CMD = OS === 'windows'
+    ? 'powershell -c "irm https://get.mintlayer.org/windows.ps1 | iex"'
+    : `bash <(curl -sSL https://get.mintlayer.org/${SCRIPT_FILE})`;
+  const PROMPT_CHAR = OS === 'windows' ? 'PS>' : '$';
 
   // ── Patch hero on load ───────────────────────────────────────────────────
   document.addEventListener('DOMContentLoaded', () => {
     // Command box
     document.getElementById('install-cmd').textContent = INSTALL_CMD;
+    document.getElementById('terminal-prompt').textContent = PROMPT_CHAR;
 
     // Badge + OS label
-    document.getElementById('badge-text').textContent  = OS === 'macos' ? 'macOS installer' : 'Linux installer';
-    document.getElementById('os-label').textContent    = IS_WINDOWS
-      ? 'Windows detected — run inside WSL 2'
+    document.getElementById('badge-text').textContent  =
+      OS === 'windows' ? 'Windows installer' : OS === 'macos' ? 'macOS installer' : 'Linux installer';
+    document.getElementById('os-label').textContent    =
+      IS_WINDOWS ? 'Windows detected — Docker Desktop'
       : OS === 'macos' ? 'macOS detected' : 'Linux detected';
 
     // Modal filenames
@@ -978,7 +984,16 @@
 
     const lines = esc.split('\n');
 
-    // Bash highlighter
+    // Keyword/builtin sets: PowerShell for windows.ps1, bash otherwise
+    const PS_FILE = SCRIPT_FILE.endsWith('.ps1');
+    const kwRe = PS_FILE
+      ? /\b(if|else|elseif|switch|foreach|for|while|do|until|function|return|param|try|catch|finally|throw|break|continue|trap)\b/g
+      : /\b(if|then|else|elif|fi|for|while|do|done|case|esac|in|function|return|local|break|exit)\b/g;
+    const biRe = PS_FILE
+      ? /\b(Write-Host|Read-Host|Get-Command|Join-Path|Test-Path|New-Item|Set-Location|Remove-Item|Get-Item|Clear-Host|Start-Process|Out-Null)\b/g
+      : /\b(echo|printf|read|source|export|declare|shift|set|unset|cd|mkdir|cat|curl|chmod|command|sleep)\b/g;
+
+    // Bash / PowerShell highlighter
     return lines.map(line => {
       if (/^\s*#/.test(line))
         return `<span class="sh-comment">${line}</span>`;
@@ -986,10 +1001,8 @@
         .replace(/((?:^|[^&])\s)(#[^{].*)/g, '$1<span class="sh-comment">$2</span>')
         .replace(/"((?:[^"\\]|\\.)*)"/g, '<span class="sh-string">"$1"</span>')
         .replace(/'([^']*)'/g, '<span class="sh-string">\'$1\'</span>')
-        .replace(/\b(if|then|else|elif|fi|for|while|do|done|case|esac|in|function|return|local|break|exit)\b/g,
-          '<span class="sh-keyword">$1</span>')
-        .replace(/\b(echo|printf|read|source|export|declare|shift|set|unset|cd|mkdir|cat|curl|chmod|command|sleep)\b/g,
-          '<span class="sh-builtin">$1</span>')
+        .replace(kwRe, '<span class="sh-keyword">$1</span>')
+        .replace(biRe, '<span class="sh-builtin">$1</span>')
         .replace(/(\$\{[^}]+\}|\$[A-Za-z_][A-Za-z0-9_]*)/g,
           '<span class="sh-var">$1</span>')
         .replace(/\b(\d+)\b/g, '<span class="sh-number">$1</span>');

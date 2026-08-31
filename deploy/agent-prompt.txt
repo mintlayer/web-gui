@@ -15,34 +15,51 @@ Run these first and fix what is missing before continuing:
   docker compose version      # Compose v2 (bundled with Docker Desktop)
   df -h .                     # ~50 GB free for mainnet, ~5 GB for testnet
 
+Windows: use Docker Desktop (WSL2 backend) and PowerShell 5.1+. Docker must
+be running (whale icon in the system tray); check with "docker info" in
+PowerShell. For disk use "Get-PSDrive".
+
 If Docker is missing: on Linux run
   curl -fsSL https://get.docker.com | sh
-then add the current user to the docker group and log back in. On macOS,
-install Docker Desktop. Do not continue until docker info succeeds.
+then add the current user to the docker group and log back in. On macOS or
+Windows, install Docker Desktop (Windows: winget install Docker.DockerDesktop
+as Administrator). Do not continue until docker info succeeds.
 
 
 2. REVIEW THE INSTALLER BEFORE RUNNING IT
 -----------------------------------------
-Download and read the installer source (it is a single bash file):
+Download and read the installer source (a single file) before running it:
 
-  curl -sSL https://get.mintlayer.org/linux.sh -o /tmp/mintlayer-install.sh
-  less /tmp/mintlayer-install.sh          # on macOS use mac.sh instead
+  Linux/macOS:
+    curl -sSL https://get.mintlayer.org/linux.sh -o /tmp/mintlayer-install.sh
+    less /tmp/mintlayer-install.sh          # on macOS use mac.sh instead
 
-Confirm to the operator: it writes only to INSTALL_DIR (default ~/mintlayer),
-generates all credentials locally, and requires no input when run with
-ML_NONINTERACTIVE=1.
+  Windows (PowerShell):
+    curl.exe -sSL https://get.mintlayer.org/windows.ps1 -o $env:TEMP\mintlayer-install.ps1
+    Get-Content $env:TEMP\mintlayer-install.ps1 | more
+
+Confirm to the operator: it writes only to INSTALL_DIR (default ~/mintlayer,
+on Windows %USERPROFILE%\mintlayer), generates all credentials locally, and
+requires no input when run with ML_NONINTERACTIVE=1.
 
 
 3. RUN THE INSTALLER (NON-INTERACTIVE)
 --------------------------------------
+Linux / macOS:
+
   ML_NONINTERACTIVE=1 NETWORK=mainnet bash /tmp/mintlayer-install.sh
+
+Windows (PowerShell):
+
+  $env:ML_NONINTERACTIVE = "1"; $env:NETWORK = "mainnet"
+  powershell -ExecutionPolicy Bypass -File $env:TEMP\mintlayer-install.ps1
 
 Optional env overrides:
   INSTALL_DIR       install location          (default: ~/mintlayer)
   NETWORK           mainnet | testnet         (default: mainnet)
   WEB_UI_PASSWORD   web login password        (default: generated, printed once)
-  ML_USER_ID        container uid             (default: your uid)
-  ML_GROUP_ID       container gid             (default: your gid)
+  ML_USER_ID        container uid             (default: your uid; 1000 on Windows)
+  ML_GROUP_ID       container gid             (default: your gid; 1000 on Windows)
 
 Notes:
   - On macOS run mac.sh instead of linux.sh.
@@ -52,18 +69,20 @@ Notes:
     labeled "Web UI password:". Capture it and hand it to the operator
     through a secure channel. Do not repeat it in logs or chat.
   - The TOTP secret is written to <INSTALL_DIR>/mintlayer-totp.txt
-    (permissions 600). Tell the operator to add it to their authenticator
-    app before first login, then delete the file.
+    (permissions 600 on Unix). Tell the operator to add it to their
+    authenticator app before first login, then delete the file.
   - Do not echo any of these values yourself.
 
 
 4. VERIFY THE INSTALL
 ---------------------
-  cd <INSTALL_DIR>                          (default ~/mintlayer)
+  cd <INSTALL_DIR>                          (default ~/mintlayer; on Windows
+                                            %USERPROFILE%\mintlayer)
   docker compose ps                         # node-daemon, wallet-rpc-daemon
                                             # and web-gui listed as running
   curl -sI http://localhost:4321            # web GUI answers HTTP 200
-                                            # (bound to 127.0.0.1 only)
+                                            # (bound to 127.0.0.1 only; on
+                                            # Windows use curl.exe or Invoke-WebRequest)
   docker compose logs --tail 20 node-daemon # block height increasing = syncing
 
 First mainnet sync takes hours. Report the current height and move on;
@@ -90,13 +109,18 @@ Paths:
   <INSTALL_DIR>/mintlayer-data on the host maps to /home/mintlayer inside
   the containers. Wallet files are referenced in RPC calls as
   /home/mintlayer/<file>.
+  Windows: <INSTALL_DIR> is a Windows path (e.g. C:\Users\you\mintlayer);
+  the same mapping applies via Docker Desktop file sharing. If the SQLite
+  prefs DB is not created, check Docker Desktop → Settings → Resources →
+  File Sharing for the drive in question.
 
 Environment (.env):
   ML_MAINNET_* and ML_TESTNET_* variables are both present; each daemon
   reads only the ones matching the active NETWORK. Changing NETWORK in
   .env switches the whole stack after a restart.
   ML_USER_ID / ML_GROUP_ID must match the host user that owns
-  mintlayer-data, or containers cannot read/write it.
+  mintlayer-data, or containers cannot read/write it. On Windows with
+  Docker Desktop this is always 1000 (WSL2 VM mapping) — leave it.
 
 Known failure modes:
   - Staking setup can exit when the node and wallet are not yet in sync.
