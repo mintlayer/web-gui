@@ -23,3 +23,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [profile.release]
 strip = true
 lto = true
+
+# Vendored jsonrpc 0.13.0 with the per-request timeout raised from 15s to 120s.
+# bdk 0.29's rpc backend imports ~200 watch-only descriptors (its hardcoded
+# 100-per-keychain cache) in a single `importdescriptors` call; on modest
+# hardware that exceeds 15s, so the sync would abort before ever completing.
+[patch.crates-io]
+jsonrpc = { path = "vendor/jsonrpc" }

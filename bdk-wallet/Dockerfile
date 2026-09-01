@@ -2,11 +2,12 @@
 FROM rust:1-slim AS builder
 
 WORKDIR /build
-RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev \
+RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev libsqlite3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY Cargo.toml ./
+COPY Cargo.toml Cargo.lock ./
 COPY src ./src
+COPY vendor ./vendor
 RUN cargo build --release
 
 # ── Runtime stage ──────────────────────────────────────────────────────────────

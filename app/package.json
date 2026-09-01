@@ -25,6 +25,7 @@
     "astro": "^7.2.0",
     "better-sqlite3": "^12.9.0",
     "clsx": "^2.1.1",
+    "cookie": "^1.1.1",
     "es-module-lexer": "^1.7.0",
     "qrcode": "^1.5.4",
     "qrcode.react": "^4.2.0",

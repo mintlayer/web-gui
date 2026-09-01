@@ -77,6 +77,11 @@ impl Config {
             wallet_name: "bdk-sidecar".to_string(),
             sync_params: Some(RpcSyncParams {
                 start_time: sync_start_time,
+                // Matches INITIAL_SCRIPT_CACHE below: the initial importdescriptors
+                // batch must stay small, because the jsonrpc client enforces a hard
+                // 15s request timeout and a large import triggers a rescan that
+                // exceeds it (sync would then never complete).
+                start_script_count: INITIAL_SCRIPT_CACHE,
                 ..Default::default()
             }),
         }
@@ -93,6 +98,10 @@ fn require_env(name: &str) -> Result<String> {
 // ── State ──────────────────────────────────────────────────────────────────────
 
 type BdkWallet = Wallet<AnyDatabase>;
+
+/// How many addresses per keychain to derive and cache up front. Keep this
+/// small - see the comment on `start_script_count` in `Config::rpc_config`.
+const INITIAL_SCRIPT_CACHE: usize = 20;
 
 struct AppState {
     config: Arc<Config>,
@@ -171,8 +180,8 @@ fn build_wallet(config: &Config, mnemonic: &str) -> Result<BdkWallet> {
         .context("failed to open wallet")?;
 
     // The rpc backend refuses to sync until enough scriptPubKeys are cached
-    // (start_script_count, default 100). Pre-derive them; a no-op on existing DBs.
-    for index in 0..100u32 {
+    // (start_script_count). Pre-derive them; a no-op on existing DBs.
+    for index in 0..INITIAL_SCRIPT_CACHE as u32 {
         wallet
             .get_address(AddressIndex::Peek(index))
             .context("deriving initial addresses")?;

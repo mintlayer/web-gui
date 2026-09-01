@@ -71,7 +71,7 @@ bitcoin:
 ## bitcoin-cli shell inside the Bitcoin node container
 ## Usage: make bitcoin-cli CMD='getblockchaininfo'
 bitcoin-cli:
-	docker compose --profile bitcoin exec bitcoind bitcoin-cli -rpcuser=$$(grep '^BITCOIN_RPC_USERNAME=' .env | cut -d= -f2) -rpcpassword=$$(grep '^BITCOIN_RPC_PASSWORD=' .env | cut -d= -f2) $(CMD)
+	docker compose --profile bitcoin exec bitcoind bitcoin-cli -rpcport=8332 -rpcuser=$$(grep '^BITCOIN_RPC_USERNAME=' .env | cut -d= -f2) -rpcpassword=$$(grep '^BITCOIN_RPC_PASSWORD=' .env | cut -d= -f2) $(CMD)
 
 ## List pending transactions for account ACCOUNT (default 0) via wallet RPC.
 ## Usage: make pending-transactions  or  make pending-transactions ACCOUNT=1

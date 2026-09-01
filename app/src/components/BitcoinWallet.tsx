@@ -58,7 +58,7 @@ function satsToBtc(sats: string | bigint): string {
   const abs = neg ? -n : n;
   const whole = abs / 100_000_000n;
   const frac = (abs % 100_000_000n).toString().padStart(8, '0').replace(/0+$/, '');
-  return `${neg ? '-' : ''}${whole.toString()}${frac ? `.${frac}` : '0'}`;
+  return `${neg ? '-' : ''}${whole.toString()}${frac ? `.${frac}` : ''}`;
 }
 
 const card = 'bg-gray-900 border border-gray-800 rounded-xl p-6';
