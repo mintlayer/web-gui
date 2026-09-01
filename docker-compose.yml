@@ -161,6 +161,9 @@ services:
   bdk-wallet:
     build: ./bdk-wallet
     image: web-gui-bdk-wallet:latest
+    # Match the bind-mount owner (init.sh pre-creates ./bitcoin-wallet-data
+    # as the host user; ML_USER_ID/GROUP_ID follow the host user like web-gui).
+    user: "${ML_USER_ID:-1000}:${ML_GROUP_ID:-1000}"
     depends_on:
       - bitcoind
     volumes:

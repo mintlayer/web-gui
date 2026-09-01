@@ -768,9 +768,16 @@ mkdir -p mintlayer-data/prefs mintlayer-data/plugins
     sh -c 'apk add -q --no-progress sqlite >/dev/null 2>&1 && sqlite3 /prefs/mintlayer_prefs.sqlite'
 ok "Credentials written to mintlayer-data/prefs/mintlayer_prefs.sqlite"
 
-# ── Create data directory ─────────────────────────────────────────────────────
+# ── Create data directories ──────────────────────────────────────────────────
+# Pre-created by the host user so bind mounts are not root-owned when the
+# containers mount them (Docker creates missing dirs as root).
 mkdir -p mintlayer-data
 ok "mintlayer-data/ directory ready"
+
+if [[ "$ENABLE_BITCOIN" == "yes" ]]; then
+  mkdir -p bitcoin-data bitcoin-wallet-data
+  ok "bitcoin-data/ and bitcoin-wallet-data/ ready"
+fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Start services?
@@ -792,7 +799,6 @@ if [[ "$START" == "yes" ]]; then
   fi
   if [[ "$ENABLE_BITCOIN" == "yes" ]]; then
     PROFILES="$PROFILES --profile bitcoin"
-    mkdir -p bitcoin-data bitcoin-wallet-data
   fi
   if [[ "$ENABLE_WATCHTOWER" == "yes" ]]; then
     PROFILES="$PROFILES --profile watchtower"
