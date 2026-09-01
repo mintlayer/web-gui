@@ -4,6 +4,7 @@ import { useState } from "react";
 import { watchTx } from "@/lib/txWatcher";
 import { submitWithToast } from "@/lib/toastStore";
 import { CopyButton } from "@/components/CopyButton";
+import { rpc } from '@/lib/client-rpc';
 
 interface Delegation {
   delegation_id: string;
@@ -18,17 +19,6 @@ interface Props {
 }
 
 type ActionState = "idle" | "loading" | "success" | "error";
-
-async function rpc<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-  const res = await fetch("/api/rpc", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ method, params }),
-  });
-  const data = await res.json() as { ok: boolean; result?: T; error?: { message: string } };
-  if (!data.ok) throw new Error(data.error?.message ?? "RPC error");
-  return data.result as T;
-}
 
 /** Get the first unused wallet address, generating a new one only if all are used. */
 async function freshAddress(): Promise<string> {

@@ -17,6 +17,7 @@ import type { APIRoute } from 'astro';
 import { createHash } from 'node:crypto';
 import { rpcCall } from '@/lib/wallet-rpc';
 import { hexToText } from '@/lib/token-utils';
+import { json } from '@/lib/api-utils';
 
 // ── Network HRP ───────────────────────────────────────────────────────────────
 
@@ -208,10 +209,3 @@ export const GET: APIRoute = async () => {
     return json({ ok: true, fungible: [], nfts: [] }, 200);
   }
 };
-
-function json(body: unknown, status: number) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
-}

@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro';
 import { getPref, setPref } from '@/lib/prefs-db';
+import { json } from '@/lib/api-utils';
 
 const KEY = 'ml_favourite_tokens';
 
@@ -22,10 +23,3 @@ export const POST: APIRoute = async ({ request }) => {
     return json({ ok: false, error: String(err) }, 500);
   }
 };
-
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
-}

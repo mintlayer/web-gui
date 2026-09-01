@@ -11,6 +11,7 @@
  */
 
 import type { APIRoute } from 'astro';
+import { json } from '@/lib/api-utils';
 
 const INDEXER_URL = process.env.INDEXER_URL ?? 'http://api-web-server:3000';
 
@@ -53,10 +54,3 @@ export const POST: APIRoute = async ({ request }) => {
     return json({ ok: false, error: String(err) }, 502);
   }
 };
-
-function json(body: unknown, status: number) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
-}

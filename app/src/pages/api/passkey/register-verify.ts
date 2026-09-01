@@ -4,35 +4,27 @@ import type { RegistrationResponseJSON } from '@simplewebauthn/server';
 import {
   getCredentials,
   saveCredentials,
-  consumeChallenge,
+  consumeChallengeFromRequest,
   getRpId,
   getOrigin,
   isValidRpId,
-  PASSKEY_CHALLENGE_COOKIE,
   clearChallengeCookieHeader,
 } from '@/lib/passkey';
+import { json } from '@/lib/api-utils';
 
 export const POST: APIRoute = async ({ request }) => {
   const rpId = getRpId(request.url);
   const origin = getOrigin(request.url);
 
   if (!isValidRpId(rpId)) {
-    return new Response(JSON.stringify({ error: 'Passkeys require a DNS hostname.' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return json({ error: 'Passkeys require a DNS hostname.' }, 400);
   }
 
-  // Extract challenge token from cookie
-  const cookieHeader = request.headers.get('cookie') ?? '';
-  const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${PASSKEY_CHALLENGE_COOKIE}=([^;]+)`));
-  const token = match?.[1] ?? '';
-  const expectedChallenge = token ? consumeChallenge(token) : null;
+  const expectedChallenge = consumeChallengeFromRequest(request);
 
   if (!expectedChallenge) {
-    return new Response(JSON.stringify({ error: 'Challenge expired or missing. Please try again.' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json', 'Set-Cookie': clearChallengeCookieHeader() },
+    return json({ error: 'Challenge expired or missing. Please try again.' }, 400, {
+      'Set-Cookie': clearChallengeCookieHeader(),
     });
   }
 
@@ -40,10 +32,7 @@ export const POST: APIRoute = async ({ request }) => {
   try {
     body = await request.json();
   } catch {
-    return new Response(JSON.stringify({ error: 'Invalid request body.' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return json({ error: 'Invalid request body.' }, 400);
   }
 
   const credentialName = (body.name ?? 'Passkey').slice(0, 64).trim() || 'Passkey';
@@ -57,16 +46,14 @@ export const POST: APIRoute = async ({ request }) => {
       expectedRPID: rpId,
     });
   } catch (err) {
-    return new Response(JSON.stringify({ error: `Verification failed: ${(err as Error).message}` }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json', 'Set-Cookie': clearChallengeCookieHeader() },
+    return json({ error: `Verification failed: ${(err as Error).message}` }, 400, {
+      'Set-Cookie': clearChallengeCookieHeader(),
     });
   }
 
   if (!verification.verified || !verification.registrationInfo) {
-    return new Response(JSON.stringify({ error: 'Registration not verified.' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json', 'Set-Cookie': clearChallengeCookieHeader() },
+    return json({ error: 'Registration not verified.' }, 400, {
+      'Set-Cookie': clearChallengeCookieHeader(),
     });
   }
 
@@ -82,11 +69,7 @@ export const POST: APIRoute = async ({ request }) => {
   });
   saveCredentials(creds);
 
-  return new Response(JSON.stringify({ ok: true }), {
-    status: 200,
-    headers: {
-      'Content-Type': 'application/json',
-      'Set-Cookie': clearChallengeCookieHeader(),
-    },
+  return json({ ok: true }, 200, {
+    'Set-Cookie': clearChallengeCookieHeader(),
   });
 };

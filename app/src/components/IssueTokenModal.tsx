@@ -2,6 +2,9 @@ import { useState, useEffect } from 'react';
 import { submitWithToast } from '@/lib/toastStore';
 import { watchTx } from '@/lib/txWatcher';
 import { CopyButton } from '@/components/CopyButton';
+import { rpc } from '@/lib/client-rpc';
+import { toHexField } from '@/lib/token-utils';
+import { ModalOverlay } from '@/components/ui/ModalOverlay';
 
 type SupplyType = 'Fixed' | 'Lockable' | 'Unlimited';
 type Mode = 'easy' | 'expert';
@@ -10,24 +13,6 @@ interface Props {
   ipfsEnabled: boolean;
   onClose: () => void;
   onIssued?: (tokenId: string) => void;
-}
-
-async function rpc<T>(method: string, params: Record<string, unknown>): Promise<T> {
-  const res = await fetch('/api/rpc', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ method, params }),
-  });
-  const data = await res.json() as { ok: boolean; result?: T; error?: { message: string } };
-  if (!data.ok) throw new Error(data.error?.message ?? 'RPC error');
-  return data.result as T;
-}
-
-/** Encode a UTF-8 string as a lowercase hex string for the Mintlayer RPC `{ hex }` format. */
-function toHexField(str: string): { hex: string } {
-  const bytes = new TextEncoder().encode(str);
-  const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
-  return { hex };
 }
 
 async function uploadFile(file: File): Promise<string> {
@@ -149,7 +134,7 @@ export default function IssueTokenModal({ ipfsEnabled, onClose, onIssued }: Prop
 
   if (issuedTokenId) {
     return (
-      <Overlay onClose={onClose}>
+      <ModalOverlay onClose={onClose}>
         <div className="px-6 py-8 text-center">
           <div className="w-12 h-12 rounded-full bg-green-900/40 border border-green-700 flex items-center justify-center mx-auto mb-4 text-xl">✓</div>
           <h2 className="text-lg font-semibold text-gray-100 mb-2">Token Issued!</h2>
@@ -163,12 +148,12 @@ export default function IssueTokenModal({ ipfsEnabled, onClose, onIssued }: Prop
             Close
           </button>
         </div>
-      </Overlay>
+      </ModalOverlay>
     );
   }
 
   return (
-    <Overlay onClose={onClose}>
+    <ModalOverlay onClose={onClose}>
       <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800 shrink-0">
         <h2 className="text-base font-semibold text-gray-100">Issue Fungible Token</h2>
         <div className="flex items-center gap-3">
@@ -357,7 +342,7 @@ export default function IssueTokenModal({ ipfsEnabled, onClose, onIssued }: Prop
           </button>
         </div>
       </form>
-    </Overlay>
+    </ModalOverlay>
   );
 }
 
@@ -380,19 +365,6 @@ function ModeToggle({ mode, onChange }: { mode: Mode; onChange: (m: Mode) => voi
       >
         Expert
       </button>
-    </div>
-  );
-}
-
-function Overlay({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
-      onClick={e => e.target === e.currentTarget && onClose()}
-    >
-      <div className="w-full max-w-lg rounded-xl bg-gray-900 border border-gray-800 shadow-2xl flex flex-col max-h-[90vh]">
-        {children}
-      </div>
     </div>
   );
 }

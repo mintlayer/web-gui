@@ -11,6 +11,7 @@
 
 import type { APIRoute } from 'astro';
 import { ensureWalletOpen, isWalletNotOpenError, walletInfo } from '@/lib/wallet-rpc';
+import { json } from '@/lib/api-utils';
 
 export const POST: APIRoute = async () => {
   // Check if already open - if so, nothing to do
@@ -40,9 +41,3 @@ export const POST: APIRoute = async () => {
   }
   return json({ ok: false, status: 'error', message: result.message });
 };
-
-function json(body: unknown) {
-  return new Response(JSON.stringify(body), {
-    headers: { 'Content-Type': 'application/json' },
-  });
-}

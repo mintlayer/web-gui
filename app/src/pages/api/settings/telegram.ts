@@ -1,14 +1,11 @@
 import type { APIRoute } from 'astro';
 import { setPref } from '@/lib/prefs-db';
 import { sendTelegramMessage } from '@/lib/telegram';
+import { json, readFormData } from '@/lib/api-utils';
 
 export const POST: APIRoute = async ({ request }) => {
-  let form: FormData;
-  try {
-    form = await request.formData();
-  } catch {
-    return json({ ok: false, error: 'Invalid request body' }, 400);
-  }
+  const form = await readFormData(request);
+  if (!form) return json({ ok: false, error: 'Invalid request body' }, 400);
 
   const botToken = (form.get('bot_token') as string | null) ?? '';
   const chatId   = (form.get('chat_id')   as string | null) ?? '';
@@ -31,10 +28,3 @@ export const POST: APIRoute = async ({ request }) => {
 
   return json({ ok: true }, 200);
 };
-
-function json(body: unknown, status: number) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
-}

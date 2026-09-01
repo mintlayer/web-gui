@@ -2,14 +2,11 @@ import type { APIRoute } from 'astro';
 import { installPlugin } from '@/lib/plugins';
 import { verifyTOTP } from '@/lib/auth';
 import { getStringPref } from '@/lib/prefs-db';
+import { json, readFormData } from '@/lib/api-utils';
 
 export const POST: APIRoute = async ({ request }) => {
-  let formData: FormData;
-  try {
-    formData = await request.formData();
-  } catch {
-    return json({ ok: false, error: 'Invalid multipart form data' }, 400);
-  }
+  const formData = await readFormData(request);
+  if (!formData) return json({ ok: false, error: 'Invalid multipart form data' }, 400);
 
   // Step-up auth: installing a plugin hands its code full server-side
   // access (FS/network/wallet-RPC). Require a fresh TOTP code, consistent with
@@ -41,10 +38,3 @@ export const POST: APIRoute = async ({ request }) => {
     return json({ ok: false, error: (err as Error).message }, 422);
   }
 };
-
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
-}
