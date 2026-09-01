@@ -1,6 +1,7 @@
 ---
 import Layout from '@/layouts/Layout.astro';
 import { openWallet, createWallet, recoverWallet } from '@/lib/wallet-rpc';
+import { isBitcoinEnabled, createBitcoinWallet } from '@/lib/bitcoin-wallet';
 import SeedBackupStep from '@/components/SeedBackupStep';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
@@ -33,12 +34,28 @@ const WALLET_PATH = '/home/mintlayer/mintlayer.wallet';
 type SetupResult =
   | { action: 'none' }
   | { action: 'error'; message: string }
-  | { action: 'create_success'; mnemonic: string; walletPath: string }
-  | { action: 'import_success' }
+  | { action: 'create_success'; mnemonic: string; walletPath: string; btcNote?: string }
+  | { action: 'import_success'; btcNote?: string }
   | { action: 'upload_success' }
   | { action: 'upload_confirm_needed' };
 
 let result: SetupResult = { action: 'none' };
+
+// One seed for both chains: when the optional bitcoin profile is enabled,
+// initialize the BTC wallet from the same mnemonic the ML wallet was created
+// (or restored) with. Non-fatal - setup still succeeds when the sidecar is
+// unreachable; the Bitcoin page offers its own create/restore as a fallback.
+async function initBtcWalletFromSeed(mnemonic: string): Promise<string | undefined> {
+  if (!isBitcoinEnabled()) return undefined;
+  try {
+    await createBitcoinWallet(mnemonic);
+    return 'The same seed was configured for the BTC wallet (see the Bitcoin page).';
+  } catch (err) {
+    const msg = (err as Error).message;
+    if (/already exists/i.test(msg)) return 'BTC wallet already configured.';
+    return `BTC wallet setup failed: ${msg}`;
+  }
+}
 
 // ── POST handlers ─────────────────────────────────────────────────────────────
 
@@ -62,7 +79,8 @@ if (Astro.request.method === 'POST') {
         const res = await createWallet(WALLET_PATH, storeSeed, undefined, noPassword ? undefined : passphrase);
         const mnemonicStr =
           res.mnemonic.type === 'NewlyGenerated' ? res.mnemonic.content.mnemonic : '';
-        result = { action: 'create_success', mnemonic: mnemonicStr, walletPath: WALLET_PATH };
+        const btcNote = await initBtcWalletFromSeed(mnemonicStr);
+        result = { action: 'create_success', mnemonic: mnemonicStr, walletPath: WALLET_PATH, btcNote };
       } catch (err) {
         result = { action: 'error', message: (err as Error).message };
       }
@@ -81,7 +99,8 @@ if (Astro.request.method === 'POST') {
     } else {
       try {
         await recoverWallet(WALLET_PATH, mnemonic, storeSeed, passphrase);
-        result = { action: 'import_success' };
+        const btcNote = await initBtcWalletFromSeed(mnemonic);
+        result = { action: 'import_success', btcNote };
       } catch (err) {
         result = { action: 'error', message: (err as Error).message };
       }
@@ -128,7 +147,10 @@ Astro.response.headers.set('Cache-Control', 'no-store');
   {/* When create succeeds, show ONLY the seed backup wizard - nothing else */}
   {result.action === 'create_success' ? (
     <>
-      <h1 class="text-2xl font-bold text-gray-100 mb-6">New Wallet Created</h1>
+      <h1 class="text-2xl font-bold text-gray-100 mb-2">New Wallet Created</h1>
+      {result.btcNote && (
+        <p class="text-sm text-mint-300 mb-6">{result.btcNote}</p>
+      )}
       <SeedBackupStep
         client:load
         mnemonic={result.mnemonic}
@@ -164,6 +186,7 @@ Astro.response.headers.set('Cache-Control', 'no-store');
         <div class="rounded-lg border border-mint-700 bg-mint-900/30 p-4 mb-6 text-mint-300 text-sm max-w-5xl">
           <strong class="font-semibold">Wallet imported successfully.</strong>
           {' '}<a href="/" class="underline hover:text-mint-100">Go to dashboard →</a>
+          {result.btcNote && <p class="mt-2">{result.btcNote}</p>}
         </div>
       )}
 

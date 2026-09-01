@@ -21,7 +21,12 @@ const PUBLIC_PREFIXES = ['/_astro/', '/favicon', '/_image'];
 const SECURITY_HEADERS: Record<string, string> = {
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'DENY',
-  'Referrer-Policy': 'no-referrer',
+  // strict-origin-when-cross-origin (the browser default) rather than
+  // no-referrer: Chrome 151+ elides the Origin header (sends `Origin: null`)
+  // on form POSTs when the referrer policy strips referrers entirely, which
+  // Astro's same-origin CSRF check then rejects with 403. Cross-origin
+  // requests still carry only the origin - no path or query.
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
 };
 
