@@ -467,6 +467,58 @@ fi
 divider
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Step — Bitcoin node + BTC wallet (optional)
+# ─────────────────────────────────────────────────────────────────────────────
+step "Bitcoin node + BTC wallet (optional)"
+hint "Adds a Bitcoin Core node and a built-in BTC wallet to the web UI"
+hint "(balance, receive, send). The wallet keys are held by a light-wallet"
+hint "sidecar; the node only provides chain data and broadcasts transactions."
+hint ""
+hint "Requirements: extra disk space (mainnet ~700 GB) and a full initial"
+hint "sync that can take days. The BTC wallet is a HOT wallet - keep only"
+hint "spending amounts there."
+hint ""
+
+ENABLE_BITCOIN="no"
+confirm ENABLE_BITCOIN "Enable the Bitcoin node + BTC wallet?" "N"
+
+BITCOIN_RPC_USERNAME="bitcoin_user"
+BITCOIN_RPC_PASSWORD=""
+BITCOIN_WALLET_HTTP_USERNAME="btcwallet_user"
+BITCOIN_WALLET_HTTP_PASSWORD=""
+BITCOIN_NETWORK=""
+if [[ "$ENABLE_BITCOIN" == "yes" ]]; then
+  if [[ "$USE_RANDOM_PASSWORDS" == "yes" ]]; then
+    BITCOIN_RPC_PASSWORD=$(rand_pass)
+    BITCOIN_WALLET_HTTP_PASSWORD=$(rand_pass)
+    ok "Generated random Bitcoin RPC passwords (saved to .env)"
+  else
+    ask "Bitcoin node RPC password"
+    prompt_secret BITCOIN_RPC_PASSWORD "Password:"
+    while [[ ${#BITCOIN_RPC_PASSWORD} -lt 8 ]]; do
+      printf "${CYAN}│${RESET}  ${RED}Password must be at least 8 characters${RESET}\n"
+      prompt_secret BITCOIN_RPC_PASSWORD "Password:"
+    done
+    ask "BTC wallet API password"
+    prompt_secret BITCOIN_WALLET_HTTP_PASSWORD "Password:"
+    while [[ ${#BITCOIN_WALLET_HTTP_PASSWORD} -lt 8 ]]; do
+      printf "${CYAN}│${RESET}  ${RED}Password must be at least 8 characters${RESET}\n"
+      prompt_secret BITCOIN_WALLET_HTTP_PASSWORD "Password:"
+    done
+  fi
+
+  ask "Bitcoin network"
+  hint "Leave default to follow the Mintlayer network (${NETWORK})."
+  prompt BITCOIN_NETWORK "Network (mainnet/testnet/regtest/signet):" ""
+  case "$BITCOIN_NETWORK" in
+    ""|"mainnet"|"testnet"|"regtest"|"signet") ;;
+    *) hint "Unknown network '${BITCOIN_NETWORK}' - following Mintlayer network instead."; BITCOIN_NETWORK="" ;;
+  esac
+fi
+
+divider
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Step — Auto-update (Watchtower)
 # ─────────────────────────────────────────────────────────────────────────────
 step "Auto-update (Watchtower)"
@@ -592,6 +644,7 @@ printf "${CYAN}│${RESET}  %-22s %s\n" "Web UI auth:"  "${BOLD}password + TOTP 
 printf "${CYAN}│${RESET}  %-22s %s\n" "Web GUI:"    "${BOLD}${PASSKEY_ORIGIN}${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Passkeys:"   "${BOLD}$([ "$WEB_GUI_HOST" != "localhost" ] && echo "enabled (${WEB_GUI_HOST})" || echo "localhost only")${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Indexer:"      "${BOLD}$([ "$ENABLE_INDEXER" == "yes" ] && echo "enabled (port ${API_WEB_SERVER_PORT}) — Token Management + Trading active" || echo "disabled — Token Management + Trading hidden")${RESET}"
+printf "${CYAN}│${RESET}  %-22s %s\n" "Bitcoin:"     "${BOLD}$([ "$ENABLE_BITCOIN" == "yes" ] && echo "enabled (node + BTC wallet)" || echo "disabled")${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "IPFS storage:" "${BOLD}$([ -n "$IPFS_PROVIDER" ] && echo "$IPFS_PROVIDER" || echo "disabled — configure later in Settings")${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Telegram:"     "${BOLD}$([ -n "$TELEGRAM_BOT_TOKEN" ] && echo "configured" || echo "disabled — configure later in Settings")${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Auto-update:"  "${BOLD}$([ "$ENABLE_WATCHTOWER" == "yes" ] && echo "enabled (daily at 04:00)" || echo "disabled")${RESET}"
@@ -628,6 +681,7 @@ fi
 
 # Derive boolean flags
 INDEXER_ENABLED=$([ "$ENABLE_INDEXER" == "yes" ] && echo "true" || echo "false")
+BITCOIN_ENABLED=$([ "$ENABLE_BITCOIN" == "yes" ] && echo "true" || echo "false")
 
 # Build the full wallet-rpc-daemon command (avoids shell expansion tricks in docker-compose)
 WALLET_RPC_CMD="wallet-rpc-daemon ${NETWORK}"
@@ -683,6 +737,16 @@ POSTGRES_USER=mintlayer
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 POSTGRES_DB=mintlayer
 API_WEB_SERVER_PORT=${API_WEB_SERVER_PORT}
+
+# Bitcoin node + BTC wallet (only used with --profile bitcoin)
+BITCOIN_ENABLED=${BITCOIN_ENABLED}
+BITCOIN_NETWORK=${BITCOIN_NETWORK}
+BITCOIN_RPC_USERNAME=${BITCOIN_RPC_USERNAME}
+BITCOIN_RPC_PASSWORD=${BITCOIN_RPC_PASSWORD}
+BITCOIN_WALLET_HTTP_USERNAME=${BITCOIN_WALLET_HTTP_USERNAME}
+BITCOIN_WALLET_HTTP_PASSWORD=${BITCOIN_WALLET_HTTP_PASSWORD}
+BITCOIN_TXINDEX=1
+BITCOIN_PRUNE=0
 EOF
 
 ok ".env written"
@@ -726,6 +790,10 @@ if [[ "$START" == "yes" ]]; then
   if [[ "$ENABLE_INDEXER" == "yes" ]]; then
     PROFILES="$PROFILES --profile indexer"
   fi
+  if [[ "$ENABLE_BITCOIN" == "yes" ]]; then
+    PROFILES="$PROFILES --profile bitcoin"
+    mkdir -p bitcoin-data bitcoin-wallet-data
+  fi
   if [[ "$ENABLE_WATCHTOWER" == "yes" ]]; then
     PROFILES="$PROFILES --profile watchtower"
   fi
@@ -757,6 +825,12 @@ printf "  ${GRAY}${COMPOSE} down                        # stop everything${RESET
 printf "\n"
 printf "  ${DIM}Note: mainnet sync takes hours on first run.${RESET}\n"
 printf "  ${DIM}Balance and history appear once the node is fully synced.${RESET}\n"
+if [[ "$ENABLE_BITCOIN" == "yes" ]]; then
+  printf "\n"
+  printf "  ${DIM}Bitcoin: the BTC node syncs independently (days on mainnet).${RESET}\n"
+  printf "  ${DIM}Open the Bitcoin page in the web UI to create your BTC wallet${RESET}\n"
+  printf "  ${DIM}and back up its seed phrase when prompted.${RESET}\n"
+fi
 printf "\n"
 
 # ── Open browser ──────────────────────────────────────────────────────────────

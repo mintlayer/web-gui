@@ -1,0 +1,124 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+const mockFetch = vi.fn<typeof fetch>();
+
+beforeEach(() => {
+  vi.stubGlobal('fetch', mockFetch);
+  process.env.BITCOIN_ENABLED = 'true';
+  process.env.BITCOIN_WALLET_URL = 'http://bdk-wallet:8080';
+  process.env.BITCOIN_WALLET_USERNAME = 'gui';
+  process.env.BITCOIN_WALLET_PASSWORD = 'guipass';
+});
+
+afterEach(() => {
+  mockFetch.mockReset();
+  vi.unstubAllGlobals();
+  delete process.env.BITCOIN_ENABLED;
+  delete process.env.BITCOIN_WALLET_URL;
+  delete process.env.BITCOIN_WALLET_USERNAME;
+  delete process.env.BITCOIN_WALLET_PASSWORD;
+});
+
+describe('bitcoin-wallet client', () => {
+  it('reports enabled only when BITCOIN_ENABLED=true', async () => {
+    const mod = await import('@/lib/bitcoin-wallet');
+    expect(mod.isBitcoinEnabled()).toBe(true);
+    process.env.BITCOIN_ENABLED = 'false';
+    expect(mod.isBitcoinEnabled()).toBe(false);
+    delete process.env.BITCOIN_ENABLED;
+    expect(mod.isBitcoinEnabled()).toBe(false);
+  });
+
+  it('sends basic auth to the sidecar', async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ ok: true, satPerVb: { '6': 12 } }), { status: 200 }),
+    );
+    const { getBitcoinFeeEstimate } = await import('@/lib/bitcoin-wallet');
+    await getBitcoinFeeEstimate();
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://bdk-wallet:8080/fee-estimate');
+    const auth = (init.headers as Record<string, string>).Authorization;
+    expect(auth).toBe(`Basic ${Buffer.from('gui:guipass').toString('base64')}`);
+  });
+
+  it('getBitcoinStatus parses the sidecar payload', async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          network: 'mainnet',
+          walletExists: true,
+          walletLoaded: true,
+          node: { reachable: true, blocks: 900000, headers: 900000, synced: true, initialBlockDownload: false },
+          balance: { confirmed: '1000', trustedPending: '0', untrustedPending: '0', immature: '0' },
+        }),
+        { status: 200 },
+      ),
+    );
+    const { getBitcoinStatus } = await import('@/lib/bitcoin-wallet');
+    const status = await getBitcoinStatus();
+    expect(status.network).toBe('mainnet');
+    expect(status.walletLoaded).toBe(true);
+    expect(status.balance?.confirmed).toBe('1000');
+    expect(status.node.synced).toBe(true);
+  });
+
+  it('createBitcoinWallet posts the optional seed and returns the mnemonic', async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ ok: true, created: true, network: 'testnet', mnemonic: 'a b c' }), { status: 200 }),
+    );
+    const { createBitcoinWallet } = await import('@/lib/bitcoin-wallet');
+    const res = await createBitcoinWallet('a b c');
+    expect(res.mnemonic).toBe('a b c');
+    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect((init.body as string)).toBe(JSON.stringify({ seed: 'a b c' }));
+  });
+
+  it('sendBitcoin maps camelCase args to the sidecar snake_case payload', async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ ok: true, txid: 'abc123' }), { status: 200 }),
+    );
+    const { sendBitcoin } = await import('@/lib/bitcoin-wallet');
+    const res = await sendBitcoin({ address: 'bc1qxyz', amountBtc: '0.5', feeRateSatVb: 12 });
+    expect(res.txid).toBe('abc123');
+    expect(JSON.parse(mockFetch.mock.calls[0][1]!.body as string)).toEqual({
+      address: 'bc1qxyz',
+      amount_btc: '0.5',
+      fee_rate_sat_vb: 12,
+    });
+  });
+
+  it('throws BitcoinWalletError with sidecar error message', async () => {
+    mockFetch
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: false, error: 'wallet already exists' }), { status: 409 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: false, error: 'wallet already exists' }), { status: 409 }),
+      );
+    const { createBitcoinWallet, BitcoinWalletError } = await import('@/lib/bitcoin-wallet');
+    await expect(createBitcoinWallet()).rejects.toThrow(BitcoinWalletError);
+    await expect(createBitcoinWallet()).rejects.toThrow('wallet already exists');
+  });
+
+  it('wraps network failures in a 503 BitcoinWalletError', async () => {
+    mockFetch.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+    const { getBitcoinStatus, BitcoinWalletError } = await import('@/lib/bitcoin-wallet');
+    const err = await getBitcoinStatus().catch((e) => e);
+    expect(err).toBeInstanceOf(BitcoinWalletError);
+    expect(err.status).toBe(503);
+    expect(err.message).toMatch(/unreachable/);
+  });
+
+  it('listBitcoinTransactions passes the limit param', async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ ok: true, transactions: [] }), { status: 200 }),
+    );
+    const { listBitcoinTransactions } = await import('@/lib/bitcoin-wallet');
+    await listBitcoinTransactions(25);
+    const [url] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://bdk-wallet:8080/txs?limit=25');
+  });
+});

@@ -111,8 +111,71 @@ services:
       SESSION_SECRET: "${SESSION_SECRET}"
       WALLET_RPC_CMD: "${WALLET_RPC_CMD:-}"
       INDEXER_ENABLED: "${INDEXER_ENABLED:-false}"
+      BITCOIN_ENABLED: "${BITCOIN_ENABLED:-false}"
+      BITCOIN_NETWORK: "${BITCOIN_NETWORK:-}"
+      BITCOIN_WALLET_URL: "http://bdk-wallet:8080"
+      BITCOIN_WALLET_USERNAME: "${BITCOIN_WALLET_HTTP_USERNAME:-}"
+      BITCOIN_WALLET_PASSWORD: "${BITCOIN_WALLET_HTTP_PASSWORD:-}"
       HOST: "0.0.0.0"
       PORT: "4321"
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────
+  # Optional: Bitcoin Core node  (profile: bitcoin)
+  #
+  # Chain data + tx broadcast for the BTC wallet. No host ports by default.
+  # Pinned to Core 25: bdk's rpc backend (core-rpc 0.17) cannot parse the
+  # `warnings` array format introduced in Core 26.
+  # Start with: docker compose --profile bitcoin up -d
+  # ─────────────────────────────────────────
+  bitcoind:
+    image: "${BITCOIND_IMAGE:-bitcoin/bitcoin:25}"
+    volumes:
+      - "./bitcoin-data:/home/bitcoin/.bitcoin"
+    command:
+      - "-printtoconsole=1"
+      - "-chain=${BITCOIN_NETWORK:-mainnet}"
+      - "-rpcbind=0.0.0.0:8332"
+      - "-rpcallowip=0.0.0.0/0"
+      - "-rpcuser=${BITCOIN_RPC_USERNAME}"
+      - "-rpcpassword=${BITCOIN_RPC_PASSWORD}"
+      # txindex is required by the BDK wallet to resolve historical
+      # transactions; pruning is incompatible with the wallet history sync.
+      - "-txindex=${BITCOIN_TXINDEX:-1}"
+      - "-prune=${BITCOIN_PRUNE:-0}"
+      - "-fallbackfee=0.0002"
+    # Uncomment to expose the Bitcoin RPC to the host
+    # ports:
+    #   - "8332:8332"
+    profiles:
+      - bitcoin
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────
+  # Optional: BDK Bitcoin wallet sidecar  (profile: bitcoin)
+  #
+  # Light wallet (BIP84) holding the BTC keys; talks to bitcoind for chain
+  # data and broadcasting. The web-gui proxies all requests to its HTTP API.
+  # Secrets never leave this container; only the compose network can reach it.
+  # ─────────────────────────────────────────
+  bdk-wallet:
+    build: ./bdk-wallet
+    image: web-gui-bdk-wallet:latest
+    depends_on:
+      - bitcoind
+    volumes:
+      - "./bitcoin-wallet-data:/data"
+    environment:
+      BITCOIN_NETWORK: "${BITCOIN_NETWORK:-mainnet}"
+      BITCOIN_RPC_URL: "http://bitcoind:8332"
+      BITCOIN_RPC_USERNAME: "${BITCOIN_RPC_USERNAME}"
+      BITCOIN_RPC_PASSWORD: "${BITCOIN_RPC_PASSWORD}"
+      WALLET_HTTP_USERNAME: "${BITCOIN_WALLET_HTTP_USERNAME}"
+      WALLET_HTTP_PASSWORD: "${BITCOIN_WALLET_HTTP_PASSWORD}"
+      DATA_DIR: "/data"
+      RUST_LOG: "${RUST_LOG:-info}"
+    profiles:
+      - bitcoin
     restart: unless-stopped
 
   # ─────────────────────────────────────────
