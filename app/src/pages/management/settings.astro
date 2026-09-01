@@ -7,6 +7,7 @@ import { sendTelegramMessage } from '@/lib/telegram';
 import { getCredentials, saveCredentials, isValidRpId, getRpId } from '@/lib/passkey';
 import { resolveMcpSettings } from '@/lib/mcp-settings';
 import { resolvePasswordChange, applyPasswordChange } from '@/lib/password-change';
+import { isBitcoinEnabled } from '@/lib/bitcoin-wallet';
 
 type ActionResult =
   | { action: 'none' }
@@ -118,6 +119,10 @@ if (Astro.request.method === 'POST') {
       }
     }
 
+  } else if (section === 'bitcoin') {
+    setPref('bitcoin.show_ui', form.get('show_ui') === '1');
+    result = { action: 'success', section, message: 'Bitcoin settings saved.' };
+
   } else if (section === 'mcp') {
     // Decision logic (incl. the TOTP gate for write/spend) lives in lib/mcp-settings
     // so it's unit-tested; here we just persist the result.
@@ -181,6 +186,10 @@ const newTotpSecret = result.action === 'success' && result.section === 'reset_2
 const enrolledPasskeys = getCredentials();
 const passkeyRpId = getRpId(Astro.request.url);
 const passkeysSupported = isValidRpId(passkeyRpId);
+
+// Bitcoin section (only when the optional profile is enabled)
+const bitcoinEnabled = isBitcoinEnabled();
+const bitcoinShowUi = bitcoinEnabled && getPref<boolean>('bitcoin.show_ui') !== false;
 ---
 
 <ManagementLayout title="Settings" activeTab="settings">
@@ -453,6 +462,88 @@ const passkeysSupported = isValidRpId(passkeyRpId);
         select.addEventListener('change', updateFields);
       </script>
     </section>
+
+    <!-- ── Bitcoin ───────────────────────────────────────────────────────────── -->
+    {bitcoinEnabled && (
+      <section class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+        <h2 class="text-lg font-semibold text-gray-100 mb-1">Bitcoin</h2>
+        <p class="text-sm text-gray-500 mb-5">
+          Optional BTC wallet backed by your own Bitcoin node. Node and wallet services are
+          managed from the host with <code class="font-mono text-xs">docker compose --profile bitcoin</code>.
+        </p>
+
+        {result.action === 'success' && result.section === 'bitcoin' && (
+          <div class="mb-4 px-3 py-2 rounded-lg border border-emerald-800 bg-emerald-950/50 text-emerald-300 text-sm">
+            {result.message}
+          </div>
+        )}
+
+        <div id="bitcoin-status" class="mb-5 rounded-lg border border-gray-800 bg-gray-800/40 px-4 py-3 text-sm text-gray-400">
+          Checking node status…
+        </div>
+
+        <form method="post" class="space-y-3 max-w-md">
+          <input type="hidden" name="section" value="bitcoin" />
+          <label class="flex items-center gap-3 cursor-pointer group">
+            <input
+              type="checkbox" name="show_ui" value="1"
+              checked={bitcoinShowUi}
+              class="w-4 h-4 rounded border-gray-600 bg-gray-800 text-mint-600
+                     focus:ring-mint-500 focus:ring-offset-gray-900"
+            />
+            <span class="text-sm text-gray-300 group-hover:text-gray-100 transition-colors">
+              Show the Bitcoin page in the sidebar
+            </span>
+          </label>
+          <button
+            type="submit"
+            class="py-2 px-4 rounded-lg bg-mint-600 hover:bg-mint-700 text-white text-sm font-medium
+                   transition-colors focus:outline-none focus:ring-2 focus:ring-mint-500 focus:ring-offset-2 focus:ring-offset-gray-900"
+          >
+            Save Bitcoin Settings
+          </button>
+        </form>
+
+        <script>
+          const el = document.getElementById('bitcoin-status')!;
+
+          async function refreshBitcoinStatus() {
+            try {
+              const res = await fetch('/api/bitcoin/overview');
+              const data = await res.json() as {
+                status: {
+                  network: string;
+                  walletExists: boolean;
+                  walletLoaded: boolean;
+                  node: { reachable: boolean; blocks: number; headers: number; synced: boolean };
+                } | null;
+                balance: { confirmed: string } | null;
+              };
+
+              if (!data.status || !data.status.node.reachable) {
+                el.innerHTML = '<span class="text-red-400">● Node offline</span> — start it with <code class="font-mono text-xs">docker compose --profile bitcoin up -d</code>';
+                return;
+              }
+
+              const node = data.status.node;
+              const dot = node.synced ? '<span class="text-mint-400">● Node synced</span>' : '<span class="text-yellow-400">● Node syncing…</span>';
+              const blocks = node.synced
+                ? `at block #${node.blocks.toLocaleString()}`
+                : `#${node.blocks.toLocaleString()} / #${node.headers.toLocaleString()}`;
+              const wallet = !data.status.walletExists
+                ? ' — wallet not created yet (open the Bitcoin page to create one)'
+                : data.status.walletLoaded ? '' : ' — wallet loading…';
+              el.innerHTML = `${dot} <span class="uppercase tracking-wider text-gray-500">${data.status.network}</span> ${blocks}${wallet}`;
+            } catch {
+              el.innerHTML = '<span class="text-red-400">● Bitcoin service unreachable</span>';
+            }
+          }
+
+          refreshBitcoinStatus();
+          setInterval(refreshBitcoinStatus, 15_000);
+        </script>
+      </section>
+    )}
 
     <!-- ── Telegram Notifications ─────────────────────────────────────────────── -->
     <section class="bg-gray-900 border border-gray-800 rounded-xl p-6">
