@@ -3,6 +3,7 @@ import { hexToText } from '@/lib/token-utils';
 import { CopyButton } from '@/components/CopyButton';
 import TokenManagePanel from '@/components/TokenManagePanel';
 import { TokenIdTooltip } from '@/components/TokenIdTooltip';
+import { rpc } from '@/lib/client-rpc';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -54,17 +55,6 @@ function saveStored(list: StoredToken[]) {
   const seen = new Set<string>();
   const deduped = list.filter(t => !seen.has(t.tokenId) && seen.add(t.tokenId));
   localStorage.setItem(LS_KEY, JSON.stringify(deduped));
-}
-
-async function rpc<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-  const res = await fetch('/api/rpc', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ method, params }),
-  });
-  const data = await res.json() as { ok: boolean; result?: T; error?: { message: string } };
-  if (!data.ok) throw new Error(data.error?.message ?? 'RPC error');
-  return data.result as T;
 }
 
 function atomsToDecimal(atoms: string, decimals: number): string {

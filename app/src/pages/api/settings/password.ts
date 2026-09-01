@@ -1,13 +1,10 @@
 import type { APIRoute } from 'astro';
 import { resolvePasswordChange, applyPasswordChange } from '@/lib/password-change';
+import { json, readFormData } from '@/lib/api-utils';
 
 export const POST: APIRoute = async ({ request }) => {
-  let form: FormData;
-  try {
-    form = await request.formData();
-  } catch {
-    return json({ ok: false, error: 'Invalid request body' }, 400);
-  }
+  const form = await readFormData(request);
+  if (!form) return json({ ok: false, error: 'Invalid request body' }, 400);
 
   // form.get() returns string | File | null; a File part would bypass the length
   // check and crash hashPassword. Coerce non-strings to '' so they fail cleanly.
@@ -25,10 +22,3 @@ export const POST: APIRoute = async ({ request }) => {
   applyPasswordChange(decision.newHash);
   return json({ ok: true }, 200);
 };
-
-function json(body: unknown, status: number) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
-}

@@ -14,6 +14,7 @@
 
 import type { APIRoute } from 'astro';
 import { getStringPref } from '@/lib/prefs-db';
+import { json } from '@/lib/api-utils';
 
 export const POST: APIRoute = async ({ request }) => {
   // Read per-request so settings changes take effect without restart
@@ -144,10 +145,3 @@ async function uploadToPinata(file: File, jwt: string): Promise<Response> {
 }
 
 // ── Shared ────────────────────────────────────────────────────────────────────
-
-function json(body: unknown, status: number) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
-}

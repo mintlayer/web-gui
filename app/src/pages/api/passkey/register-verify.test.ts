@@ -7,7 +7,7 @@ vi.mock('@simplewebauthn/server', () => ({
 vi.mock('@/lib/passkey', () => ({
   getCredentials: vi.fn(),
   saveCredentials: vi.fn(),
-  consumeChallenge: vi.fn(),
+  consumeChallengeFromRequest: vi.fn(),
   getRpId: vi.fn(),
   getOrigin: vi.fn(),
   isValidRpId: vi.fn(),
@@ -17,7 +17,7 @@ vi.mock('@/lib/passkey', () => ({
 
 import { POST } from '@/pages/api/passkey/register-verify';
 import { verifyRegistrationResponse } from '@simplewebauthn/server';
-import { getCredentials, saveCredentials, consumeChallenge, getRpId, getOrigin, isValidRpId, clearChallengeCookieHeader } from '@/lib/passkey';
+import { getCredentials, saveCredentials, consumeChallengeFromRequest, getRpId, getOrigin, isValidRpId, clearChallengeCookieHeader } from '@/lib/passkey';
 
 const MOCK_CRED = { id: 'newcred', publicKey: new Uint8Array([1, 2, 3]), counter: 0 };
 
@@ -36,7 +36,7 @@ beforeEach(() => {
   vi.mocked(getRpId).mockReturnValue('localhost');
   vi.mocked(getOrigin).mockReturnValue('http://localhost:4321');
   vi.mocked(isValidRpId).mockReturnValue(true);
-  vi.mocked(consumeChallenge).mockReturnValue('expected-challenge');
+  vi.mocked(consumeChallengeFromRequest).mockReturnValue('expected-challenge');
   vi.mocked(getCredentials).mockReturnValue([]);
   vi.mocked(saveCredentials).mockReturnValue(undefined);
   vi.mocked(clearChallengeCookieHeader).mockReturnValue('pk_chal=; Max-Age=0');
@@ -71,7 +71,7 @@ describe('POST /api/passkey/register-verify', () => {
   });
 
   it('returns 400 when challenge cookie is missing', async () => {
-    vi.mocked(consumeChallenge).mockReturnValue(null);
+    vi.mocked(consumeChallengeFromRequest).mockReturnValue(null);
     const res = await POST(makeCtx({ id: 'x' }, ''));
     expect(res.status).toBe(400);
     const body = await res.json();

@@ -1,15 +1,12 @@
 import type { APIRoute } from 'astro';
 import { setPref } from '@/lib/prefs-db';
+import { json, readFormData } from '@/lib/api-utils';
 
 const VALID_PROVIDERS = new Set(['filebase', 'pinata', '']);
 
 export const POST: APIRoute = async ({ request }) => {
-  let form: FormData;
-  try {
-    form = await request.formData();
-  } catch {
-    return json({ ok: false, error: 'Invalid request body' }, 400);
-  }
+  const form = await readFormData(request);
+  if (!form) return json({ ok: false, error: 'Invalid request body' }, 400);
 
   const provider      = (form.get('provider')       as string | null) ?? '';
   const filebaseToken = (form.get('filebase_token') as string | null) ?? '';
@@ -25,10 +22,3 @@ export const POST: APIRoute = async ({ request }) => {
 
   return json({ ok: true }, 200);
 };
-
-function json(body: unknown, status: number) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
-}

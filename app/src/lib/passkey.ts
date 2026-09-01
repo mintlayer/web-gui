@@ -102,3 +102,14 @@ export function makeChallengeCookieHeader(token: string): string {
 export function clearChallengeCookieHeader(): string {
   return `${PASSKEY_CHALLENGE_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Secure; Max-Age=0`;
 }
+
+/**
+ * Extract the challenge token from the request's challenge cookie and consume it.
+ * Returns the pending challenge, or null when the cookie is missing/expired.
+ */
+export function consumeChallengeFromRequest(request: Request): string | null {
+  const cookieHeader = request.headers.get('cookie') ?? '';
+  const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${PASSKEY_CHALLENGE_COOKIE}=([^;]+)`));
+  const token = match?.[1] ?? '';
+  return token ? consumeChallenge(token) : null;
+}

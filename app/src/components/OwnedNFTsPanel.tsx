@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { hexToText } from "@/lib/token-utils";
 import { CopyButton } from "@/components/CopyButton";
+import { rpc } from '@/lib/client-rpc';
 
 interface NFTEntry {
   tokenId: string;
@@ -21,17 +22,6 @@ function resolveUri(raw: string | null): string | null {
   if (!raw) return null;
   if (raw.startsWith("ipfs://")) return "https://ipfs.io/ipfs/" + raw.slice(7);
   return raw;
-}
-
-async function rpc<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-  const res = await fetch("/api/rpc", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ method, params }),
-  });
-  const data = await res.json() as { ok: boolean; result?: T; error?: { message: string } };
-  if (!data.ok) throw new Error(data.error?.message ?? "RPC error");
-  return data.result as T;
 }
 
 // ── Image cell ────────────────────────────────────────────────────────────────

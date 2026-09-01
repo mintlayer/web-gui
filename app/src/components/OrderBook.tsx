@@ -5,6 +5,7 @@ import { watchTx } from "@/lib/txWatcher";
 import { submitWithToast } from "@/lib/toastStore";
 import { CopyButton } from "@/components/CopyButton";
 import type { OrderInfo, TokenCurrency } from "@/lib/wallet-rpc";
+import { rpc } from '@/lib/client-rpc';
 
 // Raw shape returned by order_list_all_active (flat, no existing_order_data wrapper)
 interface ActiveOrderRaw {
@@ -58,17 +59,6 @@ function saveFavourites(favs: FavouriteEntry[]): void {
 }
 
 // ── RPC helper ────────────────────────────────────────────────────────────────
-
-async function rpc<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-  const res = await fetch("/api/rpc", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ method, params }),
-  });
-  const data = await res.json() as { ok: boolean; result?: T; error?: { message: string } };
-  if (!data.ok) throw new Error(data.error?.message ?? "RPC error");
-  return data.result as T;
-}
 
 // ── Error translation ─────────────────────────────────────────────────────────
 

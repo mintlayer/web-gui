@@ -4,6 +4,9 @@ import { watchTx } from '@/lib/txWatcher';
 import { CopyButton } from '@/components/CopyButton';
 import { TokenIdTooltip } from '@/components/TokenIdTooltip';
 import SafeExternalLink from '@/components/SafeExternalLink';
+import { rpc } from '@/lib/client-rpc';
+import { toHexField } from '@/lib/token-utils';
+import { ModalOverlay } from '@/components/ui/ModalOverlay';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -29,23 +32,6 @@ interface Props {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
-
-async function rpc<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-  const res = await fetch('/api/rpc', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ method, params }),
-  });
-  const data = await res.json() as { ok: boolean; result?: T; error?: { message: string } };
-  if (!data.ok) throw new Error(data.error?.message ?? 'RPC error');
-  return data.result as T;
-}
-
-function toHexField(str: string): { hex: string } {
-  const bytes = new TextEncoder().encode(str);
-  const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
-  return { hex };
-}
 
 function atomsToDecimal(atoms: string, decimals: number): string {
   if (decimals === 0) return atoms;
@@ -420,11 +406,7 @@ export default function TokenManagePanel({ tokenId, onClose, onRefresh }: Props)
   const decimals = info?.number_of_decimals ?? 0;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
-      onClick={e => e.target === e.currentTarget && onClose()}
-    >
-      <div className="w-full max-w-xl rounded-xl bg-gray-900 border border-gray-800 shadow-2xl flex flex-col max-h-[92vh]">
+    <ModalOverlay onClose={onClose} maxWidth="max-w-xl" maxHeight="max-h-[92vh]">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800 shrink-0">
           <div>
@@ -534,8 +516,7 @@ export default function TokenManagePanel({ tokenId, onClose, onRefresh }: Props)
             Close
           </button>
         </div>
-      </div>
-    </div>
+    </ModalOverlay>
   );
 }
 

@@ -2,6 +2,7 @@ import type { APIRoute } from 'astro';
 import { uninstallPlugin } from '@/lib/plugins';
 import { verifyTOTP } from '@/lib/auth';
 import { getStringPref } from '@/lib/prefs-db';
+import { json } from '@/lib/api-utils';
 
 export const POST: APIRoute = async ({ params, request }) => {
   const id = params.id ?? '';
@@ -37,10 +38,3 @@ export const POST: APIRoute = async ({ params, request }) => {
     return json({ ok: false, error: (err as Error).message }, 422);
   }
 };
-
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
-}

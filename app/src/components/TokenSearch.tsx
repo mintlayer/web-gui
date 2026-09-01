@@ -3,6 +3,7 @@ import type { TokenInfo } from '@/lib/wallet-rpc';
 import { hexToText } from '@/lib/token-utils';
 import { CopyButton } from '@/components/CopyButton';
 import { TokenIdTooltip } from '@/components/TokenIdTooltip';
+import { rpc } from '@/lib/client-rpc';
 
 interface SearchResult {
   tokenId: string;
@@ -16,17 +17,6 @@ interface FavouriteEntry {
 
 interface Props {
   network: string;
-}
-
-async function rpc<T>(method: string, params: Record<string, unknown>): Promise<T> {
-  const res = await fetch('/api/rpc', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ method, params }),
-  });
-  const data = await res.json() as { ok: boolean; result?: T; error?: { message: string } };
-  if (!data.ok) throw new Error(data.error?.message ?? 'RPC error');
-  return data.result as T;
 }
 
 function looksLikeTokenId(q: string): boolean {

@@ -2,23 +2,13 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { QRCodeSVG } from "qrcode.react";
+import { rpc } from '@/lib/client-rpc';
 
 type State =
   | { status: "idle" }
   | { status: "loading" }
   | { status: "ready"; address: string }
   | { status: "error"; message: string };
-
-async function rpc<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-  const res = await fetch("/api/rpc", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ method, params }),
-  });
-  const data = await res.json() as { ok: boolean; result?: T; error?: { message: string } };
-  if (!data.ok) throw new Error(data.error?.message ?? "RPC error");
-  return data.result as T;
-}
 
 export default function ReceiveModal() {
   const [open, setOpen] = useState(false);

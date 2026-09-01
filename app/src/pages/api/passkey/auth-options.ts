@@ -7,15 +7,13 @@ import {
   isValidRpId,
   makeChallengeCookieHeader,
 } from '@/lib/passkey';
+import { json } from '@/lib/api-utils';
 
 export const GET: APIRoute = async ({ request }) => {
   const rpId = getRpId(request.url);
 
   if (!isValidRpId(rpId)) {
-    return new Response(JSON.stringify({ error: 'Passkeys require a DNS hostname.' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return json({ error: 'Passkeys require a DNS hostname.' }, 400);
   }
 
   const creds = getCredentials();
@@ -31,11 +29,7 @@ export const GET: APIRoute = async ({ request }) => {
 
   const token = createChallenge(options.challenge);
 
-  return new Response(JSON.stringify(options), {
-    status: 200,
-    headers: {
-      'Content-Type': 'application/json',
-      'Set-Cookie': makeChallengeCookieHeader(token),
-    },
+  return json(options, 200, {
+    'Set-Cookie': makeChallengeCookieHeader(token),
   });
 };
