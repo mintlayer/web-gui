@@ -61,6 +61,16 @@ function satsToBtc(sats: string | bigint): string {
   return `${neg ? '-' : ''}${whole.toString()}${frac ? `.${frac}` : ''}`;
 }
 
+/** Public block explorer base per network; null where none exists (regtest runs local-only). */
+function explorerBase(network: string): string | null {
+  switch (network) {
+    case 'mainnet': return 'https://mempool.space';
+    case 'testnet': return 'https://mempool.space/testnet';
+    case 'signet': return 'https://mempool.space/signet';
+    default: return null;
+  }
+}
+
 const card = 'bg-gray-900 border border-gray-800 rounded-xl p-6';
 const input = 'w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-mint-600';
 const primaryBtn = 'rounded-lg bg-mint-700 hover:bg-mint-600 px-4 py-2 text-sm font-semibold text-white transition-colors disabled:opacity-50';
@@ -175,6 +185,7 @@ export default function BitcoinWallet() {
   const node = overview.status?.node;
   const offline = !overview.status || !node?.reachable;
   const balance = overview.balance;
+  const explorer = overview.status ? explorerBase(overview.status.network) : null;
 
   return (
     <div className="space-y-6">
@@ -297,6 +308,16 @@ export default function BitcoinWallet() {
                     {overview.address}
                   </code>
                   <CopyButton value={overview.address} title="Copy address" />
+                  {explorer && (
+                    <a
+                      href={`${explorer}/address/${overview.address}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-gray-500 hover:text-mint-400 transition-colors"
+                    >
+                      View on mempool.space ↗
+                    </a>
+                  )}
                 </div>
               ) : (
                 <p className="text-sm text-gray-500">Wallet is loading…</p>
@@ -353,7 +374,19 @@ export default function BitcoinWallet() {
                         <p className="text-sm text-gray-200">
                           {received ? '+' : ''} {satsToBtc(amount.toString())} BTC
                         </p>
-                        <p className="text-xs text-gray-500 font-mono truncate">{tx.txid}</p>
+                        {explorer ? (
+                          <a
+                            href={`${explorer}/tx/${tx.txid}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-gray-500 font-mono truncate hover:text-mint-400 transition-colors"
+                            title="View on mempool.space"
+                          >
+                            {tx.txid} ↗
+                          </a>
+                        ) : (
+                          <p className="text-xs text-gray-500 font-mono truncate">{tx.txid}</p>
+                        )}
                       </div>
                       <div className="text-right shrink-0">
                         <p className={`text-xs ${tx.confirmed ? 'text-gray-400' : 'text-yellow-400'}`}>
