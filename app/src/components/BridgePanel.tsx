@@ -15,6 +15,7 @@ import {
   hasEthereumProvider,
   switchChain,
 } from '@/lib/evm';
+import { suggestAddressCorrection, hrpForNetwork } from '@/lib/bech32-correct';
 
 const sdk = createBridgeSdk();
 
@@ -41,6 +42,30 @@ const input =
   'w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-mint-600';
 const primaryBtn =
   'w-full rounded-lg bg-mint-700 hover:bg-mint-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
+
+/** Fixed-point decimal total: fixed + amount × pct/100, at 18-digit scale. */
+function totalFee(fixed: string, amount: string, pctPercent: string): string | null {
+  try {
+    const toScaled = (s: string): bigint | null => {
+      const t = s.trim().replace(/%\s*$/, '');
+      if (!/^\d+(\.\d+)?$/.test(t)) return null;
+      const [i, f = ''] = t.split('.');
+      return BigInt(i + (f + '0'.repeat(18)).slice(0, 18));
+    };
+    const S = 10n ** 18n;
+    const f = toScaled(fixed);
+    const a = toScaled(amount);
+    const p = toScaled(pctPercent);
+    if (f === null || a === null || p === null) return null;
+    const total = f + (a * p) / (100n * S); // pct is a percentage: /100 overall
+    // format at scale 18, trim trailing zeros
+    const whole = total / S;
+    let frac = (total % S).toString().padStart(18, '0').replace(/0+$/, '');
+    return `${whole.toString()}${frac ? `.${frac}` : ''}`;
+  } catch {
+    return null;
+  }
+}
 
 /** Sepolia is the only non-mainnet flavor the bridge agents deploy to. */
 function chainForFlavor(flavor: string): { id: string; params: Record<string, unknown> } | null {
@@ -75,6 +100,7 @@ export default function BridgePanel() {
   const [assetTicker, setAssetTicker] = useState<string>('');
   const [amount, setAmount] = useState('');
   const [receiver, setReceiver] = useState('');
+  const [receiverSuggestion, setReceiverSuggestion] = useState<{ corrected: string; fixedChars: number } | null>(null);
 
   const [ethAccount, setEthAccount] = useState<string | null>(null);
   const [ethBalance, setEthBalance] = useState<string | null>(null);
@@ -221,6 +247,7 @@ export default function BridgePanel() {
 
   async function submit() {
     setError(null);
+    setReceiverSuggestion(null);
     if (!asset) {
       setError('No bridged asset selected.');
       return;
@@ -232,6 +259,27 @@ export default function BridgePanel() {
     if (!/^\d+(\.\d+)?$/.test(amount.trim())) {
       setError('Amount must be a positive decimal number.');
       return;
+    }
+    if (direction === 'm2e' && !/^0x[0-9a-fA-F]{40}$/.test(receiver.trim())) {
+      setError('Receiver must be a valid 0x… Ethereum address.');
+      return;
+    }
+
+    // E2M: the ML receiver can be typo-corrected via the bech32 checksum.
+    if (direction === 'e2m') {
+      const hrp = hrpForNetwork('ml', networkType);
+      if (hrp) {
+        const res = suggestAddressCorrection(receiver.trim(), hrp, 'ml');
+        if (res.status === 'corrected' && res.corrected) {
+          setReceiverSuggestion({ corrected: res.corrected, fixedChars: res.fixedChars ?? 1 });
+          setError('Address checksum failed — review the suggested correction.');
+          return;
+        }
+        if (res.status === 'invalid') {
+          setError('Invalid Mintlayer address.');
+          return;
+        }
+      }
     }
 
     try {
@@ -321,12 +369,6 @@ export default function BridgePanel() {
 
   return (
     <div className="space-y-6">
-      <div className="rounded-lg border border-amber-800 bg-amber-900/20 px-4 py-3 text-xs text-amber-300">
-        The bridge moves fungible tokens between Ethereum and Mintlayer through a
-        2-of-2 multisig agent setup. Deposits require network confirmations —
-        keep this page open until the request completes.
-      </div>
-
       {configError && (
         <div className="rounded-lg border border-red-800 bg-red-900/30 px-4 py-3 text-sm text-red-300">
           Bridge service unreachable: {configError}
@@ -413,8 +455,20 @@ export default function BridgePanel() {
             />
             {directionFees && (
               <p className="text-xs text-gray-500 mt-1">
-                Fee: {directionFees.fixed_fee} {assetTicker}
-                {directionFees.percentage_fee ? ` + ${directionFees.percentage_fee}` : ''}
+                {(() => {
+                  const pct = directionFees.percentage_fee ?? '';
+                  const amountValid = /^\d+(\.\d+)?$/.test(amount.trim());
+                  const total = amountValid
+                    ? totalFee(directionFees.fixed_fee, amount.trim(), pct)
+                    : null;
+                  const parts = [
+                    `fixed ${directionFees.fixed_fee} ${assetTicker}`,
+                    pct ? ` + ${pct}${pct.endsWith('%') ? '' : '%'} of amount` : '',
+                  ];
+                  return total !== null
+                    ? `Total fee ${total} ${assetTicker} (${parts.join('')})`
+                    : `Fee: fixed ${directionFees.fixed_fee} ${assetTicker}${pct ? ` + ${pct}` : ''}`;
+                })()}
               </p>
             )}
           </div>
@@ -423,9 +477,33 @@ export default function BridgePanel() {
         <div>
           <label className="block text-xs text-gray-400 mb-1">{receiverLabel}</label>
           {direction === 'e2m' ? (
-            <input value={receiver} onChange={(e) => setReceiver(e.target.value)} placeholder="tmt1…" className={input} />
+            <input
+              value={receiver}
+              onChange={e => { setReceiver(e.target.value); setReceiverSuggestion(null); }}
+              placeholder="tmt1…"
+              className={input}
+            />
           ) : (
-            <input value={receiver} onChange={(e) => setReceiver(e.target.value)} placeholder="0x…" className={input} />
+            <input
+              value={receiver}
+              onChange={e => { setReceiver(e.target.value); setReceiverSuggestion(null); }}
+              placeholder="0x…"
+              className={input}
+            />
+          )}
+          {receiverSuggestion && (
+            <div className="mt-2 rounded-lg border border-amber-800 bg-amber-900/20 px-3 py-2 text-xs text-amber-300">
+              Did you mean{' '}
+              <code className="font-mono text-mint-300 break-all">{receiverSuggestion.corrected}</code>?
+              <span className="text-amber-400/80"> (fixed {receiverSuggestion.fixedChars} character{receiverSuggestion.fixedChars === 1 ? '' : 's'})</span>
+              <button
+                type="button"
+                onClick={() => { setReceiver(receiverSuggestion.corrected); setReceiverSuggestion(null); }}
+                className="ml-1 underline font-semibold hover:text-amber-200"
+              >
+                Use suggested address
+              </button>
+            </div>
           )}
           {direction === 'e2m' && mlAddress && !receiver && (
             <button
