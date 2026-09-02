@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { CopyButton } from '@/components/CopyButton';
+import { suggestAddressCorrection, hrpForNetwork } from '@/lib/bech32-correct';
 
 // ── Types (mirror of the sidecar payloads) ────────────────────────────────────
 
@@ -81,6 +82,7 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
   const [sendAmount, setSendAmount] = useState('');
   const [sendError, setSendError] = useState<string | null>(null);
   const [sentTxid, setSentTxid] = useState<string | null>(null);
+  const [addrSuggestion, setAddrSuggestion] = useState<{ corrected: string; fixedChars: number } | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -146,6 +148,19 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
       setSendError('Address and amount are required.');
       return;
     }
+
+    // Typo recovery: checksum failure with a within-2-chars fix offers a
+    // suggestion instead of sending. Never auto-replaces the input.
+    const hrp = hrpForNetwork('btc', overview?.status?.network ?? '');
+    if (hrp) {
+      const res = suggestAddressCorrection(sendTo.trim(), hrp, 'btc');
+      if (res.status === 'corrected' && res.corrected) {
+        setAddrSuggestion({ corrected: res.corrected, fixedChars: res.fixedChars ?? 1 });
+        setSendError('Address checksum failed — review the suggested correction.');
+        return;
+      }
+    }
+
     setBusy(true);
     try {
       const res = await api<{ txid: string }>('/api/bitcoin/send', {
@@ -155,6 +170,7 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
       setSentTxid(res.txid);
       setSendTo('');
       setSendAmount('');
+      setAddrSuggestion(null);
       setTimeout(refresh, 4000);
     } catch (err) {
       setSendError((err as Error).message);
@@ -305,7 +321,7 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
                       rel="noopener noreferrer"
                       className="text-xs text-gray-500 hover:text-mint-400 transition-colors"
                     >
-                      View on mempool.space ↗
+                      View in explorer ↗
                     </a>
                   )}
                 </div>
@@ -327,8 +343,28 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
               <form onSubmit={submitSend} className="space-y-3">
                 <div>
                   <label className="block text-xs text-gray-400 mb-1">To address</label>
-                  <input value={sendTo} onChange={e => setSendTo(e.target.value)} placeholder="bc1…" className={input} required />
+                  <input
+                    value={sendTo}
+                    onChange={e => { setSendTo(e.target.value); setAddrSuggestion(null); }}
+                    placeholder="bc1…"
+                    className={input}
+                    required
+                  />
                 </div>
+                {addrSuggestion && (
+                  <div className="rounded-lg border border-amber-800 bg-amber-900/20 px-3 py-2 text-xs text-amber-300">
+                    Did you mean{' '}
+                    <code className="font-mono text-mint-300 break-all">{addrSuggestion.corrected}</code>?
+                    <span className="text-amber-400/80"> (fixed {addrSuggestion.fixedChars} character{addrSuggestion.fixedChars === 1 ? '' : 's'})</span>
+                    <button
+                      type="button"
+                      onClick={() => { setSendTo(addrSuggestion.corrected); setAddrSuggestion(null); }}
+                      className="ml-1 underline font-semibold hover:text-amber-200"
+                    >
+                      Use suggested address
+                    </button>
+                  </div>
+                )}
                 <div>
                   <label className="block text-xs text-gray-400 mb-1">Amount (BTC)</label>
                   <input
