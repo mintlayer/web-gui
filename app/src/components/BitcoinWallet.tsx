@@ -268,8 +268,10 @@ export default function BitcoinWallet() {
       {/* ── Wallet ────────────────────────────────────────────────────────────── */}
       {overview.status && walletExists && (
         <>
-          {/* Balance */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {/* Balance — the sidecar's "immature" bucket (unmatured coinbase
+              rewards) is intentionally not shown: it only applies to mined
+              rewards, which wallet users never receive. */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className={card}>
               <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Confirmed</p>
               <p className="text-2xl font-semibold text-gray-100">
@@ -280,12 +282,6 @@ export default function BitcoinWallet() {
               <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Pending</p>
               <p className="text-2xl font-semibold text-yellow-400">
                 {balance ? satsToBtc(BigInt(balance.trustedPending) + BigInt(balance.untrustedPending)) : '—'} <span className="text-sm font-normal text-gray-500">BTC</span>
-              </p>
-            </div>
-            <div className={card}>
-              <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Immature</p>
-              <p className="text-2xl font-semibold text-gray-400">
-                {balance ? satsToBtc(balance.immature) : '—'} <span className="text-sm font-normal text-gray-500">BTC</span>
               </p>
             </div>
           </div>
