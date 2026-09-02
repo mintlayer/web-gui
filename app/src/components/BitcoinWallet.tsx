@@ -61,23 +61,13 @@ function satsToBtc(sats: string | bigint): string {
   return `${neg ? '-' : ''}${whole.toString()}${frac ? `.${frac}` : ''}`;
 }
 
-/** Public block explorer base per network; null where none exists (regtest runs local-only). */
-function explorerBase(network: string): string | null {
-  switch (network) {
-    case 'mainnet': return 'https://mempool.space';
-    case 'testnet': return 'https://mempool.space/testnet';
-    case 'signet': return 'https://mempool.space/signet';
-    default: return null;
-  }
-}
-
 const card = 'bg-gray-900 border border-gray-800 rounded-xl p-6';
 const input = 'w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-mint-600';
 const primaryBtn = 'rounded-lg bg-mint-700 hover:bg-mint-600 px-4 py-2 text-sm font-semibold text-white transition-colors disabled:opacity-50';
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function BitcoinWallet() {
+export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | null }) {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -185,7 +175,7 @@ export default function BitcoinWallet() {
   const node = overview.status?.node;
   const offline = !overview.status || !node?.reachable;
   const balance = overview.balance;
-  const explorer = overview.status ? explorerBase(overview.status.network) : null;
+  const explorer = explorerUrl ?? null;
 
   return (
     <div className="space-y-6">

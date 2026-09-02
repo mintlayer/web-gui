@@ -1,7 +1,7 @@
 ---
 import Layout from '@/layouts/Layout.astro';
 import BitcoinWallet from '@/components/BitcoinWallet';
-import { isBitcoinEnabled } from '@/lib/bitcoin-wallet';
+import { isBitcoinEnabled, getBitcoinExplorerUrl } from '@/lib/bitcoin-wallet';
 import { getPref } from '@/lib/prefs-db';
 
 const enabled = isBitcoinEnabled();
@@ -11,6 +11,7 @@ const hiddenByPref = getPref<boolean>('bitcoin.show_ui') === false;
 if (!enabled || hiddenByPref) {
   return Astro.redirect('/');
 }
+const explorerUrl = getBitcoinExplorerUrl();
 ---
 
 <Layout title="Bitcoin" activeNav="bitcoin">
@@ -18,5 +19,5 @@ if (!enabled || hiddenByPref) {
   <p class="text-sm text-gray-500 mb-6">
     Send and receive BTC alongside your Mintlayer wallet. Backed by your own Bitcoin node.
   </p>
-  <BitcoinWallet client:only="react" />
+  <BitcoinWallet client:only="react" explorerUrl={explorerUrl} />
 </Layout>

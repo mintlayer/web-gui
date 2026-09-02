@@ -20,6 +20,28 @@ const BITCOIN_WALLET_PASSWORD =
 
 export const BITCOIN_START_CMD = 'docker compose --profile bitcoin up -d';
 
+/**
+ * Block explorer base URL for tx/address links.
+ *
+ * Resolution order:
+ *  1. BITCOIN_EXPLORER_URL env override (used verbatim for all networks)
+ *  2. public mempool.space for mainnet/testnet/signet
+ *  3. the self-hosted btc-rpc-explorer sidecar for regtest (no public
+ *     explorer exists; the compose profile publishes it on localhost:3002)
+ */
+export function getBitcoinExplorerUrl(): string | null {
+  const override = process.env.BITCOIN_EXPLORER_URL?.trim();
+  if (override) return override.replace(/\/+$/, '');
+  const network = (process.env.BITCOIN_NETWORK || process.env.NETWORK || 'mainnet').toLowerCase();
+  switch (network) {
+    case 'testnet': return 'https://mempool.space/testnet';
+    case 'signet': return 'https://mempool.space/signet';
+    case 'regtest': return 'http://localhost:3002';
+    case 'mainnet': return 'https://mempool.space';
+    default: return null;
+  }
+}
+
 /** Feature flag: the bitcoin profile was enabled at init/deploy time. */
 export function isBitcoinEnabled(): boolean {
   return process.env.BITCOIN_ENABLED === 'true';

@@ -116,6 +116,7 @@ services:
       BITCOIN_WALLET_URL: "http://bdk-wallet:8080"
       BITCOIN_WALLET_USERNAME: "${BITCOIN_WALLET_HTTP_USERNAME:-}"
       BITCOIN_WALLET_PASSWORD: "${BITCOIN_WALLET_HTTP_PASSWORD:-}"
+      BITCOIN_EXPLORER_URL: "${BITCOIN_EXPLORER_URL:-}"
       HOST: "0.0.0.0"
       PORT: "4321"
     restart: unless-stopped
@@ -151,6 +152,31 @@ services:
       - bitcoin
     restart: unless-stopped
 
+  # ─────────────────────────────────────────
+  # Optional: BTC block explorer  (profile: bitcoin)
+  #
+  # btc-rpc-explorer, wired to the local bitcoind. Gives the web-gui
+  # something to link txs/addresses to on regtest, where no public
+  # explorer exists. Published to loopback only; public networks default
+  # to mempool.space links instead (override with BITCOIN_EXPLORER_URL).
+  # ─────────────────────────────────────────
+  btc-explorer:
+    build:
+      context: ./btc-explorer
+      args:
+        BTC_RPC_EXPLORER_REF: "${BTC_RPC_EXPLORER_REF:-v3.5.1}"
+    depends_on:
+      - bitcoind
+    environment:
+      BTCEXP_BITCOIND_URI: "bitcoin://${BITCOIN_RPC_USERNAME}:${BITCOIN_RPC_PASSWORD}@bitcoind:8332?timeout=15000"
+      BTCEXP_HOST: "0.0.0.0"
+      BTCEXP_PORT: "3002"
+      BTCEXP_ADDRESS_API: "none"
+    ports:
+      - "127.0.0.1:${BITCOIN_EXPLORER_PORT:-3002}:3002"
+    profiles:
+      - bitcoin
+    restart: unless-stopped
   # ─────────────────────────────────────────
   # Optional: BDK Bitcoin wallet sidecar  (profile: bitcoin)
   #

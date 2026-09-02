@@ -121,4 +121,45 @@ describe('bitcoin-wallet client', () => {
     const [url] = mockFetch.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('http://bdk-wallet:8080/txs?limit=25');
   });
+
+  describe('getBitcoinExplorerUrl', () => {
+    beforeEach(() => {
+      delete process.env.BITCOIN_EXPLORER_URL;
+      delete process.env.BITCOIN_NETWORK;
+      process.env.NETWORK = 'mainnet';
+    });
+    afterEach(() => {
+      delete process.env.BITCOIN_EXPLORER_URL;
+      delete process.env.BITCOIN_NETWORK;
+      delete process.env.NETWORK;
+    });
+
+    it('maps public networks to mempool.space', async () => {
+      const { getBitcoinExplorerUrl } = await import('@/lib/bitcoin-wallet');
+      process.env.BITCOIN_NETWORK = 'mainnet';
+      expect(getBitcoinExplorerUrl()).toBe('https://mempool.space');
+      process.env.BITCOIN_NETWORK = 'testnet';
+      expect(getBitcoinExplorerUrl()).toBe('https://mempool.space/testnet');
+      process.env.BITCOIN_NETWORK = 'signet';
+      expect(getBitcoinExplorerUrl()).toBe('https://mempool.space/signet');
+    });
+
+    it('falls back to NETWORK when BITCOIN_NETWORK is unset', async () => {
+      const { getBitcoinExplorerUrl } = await import('@/lib/bitcoin-wallet');
+      process.env.NETWORK = 'testnet';
+      expect(getBitcoinExplorerUrl()).toBe('https://mempool.space/testnet');
+    });
+
+    it('points regtest at the self-hosted explorer', async () => {
+      const { getBitcoinExplorerUrl } = await import('@/lib/bitcoin-wallet');
+      process.env.BITCOIN_NETWORK = 'regtest';
+      expect(getBitcoinExplorerUrl()).toBe('http://localhost:3002');
+    });
+
+    it('BITCOIN_EXPLORER_URL overrides everything and strips trailing slashes', async () => {
+      const { getBitcoinExplorerUrl } = await import('@/lib/bitcoin-wallet');
+      process.env.BITCOIN_EXPLORER_URL = 'https://my-explorer.example///';
+      expect(getBitcoinExplorerUrl()).toBe('https://my-explorer.example');
+    });
+  });
 });
