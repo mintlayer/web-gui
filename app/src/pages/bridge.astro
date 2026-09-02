@@ -1,6 +1,10 @@
 ---
 import Layout from '@/layouts/Layout.astro';
 import BridgePanel from '@/components/BridgePanel';
+
+if (process.env.NETWORK !== 'mainnet') {
+  return Astro.redirect('/');
+}
 ---
 
 <Layout title="Bridge" activeNav="bridge">
