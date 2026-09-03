@@ -24,7 +24,7 @@ services:
     # Images update via Watchtower (opt-in, profile "watchtower") or manual pulls.
     # For strict supply-chain pinning, set ML_*_IMAGE env overrides to a
     # digest-pinned ref, e.g. ML_NODE_DAEMON_IMAGE=mintlayer/node-daemon@sha256:<digest>.
-    image: "${ML_NODE_DAEMON_IMAGE:-mintlayer/node-daemon:latest}"
+    image: "${ML_NODE_DAEMON_IMAGE:-ghcr.io/mintlayer/web-gui/node-daemon:latest}"
     command: "node-daemon ${NETWORK:-mainnet}"
     labels:
       com.centurylinklabs.watchtower.enable: "true"
@@ -45,7 +45,7 @@ services:
   # ─────────────────────────────────────────
   wallet-rpc-daemon:
     <<: *common
-    image: "${ML_WALLET_RPC_DAEMON_IMAGE:-mintlayer/wallet-rpc-daemon:latest}"
+    image: "${ML_WALLET_RPC_DAEMON_IMAGE:-ghcr.io/mintlayer/web-gui/wallet-rpc-daemon:latest}"
     command: "${WALLET_RPC_CMD:-wallet-rpc-daemon mainnet}"
     labels:
       com.centurylinklabs.watchtower.enable: "true"
@@ -268,7 +268,7 @@ services:
 
   api-blockchain-scanner-daemon:
     <<: *common
-    image: "${ML_API_SCANNER_IMAGE:-mintlayer/api-blockchain-scanner-daemon:latest}"
+    image: "${ML_API_SCANNER_IMAGE:-ghcr.io/mintlayer/web-gui/api-blockchain-scanner-daemon:latest}"
     labels:
       com.centurylinklabs.watchtower.enable: "true"
     depends_on:
@@ -290,7 +290,7 @@ services:
     restart: unless-stopped
 
   api-web-server:
-    image: "${ML_API_WEB_SERVER_IMAGE:-mintlayer/api-web-server:latest}"
+    image: "${ML_API_WEB_SERVER_IMAGE:-ghcr.io/mintlayer/web-gui/api-web-server:latest}"
     labels:
       com.centurylinklabs.watchtower.enable: "true"
     depends_on:
