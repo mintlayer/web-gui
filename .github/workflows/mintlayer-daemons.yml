@@ -157,13 +157,25 @@ jobs:
           IMAGE_NS: ${{ env.REGISTRY }}/${{ env.OWNER }}/web-gui
         run: |
           set -eu
+          # GHCR is eventually consistent right after a push: manifest
+          # creates can hit "manifest unknown" for a minute or two. Retry.
+          sleep 30
           for daemon in $DAEMONS; do
             for variant in "$BASE" "$SHA_TAG"; do
               args=()
               for arch in $ARCHES; do
                 args+=("--amend" "$IMAGE_NS/$daemon:$variant-$arch")
               done
-              docker manifest create "$IMAGE_NS/$daemon:$variant" "${args[@]}"
+              attempt=1
+              until docker manifest create "$IMAGE_NS/$daemon:$variant" "${args[@]}" >/dev/null; do
+                if [ "$attempt" -ge 6 ]; then
+                  echo "::error::manifest create failed for $IMAGE_NS/$daemon:$variant after $attempt attempts"
+                  exit 1
+                fi
+                echo "attempt $attempt failed - retrying in 30s"
+                sleep 30
+                attempt=$((attempt + 1))
+              done
               docker manifest push "$IMAGE_NS/$daemon:$variant"
             done
           done
