@@ -102,7 +102,7 @@ jobs:
             base="br-${GITHUB_REF_NAME//\//-}"
             echo "base=$base" >> "$GITHUB_OUTPUT"
           fi
-          echo "sha=sha-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "sha=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push per-arch daemon images
         env:
@@ -148,7 +148,7 @@ jobs:
             base="br-${GITHUB_REF_NAME//\//-}"
             echo "base=$base" >> "$GITHUB_OUTPUT"
           fi
-          echo "sha=sha-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "sha=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
       - name: Create and push multi-arch manifests
         env:
