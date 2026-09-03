@@ -17,6 +17,7 @@ on:
 env:
   REGISTRY: ghcr.io
   OWNER: mintlayer
+  IMAGE_NS: ghcr.io/mintlayer/web-gui
   ML_CORE_REF: v1.4.0
   DAEMONS: "node-daemon wallet-rpc-daemon api-blockchain-scanner-daemon api-web-server"
 
@@ -115,11 +116,11 @@ jobs:
               docker build \
                 --build-arg DAEMON_NAME="$daemon" \
                 -f docker/mintlayer-daemon-runtime.Dockerfile \
-                -t "$REGISTRY/$OWNER/$daemon:$variant-$ARCH" \
+                -t "$IMAGE_NS/$daemon:$variant-$ARCH" \
                 "ctx/$daemon"
             done
-            docker push "$REGISTRY/$OWNER/$daemon:$BASE-$ARCH"
-            docker push "$REGISTRY/$OWNER/$daemon:$SHA_TAG-$ARCH"
+            docker push "$IMAGE_NS/$daemon:$BASE-$ARCH"
+            docker push "$IMAGE_NS/$daemon:$SHA_TAG-$ARCH"
           done
 
   manifest:
@@ -154,7 +155,7 @@ jobs:
           BASE: ${{ steps.tagbase.outputs.base }}
           SHA_TAG: ${{ steps.tagbase.outputs.sha }}
           ARCHES: "amd64 arm64"
-          IMAGE_NS: ${{ env.REGISTRY }}/${{ env.OWNER }}/web-gui
+          IMAGE_NS: ${{ env.IMAGE_NS }}
         run: |
           set -eu
           # GHCR is eventually consistent right after a push: manifest
