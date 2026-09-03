@@ -9,8 +9,6 @@ name: Docker Images
 # - tag v*                -> ghcr.io/mintlayer/web-gui/<image>:v<tag>
 # - pull_request          -> build only (no push), catches Dockerfile breakage
 
-name: Docker
-
 on:
   push:
     branches: ["**"]
