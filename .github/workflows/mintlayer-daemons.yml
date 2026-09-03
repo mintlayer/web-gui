@@ -154,15 +154,16 @@ jobs:
           BASE: ${{ steps.tagbase.outputs.base }}
           SHA_TAG: ${{ steps.tagbase.outputs.sha }}
           ARCHES: "amd64 arm64"
+          IMAGE_NS: ${{ env.REGISTRY }}/${{ env.OWNER }}/web-gui
         run: |
           set -eu
           for daemon in $DAEMONS; do
             for variant in "$BASE" "$SHA_TAG"; do
               args=()
               for arch in $ARCHES; do
-                args+=("--amend" "$REGISTRY/$OWNER/$daemon:$variant-$arch")
+                args+=("--amend" "$IMAGE_NS/$daemon:$variant-$arch")
               done
-              docker manifest create "$REGISTRY/$OWNER/$daemon:$variant" "${args[@]}"
-              docker manifest push "$REGISTRY/$OWNER/$daemon:$variant"
+              docker manifest create "$IMAGE_NS/$daemon:$variant" "${args[@]}"
+              docker manifest push "$IMAGE_NS/$daemon:$variant"
             done
           done
