@@ -804,8 +804,13 @@ if [[ "$START" == "yes" ]]; then
     PROFILES="$PROFILES --profile watchtower"
   fi
 
-  $COMPOSE pull --quiet
-  $COMPOSE $PROFILES up -d --build
+  # Pull the CI-built multi-arch images (amd64+arm64) from ghcr.io and start.
+  # Local rebuilds stay available: docker compose build (see README).
+  $COMPOSE $PROFILES pull --quiet || {
+    hint "Prebuilt image pull failed — falling back to a local build."
+    $COMPOSE $PROFILES build
+  }
+  $COMPOSE $PROFILES up -d
 
   ok "Services started"
 fi

@@ -40,6 +40,13 @@ Optional (--profile indexer):
 
 The script walks you through every option (network, wallet, passwords, ports, indexer, Pinata JWT), writes `.env`, and starts the stack. That's all you need for a first run.
 
+**Prebuilt images.** CI publishes multi-arch (amd64 + arm64) images to
+`ghcr.io/mintlayer/web-gui` (`web-gui`, `bdk-wallet`, `btc-explorer`), and
+`init.sh` pulls them automatically — nothing is compiled on the target.
+First-time pulls of a private package need `docker login ghcr.io` (or flip the
+package to public in the GitHub UI). To build from source instead, run
+`docker compose build` after checkout.
+
 ---
 
 ### Using Make

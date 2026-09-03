@@ -76,6 +76,9 @@ services:
   # Web GUI (Astro SSR app)
   # ─────────────────────────────────────────
   web-gui:
+    # Prebuilt multi-arch image from CI (amd64+arm64). Override the ref or
+    # run `docker compose build` to compile locally instead.
+    image: "${WEB_GUI_IMAGE:-ghcr.io/mintlayer/web-gui/web-gui:latest}"
     build:
       context: ./app
       dockerfile: Dockerfile
@@ -161,6 +164,7 @@ services:
   # to mempool.space links instead (override with BITCOIN_EXPLORER_URL).
   # ─────────────────────────────────────────
   btc-explorer:
+    image: "${BTC_EXPLORER_IMAGE:-ghcr.io/mintlayer/web-gui/btc-explorer:latest}"
     build:
       context: ./btc-explorer
       args:
@@ -186,7 +190,7 @@ services:
   # ─────────────────────────────────────────
   bdk-wallet:
     build: ./bdk-wallet
-    image: web-gui-bdk-wallet:latest
+    image: "${BDK_WALLET_IMAGE:-ghcr.io/mintlayer/web-gui/bdk-wallet:latest}"
     # Match the bind-mount owner (init.sh pre-creates ./bitcoin-wallet-data
     # as the host user; ML_USER_ID/GROUP_ID follow the host user like web-gui).
     user: "${ML_USER_ID:-1000}:${ML_GROUP_ID:-1000}"
