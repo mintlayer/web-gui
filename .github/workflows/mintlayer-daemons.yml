@@ -9,8 +9,6 @@ name: Mintlayer Daemon Images
 # per-arch images pushed as <ref>-amd64 / -arm64, then merged into
 # multi-arch manifests (:latest on main, :br-<branch>, :sha).
 
-name: Mintlayer Daemon Images
-
 on:
   push:
     branches: ["**"]

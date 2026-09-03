@@ -514,6 +514,16 @@ if [[ "$ENABLE_BITCOIN" == "yes" ]]; then
     ""|"mainnet"|"testnet"|"regtest"|"signet") ;;
     *) hint "Unknown network '${BITCOIN_NETWORK}' - following Mintlayer network instead."; BITCOIN_NETWORK="" ;;
   esac
+
+  ask "Blockchain storage mode"
+  hint "FULL mode keeps the whole chain plus a transaction index: complete"
+  hint "wallet history and rescans of any restored seed."
+  hint "  mainnet ~700 GB of disk - testnet ~50 GB"
+  hint "PRUNED mode keeps only recent blocks (~15-25 GB on mainnet). The BTC"
+  hint "wallet you create in the GUI works normally, but restoring an old"
+  hint "seed cannot rescan ancient history."
+  BTC_PRUNED="yes"
+  confirm BTC_PRUNED "Run the Bitcoin node in pruned mode?" "Y"
 fi
 
 divider
@@ -682,6 +692,15 @@ fi
 # Derive boolean flags
 INDEXER_ENABLED=$([ "$ENABLE_INDEXER" == "yes" ] && echo "true" || echo "false")
 BITCOIN_ENABLED=$([ "$ENABLE_BITCOIN" == "yes" ] && echo "true" || echo "false")
+# Pruned mode: no txindex, keep a small recent-block window. Incompatible
+# with each other by design (Bitcoin Core refuses txindex + prune).
+if [[ "$ENABLE_BITCOIN" == "yes" && "$BTC_PRUNED" == "yes" ]]; then
+  BITCOIN_TXINDEX=0
+  BITCOIN_PRUNE=550
+else
+  BITCOIN_TXINDEX=1
+  BITCOIN_PRUNE=0
+fi
 
 # Build the full wallet-rpc-daemon command (avoids shell expansion tricks in docker-compose)
 WALLET_RPC_CMD="wallet-rpc-daemon ${NETWORK}"
@@ -745,8 +764,8 @@ BITCOIN_RPC_USERNAME=${BITCOIN_RPC_USERNAME}
 BITCOIN_RPC_PASSWORD=${BITCOIN_RPC_PASSWORD}
 BITCOIN_WALLET_HTTP_USERNAME=${BITCOIN_WALLET_HTTP_USERNAME}
 BITCOIN_WALLET_HTTP_PASSWORD=${BITCOIN_WALLET_HTTP_PASSWORD}
-BITCOIN_TXINDEX=1
-BITCOIN_PRUNE=0
+BITCOIN_TXINDEX=${BITCOIN_TXINDEX}
+BITCOIN_PRUNE=${BITCOIN_PRUNE}
 EOF
 
 ok ".env written"
