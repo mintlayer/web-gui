@@ -27,6 +27,7 @@ permissions:
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - arch: amd64
@@ -64,7 +65,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ./mintlayer-core
-          file: ../docker/mintlayer-daemons.Dockerfile
+          file: ./docker/mintlayer-daemons.Dockerfile
           platforms: linux/${{ matrix.arch }}
           target: artifacts
           outputs: type=local,dest=out
