@@ -702,6 +702,13 @@ else
   BITCOIN_PRUNE=0
 fi
 
+# Bitcoin Core's -chain flag wants "main" for mainnet ("mainnet" is
+# rejected with CreateBaseChainParams). Other network names pass through.
+BITCOIN_CORE_CHAIN="main"
+if [[ -n "$BITCOIN_NETWORK" && "$BITCOIN_NETWORK" != "mainnet" ]]; then
+  BITCOIN_CORE_CHAIN="$BITCOIN_NETWORK"
+fi
+
 # Build the full wallet-rpc-daemon command (avoids shell expansion tricks in docker-compose)
 WALLET_RPC_CMD="wallet-rpc-daemon ${NETWORK}"
 
@@ -760,6 +767,7 @@ API_WEB_SERVER_PORT=${API_WEB_SERVER_PORT}
 # Bitcoin node + BTC wallet (only used with --profile bitcoin)
 BITCOIN_ENABLED=${BITCOIN_ENABLED}
 BITCOIN_NETWORK=${BITCOIN_NETWORK}
+BITCOIN_CORE_CHAIN=${BITCOIN_CORE_CHAIN}
 BITCOIN_RPC_USERNAME=${BITCOIN_RPC_USERNAME}
 BITCOIN_RPC_PASSWORD=${BITCOIN_RPC_PASSWORD}
 BITCOIN_WALLET_HTTP_USERNAME=${BITCOIN_WALLET_HTTP_USERNAME}

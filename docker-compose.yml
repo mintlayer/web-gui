@@ -138,7 +138,9 @@ services:
       - "./bitcoin-data:/home/bitcoin/.bitcoin"
     command:
       - "-printtoconsole=1"
-      - "-chain=${BITCOIN_NETWORK:-mainnet}"
+      # Bitcoin Core's -chain wants "main", not "mainnet" — override with
+      # BITCOIN_CORE_CHAIN in .env (init.sh derives it).
+      - "-chain=${BITCOIN_CORE_CHAIN:-${BITCOIN_NETWORK:-mainnet}}"
       - "-rpcbind=0.0.0.0:8332"
       - "-rpcallowip=0.0.0.0/0"
       - "-rpcuser=${BITCOIN_RPC_USERNAME}"
@@ -269,6 +271,9 @@ services:
   api-blockchain-scanner-daemon:
     <<: *common
     image: "${ML_API_SCANNER_IMAGE:-ghcr.io/mintlayer/web-gui/api-blockchain-scanner-daemon:latest}"
+    # The daemon runtime image has no baked-in CMD; the entrypoint (gosu
+    # wrapper) needs the binary path as its argument.
+    command: "/usr/bin/api-blockchain-scanner-daemon"
     labels:
       com.centurylinklabs.watchtower.enable: "true"
     depends_on:
@@ -291,6 +296,8 @@ services:
 
   api-web-server:
     image: "${ML_API_WEB_SERVER_IMAGE:-ghcr.io/mintlayer/web-gui/api-web-server:latest}"
+    # No baked-in CMD in the runtime image — pass the binary explicitly.
+    command: "/usr/bin/api-web-server"
     labels:
       com.centurylinklabs.watchtower.enable: "true"
     depends_on:
