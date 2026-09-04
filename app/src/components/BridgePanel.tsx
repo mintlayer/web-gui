@@ -91,7 +91,14 @@ const STATUS_STEPS: Record<string, { label: string; step: number }> = {
   manual: { label: 'Escalated for manual review', step: 3 },
 };
 
-export default function BridgePanel() {
+interface IndexerStatus {
+  up: boolean;
+  height: number | null;
+  nodeHeight: number | null;
+  synced: boolean;
+}
+
+export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled?: boolean }) {
   const [config, setConfig] = useState<BridgeConfig | null>(null);
   const [fees, setFees] = useState<BridgeFees | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
@@ -106,6 +113,8 @@ export default function BridgePanel() {
   const [ethBalance, setEthBalance] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [mlAddress, setMlAddress] = useState<string | null>(null);
+  const [addressLoading, setAddressLoading] = useState(false);
+  const [indexerStatus, setIndexerStatus] = useState<IndexerStatus | null>(null);
 
   const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -142,7 +151,7 @@ export default function BridgePanel() {
   }, []);
 
   // ── Own ML address (receive side for E2M) ───────────────────────────────────
-  const loadMlAddress = useCallback(async () => {
+  const fetchMlAddress = useCallback(async (): Promise<string | null> => {
     try {
       const res = await fetch('/api/rpc', {
         method: 'POST',
@@ -156,16 +165,51 @@ export default function BridgePanel() {
         ok: boolean;
         result?: { address: string; used: boolean; purpose: string }[];
       };
-      if (!data.ok || !Array.isArray(data.result)) return;
+      if (!data.ok || !Array.isArray(data.result)) return null;
       const first = data.result.find((a) => a.purpose === 'Receive' && !a.used) ?? data.result[0];
-      if (first) setMlAddress(first.address);
+      return first?.address ?? null;
     } catch {
-      /* dashboard shows wallet errors elsewhere */
+      return null; /* dashboard shows wallet errors elsewhere */
     }
   }, []);
+
+  const loadMlAddress = useCallback(async () => {
+    const address = await fetchMlAddress();
+    if (address) setMlAddress(address);
+  }, [fetchMlAddress]);
   useEffect(() => {
     loadMlAddress();
   }, [loadMlAddress]);
+
+  /** Fill the receiver with a fresh receive address from the ML wallet. */
+  async function useMlAddress() {
+    setAddressLoading(true);
+    try {
+      const address = await fetchMlAddress();
+      if (address) {
+        setMlAddress(address);
+        setReceiver(address);
+        setReceiverSuggestion(null);
+      }
+    } finally {
+      setAddressLoading(false);
+    }
+  }
+
+  // ── Indexer readiness gate ──────────────────────────────────────────────────
+  useEffect(() => {
+    if (!indexerEnabled) return;
+    const load = () =>
+      fetch('/api/indexer-status')
+        .then((r) => r.json() as Promise<IndexerStatus>)
+        .then(setIndexerStatus)
+        .catch(() => {});
+    load();
+    const t = setInterval(load, 10_000);
+    return () => clearInterval(t);
+  }, [indexerEnabled]);
+
+  const indexerReady = !indexerEnabled || indexerStatus?.synced === true;
 
   // ── MetaMask session restore ────────────────────────────────────────────────
   useEffect(() => {
@@ -348,7 +392,34 @@ export default function BridgePanel() {
 
   const busy = phase === 'approve' || phase === 'deposit' || phase === 'signing' || phase === 'submitting' || phase === 'polling';
   const receiverLabel = direction === 'e2m' ? 'Your Mintlayer address (receiver)' : 'Your Ethereum address (receiver)';
-  const receiverValue = direction === 'e2m' ? mlAddress ?? '' : ethAccount ?? '';
+
+  // Indexer still scanning: hide the whole bridge UI to avoid half-working
+  // state (the m2e side spends from the local wallet, whose view of balances
+  // is only complete once the indexer caught up with the node).
+  if (indexerEnabled && indexerStatus && !indexerStatus.synced) {
+    const height = indexerStatus.height ?? 0;
+    const nodeHeight = indexerStatus.nodeHeight ?? 0;
+    const pct = nodeHeight > 0 ? Math.min(100, Math.round((height / nodeHeight) * 100)) : 0;
+    return (
+      <div className={card}>
+        <div className="flex items-center gap-3 mb-3">
+          <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse shrink-0"></span>
+          <h2 className="text-base font-semibold text-gray-100">The indexer is still syncing</h2>
+        </div>
+        <p className="text-sm text-gray-400 mb-3">
+          The bridge stays disabled until the indexer has caught up with the node, so
+          you don't act on incomplete balances or history.
+        </p>
+        <div className="w-full h-2 rounded-full bg-gray-800 overflow-hidden mb-2">
+          <div className="h-full bg-mint-600 transition-all" style={{ width: `${pct}%` }}></div>
+        </div>
+        <p className="text-xs text-gray-500 font-mono">
+          indexer block #{height.toLocaleString()} / node block #{nodeHeight.toLocaleString()} ({pct}%)
+        </p>
+        <p className="text-xs text-gray-500 mt-2">This page re-checks automatically every 10 seconds.</p>
+      </div>
+    );
+  }
 
   const phaseLabel =
     phase === 'approve'
@@ -476,21 +547,35 @@ export default function BridgePanel() {
 
         <div>
           <label className="block text-xs text-gray-400 mb-1">{receiverLabel}</label>
-          {direction === 'e2m' ? (
+          <div className="flex gap-2">
             <input
               value={receiver}
               onChange={e => { setReceiver(e.target.value); setReceiverSuggestion(null); }}
-              placeholder="tmt1…"
+              placeholder={direction === 'e2m' ? 'tmt1…' : '0x…'}
               className={input}
             />
-          ) : (
-            <input
-              value={receiver}
-              onChange={e => { setReceiver(e.target.value); setReceiverSuggestion(null); }}
-              placeholder="0x…"
-              className={input}
-            />
-          )}
+            {direction === 'e2m' ? (
+              <button
+                type="button"
+                onClick={useMlAddress}
+                disabled={addressLoading}
+                title="Fill in a receive address from your Mintlayer wallet"
+                className="shrink-0 rounded-lg border border-mint-700 bg-mint-900/30 hover:bg-mint-900/60 px-3 text-xs font-medium text-mint-300 transition-colors disabled:opacity-50"
+              >
+                {addressLoading ? '…' : 'Use my ML address'}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => { if (ethAccount) { setReceiver(ethAccount); setReceiverSuggestion(null); } }}
+                disabled={!ethAccount}
+                title="Fill in your connected MetaMask address"
+                className="shrink-0 rounded-lg border border-mint-700 bg-mint-900/30 hover:bg-mint-900/60 px-3 text-xs font-medium text-mint-300 transition-colors disabled:opacity-50"
+              >
+                Use MetaMask
+              </button>
+            )}
+          </div>
           {receiverSuggestion && (
             <div className="mt-2 rounded-lg border border-amber-800 bg-amber-900/20 px-3 py-2 text-xs text-amber-300">
               Did you mean{' '}
@@ -504,24 +589,6 @@ export default function BridgePanel() {
                 Use suggested address
               </button>
             </div>
-          )}
-          {direction === 'e2m' && mlAddress && !receiver && (
-            <button
-              type="button"
-              onClick={() => setReceiver(mlAddress)}
-              className="text-xs text-mint-400 hover:text-mint-300 mt-1"
-            >
-              Use your wallet address
-            </button>
-          )}
-          {direction === 'm2e' && ethAccount && !receiver && (
-            <button
-              type="button"
-              onClick={() => setReceiver(ethAccount)}
-              className="text-xs text-mint-400 hover:text-mint-300 mt-1"
-            >
-              Use your MetaMask address
-            </button>
           )}
         </div>
 
@@ -542,12 +609,14 @@ export default function BridgePanel() {
             {connecting ? 'Connecting…' : 'Connect MetaMask'}
           </button>
         ) : (
-          <button onClick={submit} disabled={busy || !config} className={primaryBtn}>
+          <button onClick={submit} disabled={busy || !config || !indexerReady} className={primaryBtn}>
             {busy
               ? 'Working…'
-              : direction === 'e2m'
-                ? `Deposit ${assetTicker || 'tokens'} to bridge`
-                : `Send ${assetTicker || 'tokens'} to bridge`}
+              : !indexerReady
+                ? 'Waiting for the indexer…'
+                : direction === 'e2m'
+                  ? `Deposit ${assetTicker || 'tokens'} to bridge`
+                  : `Send ${assetTicker || 'tokens'} to bridge`}
           </button>
         )}
       </div>
