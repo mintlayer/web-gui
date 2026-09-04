@@ -65,6 +65,21 @@ async function initBtcWalletFromSeed(mnemonic: string): Promise<string | undefin
 
 // ── POST handlers ─────────────────────────────────────────────────────────────
 
+// The wallet-rpc-daemon holds exactly one wallet slot: any wallet_create /
+// recover while one is open fails with "Wallet file already open" — which is
+// what a double-submitted create form produces (the first POST won, the
+// browser just rendered the loser). Say that instead of the raw daemon error.
+function friendlyWalletError(message: string): string {
+  if (/already open/i.test(message)) {
+    return (
+      'A wallet file is already open — this usually means the button was clicked twice and the wallet WAS created. ' +
+      'Its seed phrase was shown only once and is not recoverable from this screen. ' +
+      'If you did not save it, stop the stack and delete mintlayer-data/mintlayer.wallet* plus bitcoin-wallet-data/* on the host, then run setup again.'
+    );
+  }
+  return message;
+}
+
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
   const action = form.get('action') as string;
@@ -88,7 +103,7 @@ if (Astro.request.method === 'POST') {
         const btcNote = await initBtcWalletFromSeed(mnemonicStr);
         result = { action: 'create_success', mnemonic: mnemonicStr, walletPath: WALLET_PATH, btcNote };
       } catch (err) {
-        result = { action: 'error', message: (err as Error).message };
+        result = { action: 'error', message: friendlyWalletError((err as Error).message) };
       }
     }
 
@@ -108,7 +123,7 @@ if (Astro.request.method === 'POST') {
         const btcNote = await initBtcWalletFromSeed(mnemonic);
         result = { action: 'import_success', btcNote };
       } catch (err) {
-        result = { action: 'error', message: (err as Error).message };
+        result = { action: 'error', message: friendlyWalletError((err as Error).message) };
       }
     }
 
@@ -139,7 +154,7 @@ if (Astro.request.method === 'POST') {
           result = { action: 'upload_success' };
         }
       } catch (err) {
-        result = { action: 'error', message: (err as Error).message };
+        result = { action: 'error', message: friendlyWalletError((err as Error).message) };
       }
     }
   }
@@ -217,7 +232,11 @@ Astro.response.headers.set('Cache-Control', 'no-store');
           </div>
           <p class="text-xs text-gray-400 mb-5">Generate a fresh seed phrase and wallet file.</p>
 
-          <form method="POST" class="space-y-4 flex flex-col flex-1">
+          <form
+            method="POST"
+            class="space-y-4 flex flex-col flex-1"
+            onsubmit="if (this.dataset.submitted === '1') { event.preventDefault(); return false; } this.dataset.submitted = '1'; const b = this.querySelector('button[type=submit]'); if (b) b.disabled = true;"
+          >
             <input type="hidden" name="action" value="create" />
 
             {/* Password - required by default */}
@@ -323,7 +342,11 @@ Astro.response.headers.set('Cache-Control', 'no-store');
           <h2 class="text-base font-semibold text-gray-200 mb-1">Import from seed phrase</h2>
           <p class="text-xs text-gray-400 mb-5">Restore an existing wallet using your 12 or 24-word seed phrase.</p>
 
-          <form method="POST" class="space-y-4 flex flex-col flex-1">
+          <form
+            method="POST"
+            class="space-y-4 flex flex-col flex-1"
+            onsubmit="if (this.dataset.submitted === '1') { event.preventDefault(); return false; } this.dataset.submitted = '1'; const b = this.querySelector('button[type=submit]'); if (b) b.disabled = true;"
+          >
             <input type="hidden" name="action" value="import" />
 
             <div>
