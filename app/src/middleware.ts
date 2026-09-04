@@ -8,6 +8,7 @@ import {
   SESSION_COOKIE_NAME,
 } from '@/lib/auth';
 import { getPref } from '@/lib/prefs-db';
+import { isForbiddenCrossSiteRequest } from '@/lib/csrf';
 
 const PUBLIC_PATHS = new Set([
   '/login',
@@ -56,6 +57,20 @@ const CSP_ENABLED = process.env.CSP_ENABLED === 'true';
 
 export const onRequest = defineMiddleware(async (context, next) => {
   const { pathname } = new URL(context.request.url);
+
+  // Cross-site form protection, proxy-aware replacement for Astro's built-in
+  // security.checkOrigin (disabled in astro.config.mjs): that check derives
+  // the URL scheme from the socket, so behind the TLS-terminating caddy
+  // gateway every form POST 403'd. Same pipeline coverage as the built-in
+  // check (all routes, incl. /api/*). See lib/csrf.ts.
+  if (isForbiddenCrossSiteRequest(context.request)) {
+    const forbidden = new Response(
+      `Cross-site ${context.request.method} form submissions are forbidden`,
+      { status: 403 },
+    );
+    applySecurityHeaders(forbidden);
+    return forbidden;
+  }
 
   if (PUBLIC_PATHS.has(pathname) || PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) {
     const response = await next();
