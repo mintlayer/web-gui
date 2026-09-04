@@ -833,7 +833,9 @@ EOF
 ok ".env written"
 
 # ── Write credentials to SQLite via temporary alpine container ───────────────
-mkdir -p mintlayer-data/prefs mintlayer-data/plugins
+# uploads/ is bind-mounted into web-gui; pre-create it here so it is owned by
+# this user (docker creates missing bind-mount dirs as root).
+mkdir -p mintlayer-data/prefs mintlayer-data/plugins mintlayer-data/uploads
 {
   echo "CREATE TABLE IF NOT EXISTS prefs (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
   echo "INSERT OR REPLACE INTO prefs VALUES ('auth.password_hash', '\"${UI_PASSWORD_HASH}\"');"
