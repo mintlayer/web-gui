@@ -724,6 +724,16 @@ fi
 # Derive boolean flags
 INDEXER_ENABLED=$([ "$ENABLE_INDEXER" == "yes" ] && echo "true" || echo "false")
 BITCOIN_ENABLED=$([ "$ENABLE_BITCOIN" == "yes" ] && echo "true" || echo "false")
+
+# ── Image tag selection ──────────────────────────────────────────────────────
+# Compose defaults to :latest, which CI publishes only from main. On a
+# feature branch, pin the CI-built branch tags instead (docker.yml publishes
+# :br-<branch-slug>); outside a git checkout, fall back to latest.
+IMAGE_TAG="latest"
+if BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" && [[ -n "$BRANCH" && "$BRANCH" != "HEAD" && "$BRANCH" != "main" ]]; then
+  IMAGE_TAG="br-${BRANCH//\//-}"
+  ok "Pinning prebuilt images to branch tag: $IMAGE_TAG"
+fi
 # Pruned mode: no txindex, keep a small recent-block window. Incompatible
 # with each other by design (Bitcoin Core refuses txindex + prune).
 if [[ "$ENABLE_BITCOIN" == "yes" && "$BTC_PRUNED" == "yes" ]]; then
@@ -809,6 +819,15 @@ BITCOIN_WALLET_HTTP_USERNAME=${BITCOIN_WALLET_HTTP_USERNAME}
 BITCOIN_WALLET_HTTP_PASSWORD=${BITCOIN_WALLET_HTTP_PASSWORD}
 BITCOIN_TXINDEX=${BITCOIN_TXINDEX}
 BITCOIN_PRUNE=${BITCOIN_PRUNE}
+
+# Prebuilt image refs (branch deploys pin CI-built tags; :latest = main only)
+ML_NODE_DAEMON_IMAGE=ghcr.io/mintlayer/web-gui/node-daemon:${IMAGE_TAG}
+ML_WALLET_RPC_DAEMON_IMAGE=ghcr.io/mintlayer/web-gui/wallet-rpc-daemon:${IMAGE_TAG}
+WEB_GUI_IMAGE=ghcr.io/mintlayer/web-gui/web-gui:${IMAGE_TAG}
+BDK_WALLET_IMAGE=ghcr.io/mintlayer/web-gui/bdk-wallet:${IMAGE_TAG}
+BTC_EXPLORER_IMAGE=ghcr.io/mintlayer/web-gui/btc-explorer:${IMAGE_TAG}
+ML_API_SCANNER_IMAGE=ghcr.io/mintlayer/web-gui/api-blockchain-scanner-daemon:${IMAGE_TAG}
+ML_API_WEB_SERVER_IMAGE=ghcr.io/mintlayer/web-gui/api-web-server:${IMAGE_TAG}
 EOF
 
 ok ".env written"
@@ -872,7 +891,8 @@ if [[ "$START" == "yes" ]]; then
   # Pull the CI-built multi-arch images (amd64+arm64) from ghcr.io and start.
   # Local rebuilds stay available: docker compose build (see README).
   $COMPOSE $PROFILES pull --quiet || {
-    hint "Prebuilt image pull failed — falling back to a local build."
+    hint "Prebuilt image pull failed. On a fresh branch, CI must have published"
+    hint "ghcr.io/mintlayer/web-gui/*:${IMAGE_TAG} first — falling back to a local build."
     $COMPOSE $PROFILES build
   }
   $COMPOSE $PROFILES up -d
