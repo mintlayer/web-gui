@@ -1,7 +1,7 @@
 ---
 import Layout from '@/layouts/Layout.astro';
 import { openWallet, createWallet, recoverWallet } from '@/lib/wallet-rpc';
-import { isBitcoinEnabled, createBitcoinWallet } from '@/lib/bitcoin-wallet';
+import { isBitcoinEnabled, createBitcoinWalletFromSeedWithRetry } from '@/lib/bitcoin-wallet';
 import SeedBackupStep from '@/components/SeedBackupStep';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
@@ -45,15 +45,21 @@ let result: SetupResult = { action: 'none' };
 // initialize the BTC wallet from the same mnemonic the ML wallet was created
 // (or restored) with. Non-fatal - setup still succeeds when the sidecar is
 // unreachable; the Bitcoin page offers its own create/restore as a fallback.
+// Failures are logged server-side so silent misses are diagnosable.
 async function initBtcWalletFromSeed(mnemonic: string): Promise<string | undefined> {
-  if (!isBitcoinEnabled()) return undefined;
+  if (!isBitcoinEnabled() || !mnemonic.trim()) return undefined;
   try {
-    await createBitcoinWallet(mnemonic);
+    await createBitcoinWalletFromSeedWithRetry(mnemonic);
+    console.info('[setup] BTC wallet initialized from the setup seed');
     return 'The same seed was configured for the BTC wallet (see the Bitcoin page).';
   } catch (err) {
     const msg = (err as Error).message;
-    if (/already exists/i.test(msg)) return 'BTC wallet already configured.';
-    return `BTC wallet setup failed: ${msg}`;
+    if (/already exists/i.test(msg)) {
+      console.warn('[setup] BTC wallet already configured — skipping seed init');
+      return 'BTC wallet already configured.';
+    }
+    console.error(`[setup] BTC wallet init failed: ${msg}`);
+    return `BTC wallet setup failed: ${msg} — use "Restore from seed" on the Bitcoin page with this same seed phrase.`;
   }
 }
 
@@ -315,7 +321,7 @@ Astro.response.headers.set('Cache-Control', 'no-store');
         {/* ── Import from seed phrase ─────────────────────────────────────── */}
         <div class="rounded-xl bg-gray-900 border border-gray-800 p-6 flex flex-col">
           <h2 class="text-base font-semibold text-gray-200 mb-1">Import from seed phrase</h2>
-          <p class="text-xs text-gray-400 mb-5">Restore an existing wallet using your 24-word mnemonic.</p>
+          <p class="text-xs text-gray-400 mb-5">Restore an existing wallet using your 12 or 24-word seed phrase.</p>
 
           <form method="POST" class="space-y-4 flex flex-col flex-1">
             <input type="hidden" name="action" value="import" />
@@ -327,7 +333,7 @@ Astro.response.headers.set('Cache-Control', 'no-store');
                 name="mnemonic"
                 rows="4"
                 required
-                placeholder="word1 word2 word3 … word24"
+                placeholder="word1 word2 word3 …"
                 class="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600
                        px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-mint-600 resize-none"
               />

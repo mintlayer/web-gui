@@ -147,6 +147,35 @@ export function createBitcoinWallet(seed?: string): Promise<BitcoinCreateResult>
   });
 }
 
+/**
+ * Create the BTC wallet from a seed, retrying transient sidecar
+ * unavailability. The wrapper maps fetch failures to 503; 502/504 from any
+ * intermediary are equally transient. Retrying is safe even when attempt 1
+ * actually succeeded server-side (lost response): the sidecar then answers
+ * 409 "wallet already exists", which is deterministic and never retried.
+ * 4xx errors (invalid seed, already exists) are never retried.
+ */
+export async function createBitcoinWalletFromSeedWithRetry(
+  seed: string,
+  opts: { attempts?: number; delayMs?: number } = {},
+): Promise<BitcoinCreateResult> {
+  const attempts = Math.max(1, opts.attempts ?? 3);
+  const delayMs = opts.delayMs ?? 3_000;
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await createBitcoinWallet(seed);
+    } catch (err) {
+      lastErr = err;
+      const retryable =
+        err instanceof BitcoinWalletError && [502, 503, 504].includes(err.status);
+      if (!retryable || attempt === attempts) break;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw lastErr;
+}
+
 // ── Status / sync ─────────────────────────────────────────────────────────────
 
 /** Node + wallet overview: reachability, sync state, balances. */

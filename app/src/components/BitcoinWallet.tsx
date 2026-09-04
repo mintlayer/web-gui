@@ -108,7 +108,9 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
         body: JSON.stringify({ seed: seed ?? null }),
       });
       setSeedConfirmed(false);
-      setNewMnemonic((res.mnemonic ?? '').split(/\s+/).filter(Boolean));
+      // Restores return no mnemonic — never show an empty seed-backup card.
+      const words = (res.mnemonic ?? '').split(/\s+/).filter(Boolean);
+      setNewMnemonic(words.length ? words : null);
       await refresh();
     } catch (err) {
       setNotice((err as Error).message);
@@ -118,8 +120,8 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
   }
 
   function restoreWallet() {
-    const input = window.prompt('Enter your 12-word recovery phrase');
-    if (!input) return;
+    const input = window.prompt('Enter your 12 or 24-word seed phrase');
+    if (!input || !input.trim()) return;
     createWallet(input.trim());
   }
 
@@ -243,19 +245,24 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
       {/* ── No wallet yet ─────────────────────────────────────────────────────── */}
       {overview.status && !walletExists && !newMnemonic && (
         <div className={card}>
-          <h2 className="text-base font-semibold text-gray-100 mb-2">Create your BTC wallet</h2>
-          <p className="text-sm text-gray-400 mb-5">
-            A new wallet generates a 12-word seed phrase. You can also restore an existing wallet.
+          <h2 className="text-base font-semibold text-gray-100 mb-2">Set up your BTC wallet</h2>
+          <p className="text-sm text-gray-400 mb-4">
+            Recommended: restore with the <span className="text-gray-200 font-medium">same seed phrase as your Mintlayer wallet</span> —
+            one seed, both chains (Bitcoin keys derive via BIP84 from the same words).
           </p>
-          <div className="flex gap-3">
-            <button onClick={() => createWallet()} disabled={busy} className={primaryBtn}>Create new wallet</button>
-            <button onClick={restoreWallet} disabled={busy} className="rounded-lg border border-gray-700 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 transition-colors disabled:opacity-50">
-              Restore from seed
+          <button onClick={restoreWallet} disabled={busy} className={`${primaryBtn} mb-4`}>Restore from seed</button>
+          <div className="rounded-lg border border-yellow-700/50 bg-yellow-900/10 px-3 py-2.5">
+            <p className="text-xs text-yellow-400 mb-2">
+              Or create an independent BTC wallet — this generates a <span className="font-semibold">separate seed phrase,
+              not linked to your Mintlayer wallet</span>. Only pick this if you want the two wallets unrelated.
+            </p>
+            <button onClick={() => createWallet()} disabled={busy}
+              className="rounded-lg border border-gray-700 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 transition-colors disabled:opacity-50">
+              Create new wallet
             </button>
           </div>
         </div>
       )}
-
       {/* ── One-time seed display ─────────────────────────────────────────────── */}
       {newMnemonic && (
         <div className={card}>

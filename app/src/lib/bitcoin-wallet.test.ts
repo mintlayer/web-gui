@@ -76,6 +76,62 @@ describe('bitcoin-wallet client', () => {
     expect((init.body as string)).toBe(JSON.stringify({ seed: 'a b c' }));
   });
 
+  it('createBitcoinWalletFromSeedWithRetry retries transient 503s and succeeds', async () => {
+    mockFetch
+      .mockRejectedValueOnce(new Error('ECONNREFUSED'))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: true, created: true, network: 'mainnet' }), { status: 200 }),
+      );
+    const { createBitcoinWalletFromSeedWithRetry } = await import('@/lib/bitcoin-wallet');
+    const res = await createBitcoinWalletFromSeedWithRetry('same seed', { delayMs: 1 });
+    expect(res.created).toBe(true);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(mockFetch.mock.calls[1][1]!.body as string)).toEqual({ seed: 'same seed' });
+  });
+
+  it('createBitcoinWalletFromSeedWithRetry never retries deterministic 4xx errors', async () => {
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ ok: false, error: 'wallet already exists' }), { status: 409 }),
+    );
+    const { createBitcoinWalletFromSeedWithRetry, BitcoinWalletError } = await import('@/lib/bitcoin-wallet');
+    await expect(
+      createBitcoinWalletFromSeedWithRetry('same seed', { delayMs: 1 }),
+    ).rejects.toThrow(BitcoinWalletError);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('createBitcoinWalletFromSeedWithRetry retries a genuine HTTP 503 response', async () => {
+    mockFetch
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: false, error: 'boom' }), { status: 503 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: true, created: true, network: 'mainnet' }), { status: 200 }),
+      );
+    const { createBitcoinWalletFromSeedWithRetry } = await import('@/lib/bitcoin-wallet');
+    const res = await createBitcoinWalletFromSeedWithRetry('same seed', { delayMs: 1 });
+    expect(res.created).toBe(true);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('createBitcoinWalletFromSeedWithRetry does not retry other 5xx errors', async () => {
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ ok: false, error: 'persisting seed: io error' }), { status: 500 }),
+    );
+    const { createBitcoinWalletFromSeedWithRetry, BitcoinWalletError } = await import('@/lib/bitcoin-wallet');
+    await expect(
+      createBitcoinWalletFromSeedWithRetry('same seed', { delayMs: 1 }),
+    ).rejects.toThrow(BitcoinWalletError);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('createBitcoinWalletFromSeedWithRetry exhausts attempts then throws', async () => {
+    mockFetch.mockRejectedValue(new Error('ECONNREFUSED'));
+    const { createBitcoinWalletFromSeedWithRetry, BitcoinWalletError } = await import('@/lib/bitcoin-wallet');
+    await expect(
+      createBitcoinWalletFromSeedWithRetry('same seed', { attempts: 3, delayMs: 1 }),
+    ).rejects.toThrow(BitcoinWalletError);
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+  });
+
   it('sendBitcoin maps camelCase args to the sidecar snake_case payload', async () => {
     mockFetch.mockResolvedValueOnce(
       new Response(JSON.stringify({ ok: true, txid: 'abc123' }), { status: 200 }),
