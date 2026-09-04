@@ -1,4 +1,4 @@
-.PHONY: up down restart nuke restart-gui build logs dev dev-build dev-local wallet-cli nft-images-public pending-transactions list-utxos
+.PHONY: up down restart nuke restart-gui build logs dev dev-build dev-local wallet-cli bitcoin bitcoin-cli nft-images-public pending-transactions list-utxos
 
 ACCOUNT ?= 0
 
@@ -8,7 +8,7 @@ up:
 
 ## Stop and remove all containers (including optional profiles and orphaned run containers)
 down:
-	docker compose --profile indexer --profile wallet_cli down --remove-orphans
+	docker compose --profile indexer --profile wallet_cli --profile bitcoin down --remove-orphans
 
 ## Full clean restart: tear down everything, fix stuck networks, then bring up fresh
 ## Fixes "Network still in use" / "network not found" errors from dangling containers.
@@ -27,7 +27,7 @@ restart: down
 ## Nuclear option: remove ALL stopped containers and unused networks project-wide,
 ## then restart. Use when restart still fails.
 nuke:
-	docker compose --profile indexer --profile wallet_cli down --remove-orphans --volumes 2>/dev/null || true
+	docker compose --profile indexer --profile wallet_cli --profile bitcoin down --remove-orphans --volumes 2>/dev/null || true
 	docker container prune -f
 	docker network prune -f
 	docker compose up -d
@@ -61,6 +61,17 @@ dev-build:
 ## Open an interactive wallet-cli session connected to the running wallet-rpc-daemon
 wallet-cli:
 	docker compose --profile wallet_cli run --rm wallet-cli
+
+## Start the optional Bitcoin stack (bitcoind + BTC wallet sidecar) alongside core services
+bitcoin:
+	docker compose --profile bitcoin up -d
+	@echo "Bitcoin node + BTC wallet started. First sync can take a long time on mainnet."
+	@echo "Open the Bitcoin page in the web UI to create your BTC wallet."
+
+## bitcoin-cli shell inside the Bitcoin node container
+## Usage: make bitcoin-cli CMD='getblockchaininfo'
+bitcoin-cli:
+	docker compose --profile bitcoin exec bitcoind bitcoin-cli -rpcport=8332 -rpcuser=$$(grep '^BITCOIN_RPC_USERNAME=' .env | cut -d= -f2) -rpcpassword=$$(grep '^BITCOIN_RPC_PASSWORD=' .env | cut -d= -f2) $(CMD)
 
 ## List pending transactions for account ACCOUNT (default 0) via wallet RPC.
 ## Usage: make pending-transactions  or  make pending-transactions ACCOUNT=1

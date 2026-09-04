@@ -1,0 +1,18 @@
+---
+import Layout from '@/layouts/Layout.astro';
+import BridgePanel from '@/components/BridgePanel';
+
+if (process.env.NETWORK !== 'mainnet') {
+  return Astro.redirect('/');
+}
+
+const indexerEnabled = process.env.INDEXER_ENABLED === 'true';
+---
+
+<Layout title="Bridge" activeNav="bridge">
+  <h1 class="text-2xl font-semibold text-gray-100 mb-1">Bridge</h1>
+  <p class="text-sm text-gray-500 mb-6">
+    Move ERC20 tokens between Ethereum and Mintlayer.
+  </p>
+  <BridgePanel client:only="react" indexerEnabled={indexerEnabled} />
+</Layout>

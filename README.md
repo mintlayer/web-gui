@@ -40,6 +40,13 @@ Optional (--profile indexer):
 
 The script walks you through every option (network, wallet, passwords, ports, indexer, Pinata JWT), writes `.env`, and starts the stack. That's all you need for a first run.
 
+**Prebuilt images.** CI publishes multi-arch (amd64 + arm64) images to
+`ghcr.io/mintlayer/web-gui` (`web-gui`, `bdk-wallet`, `btc-explorer`), and
+`init.sh` pulls them automatically — nothing is compiled on the target.
+First-time pulls of a private package need `docker login ghcr.io` (or flip the
+package to public in the GitHub UI). To build from source instead, run
+`docker compose build` after checkout.
+
 ---
 
 ### Using Make
@@ -57,6 +64,8 @@ A `Makefile` wraps the most common Docker Compose commands:
 | `make dev-indexer` | Dev mode + full indexer stack |
 | `make dev-build` | Rebuild the dev image (run after adding npm packages) |
 | `make wallet-cli` | Open an interactive wallet-cli session |
+| `make bitcoin` | Start the optional Bitcoin node + BTC wallet |
+| `make bitcoin-cli CMD='getblockchaininfo'` | Run bitcoin-cli inside the node |
 
 ---
 
@@ -130,6 +139,33 @@ The REST API is available at <http://localhost:3000> (configurable via `API_WEB_
 
 ---
 
+## Optional: Bitcoin node + BTC wallet
+
+Adds a Bitcoin Core node and a built-in BTC wallet (balance, receive, send) to the web UI.
+
+```bash
+docker compose --profile bitcoin up -d      # or: make bitcoin
+```
+
+How it works:
+
+- **`bitcoind`** provides chain data and broadcasts transactions. It needs no host ports.
+- **`bdk-wallet`** is a light-wallet sidecar (BDK, BIP84) that holds the BTC keys and signs
+  transactions locally. The web GUI talks to it over the internal Docker network.
+- The wallet seed is generated in the web UI and **shown exactly once** — back it up when prompted.
+- All BTC API routes require a logged-in session; the sidecar is not reachable from outside.
+
+**Requirements and warnings**
+
+- Mainnet chain data is roughly **700 GB** with the default `txindex=1`. The first sync can
+  take days. Use `BITCOIN_NETWORK=testnet` (or `regtest`) to try it out cheaply.
+- The BTC wallet is a **hot wallet** — keep only spending amounts on it.
+- Pruning (`BITCOIN_PRUNE`) is incompatible with the wallet's history sync; leave it off.
+- Bitcoin Core is pinned to **25.x**: the BDK rpc backend cannot parse the `warnings`
+  format used by Core 26+. Override only if you know what you are doing (`BITCOIND_IMAGE`).
+
+---
+
 ## Useful commands
 
 ```bash
@@ -170,6 +206,7 @@ docker compose pull && docker compose up -d
 | Staking | `/staking` | Staking status and instructions |
 | Token Management | `/token-management` | Issue and manage tokens — **requires indexer** |
 | Trading | `/trading` | DEX trading — **requires indexer** |
+| Bitcoin | `/bitcoin` | BTC balance, receive and send — **requires bitcoin profile** |
 | Wallet setup | `/setup` | Create or open a wallet |
 
 > **Token Management** and **Trading** are hidden when `INDEXER_ENABLED=false` in `.env`.

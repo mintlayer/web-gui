@@ -1,0 +1,182 @@
+name: Mintlayer Daemon Images
+
+# Builds the four Mintlayer daemon images (node-daemon, wallet-rpc-daemon,
+# api-blockchain-scanner-daemon, api-web-server) for amd64 + arm64 from
+# mintlayer-core v1.4.0 — upstream Docker Hub images are amd64-only, which
+# blocks installs on ARM hosts (RPi / arm64 VPS).
+#
+# Native builds on GitHub's free amd64 + arm64 runners (public repos);
+# per-arch images pushed as <ref>-amd64 / -arm64, then merged into
+# multi-arch manifests (:latest on main, :br-<branch>, :sha).
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+
+env:
+  REGISTRY: ghcr.io
+  OWNER: mintlayer
+  IMAGE_NS: ghcr.io/mintlayer/web-gui
+  ML_CORE_REF: v1.4.0
+  DAEMONS: "node-daemon wallet-rpc-daemon api-blockchain-scanner-daemon api-web-server"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runs-on: ubuntu-latest
+          - arch: arm64
+            runs-on: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Checkout mintlayer-core (v1.4.0)
+        uses: actions/checkout@v7
+        with:
+          repository: mintlayer/mintlayer-core
+          ref: ${{ env.ML_CORE_REF }}
+          path: mintlayer-core
+          persist-credentials: false
+
+      # The release build needs serious disk; prune the runner's big preinstalls
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
+          sudo docker image prune -af || true
+          df -h /
+
+      - name: Prepare build context (binaries + entrypoint)
+        run: |
+          mkdir -p build-ctx
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build daemon binaries
+        uses: docker/build-push-action@v6
+        with:
+          context: ./mintlayer-core
+          file: ./docker/mintlayer-daemons.Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          target: artifacts
+          outputs: type=local,dest=out
+          cache-from: type=gha,scope=ml-${{ matrix.arch }}
+          cache-to: type=gha,scope=ml-${{ matrix.arch }},mode=max
+
+      - name: Stage per-daemon runtime contexts
+        run: |
+          set -eu
+          for daemon in $DAEMONS; do
+            mkdir -p "ctx/$daemon"
+            cp "out/$daemon" "ctx/$daemon/"
+            cp mintlayer-core/build-tools/docker/entrypoint.sh "ctx/$daemon/"
+          done
+          ls -la out/ ctx/*/
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tag base
+        id: tagbase
+        env:
+          GITHUB_DEFAULT_BRANCH: main
+        run: |
+          if [[ "$GITHUB_REF" == "refs/tags/v"* ]]; then
+            echo "base=v${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_REF_NAME" == "$GITHUB_DEFAULT_BRANCH" ]]; then
+            echo "base=latest" >> "$GITHUB_OUTPUT"
+          else
+            base="br-${GITHUB_REF_NAME//\//-}"
+            echo "base=$base" >> "$GITHUB_OUTPUT"
+          fi
+          echo "sha=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push per-arch daemon images
+        env:
+          BASE: ${{ steps.tagbase.outputs.base }}
+          SHA_TAG: ${{ steps.tagbase.outputs.sha }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -eu
+          for daemon in $DAEMONS; do
+            for variant in "$BASE" "$SHA_TAG"; do
+              docker build \
+                --build-arg DAEMON_NAME="$daemon" \
+                -f docker/mintlayer-daemon-runtime.Dockerfile \
+                -t "$IMAGE_NS/$daemon:$variant-$ARCH" \
+                "ctx/$daemon"
+            done
+            docker push "$IMAGE_NS/$daemon:$BASE-$ARCH"
+            docker push "$IMAGE_NS/$daemon:$SHA_TAG-$ARCH"
+          done
+
+  manifest:
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      DOCKER_CLI_EXPERIMENTAL: enabled
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tag base
+        id: tagbase
+        env:
+          GITHUB_DEFAULT_BRANCH: main
+        run: |
+          if [[ "$GITHUB_REF" == "refs/tags/v"* ]]; then
+            echo "base=v${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_REF_NAME" == "main" ]]; then
+            echo "base=latest" >> "$GITHUB_OUTPUT"
+          else
+            base="br-${GITHUB_REF_NAME//\//-}"
+            echo "base=$base" >> "$GITHUB_OUTPUT"
+          fi
+          echo "sha=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push multi-arch manifests
+        env:
+          BASE: ${{ steps.tagbase.outputs.base }}
+          SHA_TAG: ${{ steps.tagbase.outputs.sha }}
+          ARCHES: "amd64 arm64"
+          IMAGE_NS: ${{ env.IMAGE_NS }}
+        run: |
+          set -eu
+          # GHCR is eventually consistent right after a push: manifest
+          # creates can hit "manifest unknown" for a minute or two. Retry.
+          sleep 30
+          for daemon in $DAEMONS; do
+            for variant in "$BASE" "$SHA_TAG"; do
+              args=()
+              for arch in $ARCHES; do
+                args+=("--amend" "$IMAGE_NS/$daemon:$variant-$arch")
+              done
+              attempt=1
+              until docker manifest create "$IMAGE_NS/$daemon:$variant" "${args[@]}" >/dev/null; do
+                if [ "$attempt" -ge 6 ]; then
+                  echo "::error::manifest create failed for $IMAGE_NS/$daemon:$variant after $attempt attempts"
+                  exit 1
+                fi
+                echo "attempt $attempt failed - retrying in 30s"
+                sleep 30
+                attempt=$((attempt + 1))
+              done
+              docker manifest push "$IMAGE_NS/$daemon:$variant"
+            done
+          done

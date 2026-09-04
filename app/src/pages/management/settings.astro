@@ -7,6 +7,8 @@ import { sendTelegramMessage } from '@/lib/telegram';
 import { getCredentials, saveCredentials, isValidRpId, getRpId } from '@/lib/passkey';
 import { resolveMcpSettings } from '@/lib/mcp-settings';
 import { resolvePasswordChange, applyPasswordChange } from '@/lib/password-change';
+import { isBitcoinEnabled } from '@/lib/bitcoin-wallet';
+import { ROOT_CA_PATH, DOWNLOAD_FILENAME } from '@/lib/https-ca';
 
 type ActionResult =
   | { action: 'none' }
@@ -118,6 +120,10 @@ if (Astro.request.method === 'POST') {
       }
     }
 
+  } else if (section === 'bitcoin') {
+    setPref('bitcoin.show_ui', form.get('show_ui') === '1');
+    result = { action: 'success', section, message: 'Bitcoin settings saved.' };
+
   } else if (section === 'mcp') {
     // Decision logic (incl. the TOTP gate for write/spend) lives in lib/mcp-settings
     // so it's unit-tested; here we just persist the result.
@@ -181,6 +187,30 @@ const newTotpSecret = result.action === 'success' && result.section === 'reset_2
 const enrolledPasskeys = getCredentials();
 const passkeyRpId = getRpId(Astro.request.url);
 const passkeysSupported = isValidRpId(passkeyRpId);
+
+// Bitcoin section (only when the optional profile is enabled)
+const bitcoinEnabled = isBitcoinEnabled();
+const bitcoinShowUi = bitcoinEnabled && getPref<boolean>('bitcoin.show_ui') !== false;
+
+// HTTPS (LAN access via Caddy's local CA). The CA root appears only after
+// the caddy container has started at least once (it generates the root on
+// first start; a wrapper publishes just the public root.crt into the
+// shared ca-public volume — private keys never leave the caddy container).
+const tlsEnabled = process.env.WEB_GUI_TLS === 'true';
+let localCaPem: string | null = null;
+if (tlsEnabled) {
+  try {
+    const { readFile } = await import('node:fs/promises');
+    localCaPem = await readFile(ROOT_CA_PATH, 'utf8');
+  } catch {
+    localCaPem = null;
+  }
+}
+let localCaFingerprint = '';
+if (localCaPem) {
+  const { createHash } = await import('node:crypto');
+  localCaFingerprint = createHash('sha256').update(localCaPem).digest('hex').toUpperCase().replace(/(.{2})(?=.)/g, '$1:');
+}
 ---
 
 <ManagementLayout title="Settings" activeTab="settings">
@@ -375,6 +405,66 @@ const passkeysSupported = isValidRpId(passkeyRpId);
       </div>
     </section>
 
+    <!-- ── HTTPS (LAN access) ──────────────────────────────────────────────────── -->
+    {tlsEnabled && (
+      <section class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+        <h2 class="text-lg font-semibold text-gray-100 mb-1">HTTPS (LAN access)</h2>
+        <p class="text-sm text-gray-500 mb-4">
+          The GUI is served over HTTPS with a local Certificate Authority (Caddy).
+          Browsers show a one-time warning until you import the CA root certificate
+          on each device you use.
+        </p>
+
+        {localCaPem ? (
+          <div class="space-y-4">
+            <div class="flex items-center gap-3">
+              <span class="w-2 h-2 rounded-full bg-emerald-400 shrink-0"></span>
+              <span class="text-sm text-gray-300">CA root certificate is ready.</span>
+              <a
+                href="/api/https/root-ca"
+                download
+                class="ml-auto rounded-lg bg-mint-700 hover:bg-mint-600 px-4 py-2 text-sm font-semibold text-white transition-colors"
+              >
+                Download root certificate
+              </a>
+            </div>
+            <div class="rounded-lg border border-gray-800 bg-gray-950/60 px-3 py-2.5">
+              <p class="text-xs text-gray-400">
+                Before importing, verify this SHA-256 fingerprint matches the certificate on the host
+                <span class="text-gray-500">(SSH in and run <code class="font-mono text-gray-300">openssl x509 -in /var/lib/docker/volumes/&lt;project&gt;_ca-public/_data/root.crt -noout -fingerprint -sha256</code>)</span>:
+              </p>
+              <code class="block mt-1.5 text-xs font-mono text-mint-300 break-all select-all">{localCaFingerprint}</code>
+            </div>
+            <details class="group">
+              <summary class="cursor-pointer text-xs text-gray-400 hover:text-gray-200 select-none list-none flex items-center gap-1.5">
+                <svg class="w-3 h-3 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                </svg>
+                How to install the root certificate on your device
+              </summary>
+              <div class="mt-3 space-y-3 text-xs text-gray-400 leading-relaxed pl-4 border-l border-gray-800">
+                <p><span class="text-gray-200 font-medium">macOS:</span> double-click the downloaded file (opens Keychain Access), add it to the <em>System</em> keychain, then open it there and set “Trust → When using this certificate” to <em>Always Trust</em>.</p>
+                <p><span class="text-gray-200 font-medium">Windows:</span> double-click the file → <em>Install Certificate</em> → Local Machine → “Place all certificates in the following store” → <em>Trusted Root Certification Authorities</em>.</p>
+                <p><span class="text-gray-200 font-medium">Linux (Debian/Ubuntu):</span> <code class="font-mono text-gray-300">sudo cp {DOWNLOAD_FILENAME} /usr/local/share/ca-certificates/ && sudo update-ca-certificates</code></p>
+                <p><span class="text-gray-200 font-medium">Linux (Arch/Fedora):</span> <code class="font-mono text-gray-300">sudo cp {DOWNLOAD_FILENAME} /etc/ca-certificates/trust-source/anchors/ && sudo update-ca-trust</code> (Arch: <code class="font-mono text-gray-300">/etc/ca-certificates/anchors/</code> + <code class="font-mono text-gray-300">update-ca-trust</code>)</p>
+                <p><span class="text-gray-200 font-medium">iOS:</span> open the download link in Safari → allow the profile → Settings → General → VPN &amp; Device Management → install → then Settings → General → About → Certificate Trust Settings → enable for this certificate.</p>
+                <p><span class="text-gray-200 font-medium">Android:</span> Settings → Security → More security settings → Encryption &amp; credentials → Install a certificate → CA certificate. (App-level traffic may still not honor user CAs; browsers do.)</p>
+                <p class="text-gray-500">Firefox keeps its own certificate store: Settings → Privacy &amp; Security → Certificates → View Certificates → Authorities → Import.</p>
+              </div>
+            </details>
+          </div>
+        ) : (
+          <div class="flex items-center gap-3">
+            <span class="w-2 h-2 rounded-full bg-yellow-400 animate-pulse shrink-0"></span>
+            <span class="text-sm text-gray-400">
+              The CA root hasn’t been generated yet. Start the gateway once on the host:
+              <code class="font-mono text-gray-300 ml-1">docker compose --profile web up -d</code>, then reload this page.
+            </span>
+          </div>
+        )}
+      </section>
+    )}
+
     <!-- ── IPFS Storage ───────────────────────────────────────────────────────── -->
     <section class="bg-gray-900 border border-gray-800 rounded-xl p-6">
       <h2 class="text-lg font-semibold text-gray-100 mb-1">IPFS Storage</h2>
@@ -453,6 +543,88 @@ const passkeysSupported = isValidRpId(passkeyRpId);
         select.addEventListener('change', updateFields);
       </script>
     </section>
+
+    <!-- ── Bitcoin ───────────────────────────────────────────────────────────── -->
+    {bitcoinEnabled && (
+      <section class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+        <h2 class="text-lg font-semibold text-gray-100 mb-1">Bitcoin</h2>
+        <p class="text-sm text-gray-500 mb-5">
+          Optional BTC wallet backed by your own Bitcoin node. Node and wallet services are
+          managed from the host with <code class="font-mono text-xs">docker compose --profile bitcoin</code>.
+        </p>
+
+        {result.action === 'success' && result.section === 'bitcoin' && (
+          <div class="mb-4 px-3 py-2 rounded-lg border border-emerald-800 bg-emerald-950/50 text-emerald-300 text-sm">
+            {result.message}
+          </div>
+        )}
+
+        <div id="bitcoin-status" class="mb-5 rounded-lg border border-gray-800 bg-gray-800/40 px-4 py-3 text-sm text-gray-400">
+          Checking node status…
+        </div>
+
+        <form method="post" class="space-y-3 max-w-md">
+          <input type="hidden" name="section" value="bitcoin" />
+          <label class="flex items-center gap-3 cursor-pointer group">
+            <input
+              type="checkbox" name="show_ui" value="1"
+              checked={bitcoinShowUi}
+              class="w-4 h-4 rounded border-gray-600 bg-gray-800 text-mint-600
+                     focus:ring-mint-500 focus:ring-offset-gray-900"
+            />
+            <span class="text-sm text-gray-300 group-hover:text-gray-100 transition-colors">
+              Show the Bitcoin page in the sidebar
+            </span>
+          </label>
+          <button
+            type="submit"
+            class="py-2 px-4 rounded-lg bg-mint-600 hover:bg-mint-700 text-white text-sm font-medium
+                   transition-colors focus:outline-none focus:ring-2 focus:ring-mint-500 focus:ring-offset-2 focus:ring-offset-gray-900"
+          >
+            Save Bitcoin Settings
+          </button>
+        </form>
+
+        <script>
+          const el = document.getElementById('bitcoin-status')!;
+
+          async function refreshBitcoinStatus() {
+            try {
+              const res = await fetch('/api/bitcoin/overview');
+              const data = await res.json() as {
+                status: {
+                  network: string;
+                  walletExists: boolean;
+                  walletLoaded: boolean;
+                  node: { reachable: boolean; blocks: number; headers: number; synced: boolean };
+                } | null;
+                balance: { confirmed: string } | null;
+              };
+
+              if (!data.status || !data.status.node.reachable) {
+                el.innerHTML = '<span class="text-red-400">● Node offline</span> — start it with <code class="font-mono text-xs">docker compose --profile bitcoin up -d</code>';
+                return;
+              }
+
+              const node = data.status.node;
+              const dot = node.synced ? '<span class="text-mint-400">● Node synced</span>' : '<span class="text-yellow-400">● Node syncing…</span>';
+              const blocks = node.synced
+                ? `at block #${node.blocks.toLocaleString()}`
+                : `#${node.blocks.toLocaleString()} / #${node.headers.toLocaleString()}`;
+              const wallet = !data.status.walletExists
+                ? ' — wallet not created yet (open the Bitcoin page to create one)'
+                : data.status.walletLoaded ? '' : ' — wallet loading…';
+              el.innerHTML = `${dot} <span class="uppercase tracking-wider text-gray-500">${data.status.network}</span> ${blocks}${wallet}`;
+            } catch {
+              el.innerHTML = '<span class="text-red-400">● Bitcoin service unreachable</span>';
+            }
+          }
+
+          refreshBitcoinStatus();
+          setInterval(refreshBitcoinStatus, 15_000);
+        </script>
+      </section>
+    )}
 
     <!-- ── Telegram Notifications ─────────────────────────────────────────────── -->
     <section class="bg-gray-900 border border-gray-800 rounded-xl p-6">

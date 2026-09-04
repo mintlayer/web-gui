@@ -24,7 +24,7 @@ services:
     # Images update via Watchtower (opt-in, profile "watchtower") or manual pulls.
     # For strict supply-chain pinning, set ML_*_IMAGE env overrides to a
     # digest-pinned ref, e.g. ML_NODE_DAEMON_IMAGE=mintlayer/node-daemon@sha256:<digest>.
-    image: "${ML_NODE_DAEMON_IMAGE:-mintlayer/node-daemon:latest}"
+    image: "${ML_NODE_DAEMON_IMAGE:-ghcr.io/mintlayer/web-gui/node-daemon:latest}"
     command: "node-daemon ${NETWORK:-mainnet}"
     labels:
       com.centurylinklabs.watchtower.enable: "true"
@@ -45,7 +45,7 @@ services:
   # ─────────────────────────────────────────
   wallet-rpc-daemon:
     <<: *common
-    image: "${ML_WALLET_RPC_DAEMON_IMAGE:-mintlayer/wallet-rpc-daemon:latest}"
+    image: "${ML_WALLET_RPC_DAEMON_IMAGE:-ghcr.io/mintlayer/web-gui/wallet-rpc-daemon:latest}"
     command: "${WALLET_RPC_CMD:-wallet-rpc-daemon mainnet}"
     labels:
       com.centurylinklabs.watchtower.enable: "true"
@@ -76,6 +76,9 @@ services:
   # Web GUI (Astro SSR app)
   # ─────────────────────────────────────────
   web-gui:
+    # Prebuilt multi-arch image from CI (amd64+arm64). Override the ref or
+    # run `docker compose build` to compile locally instead.
+    image: "${WEB_GUI_IMAGE:-ghcr.io/mintlayer/web-gui/web-gui:latest}"
     build:
       context: ./app
       dockerfile: Dockerfile
@@ -94,6 +97,10 @@ services:
       - "./mintlayer-data/prefs:/app/prefs"
       # Installed plugins — persists across restarts
       - "./mintlayer-data/plugins:/app/plugins"
+      # Public part of Caddy's local CA (root.crt only — never the PKI keys).
+      # The caddy container exports the root into this volume; see its
+      # command wrapper below.
+      - "ca-public:/certs:ro"
     ports:
       - "${WEB_GUI_BIND:-127.0.0.1}:${WEB_GUI_PORT:-4321}:4321"  # loopback by default; opt in via WEB_GUI_BIND
     environment:
@@ -111,8 +118,105 @@ services:
       SESSION_SECRET: "${SESSION_SECRET}"
       WALLET_RPC_CMD: "${WALLET_RPC_CMD:-}"
       INDEXER_ENABLED: "${INDEXER_ENABLED:-false}"
+      BITCOIN_ENABLED: "${BITCOIN_ENABLED:-false}"
+      BITCOIN_NETWORK: "${BITCOIN_NETWORK:-}"
+      BITCOIN_WALLET_URL: "http://bdk-wallet:8080"
+      BITCOIN_WALLET_USERNAME: "${BITCOIN_WALLET_HTTP_USERNAME:-}"
+      BITCOIN_WALLET_PASSWORD: "${BITCOIN_WALLET_HTTP_PASSWORD:-}"
+      BITCOIN_EXPLORER_URL: "${BITCOIN_EXPLORER_URL:-}"
       HOST: "0.0.0.0"
+      # Settings -> HTTPS section renders only when the gateway is enabled
+      WEB_GUI_TLS: "${WEB_GUI_TLS:-false}"
       PORT: "4321"
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────
+  # Optional: Bitcoin Core node  (profile: bitcoin)
+  #
+  # Chain data + tx broadcast for the BTC wallet. No host ports by default.
+  # Pinned to Core 25: bdk's rpc backend (core-rpc 0.17) cannot parse the
+  # `warnings` array format introduced in Core 26.
+  # Start with: docker compose --profile bitcoin up -d
+  # ─────────────────────────────────────────
+  bitcoind:
+    image: "${BITCOIND_IMAGE:-bitcoin/bitcoin:25}"
+    volumes:
+      - "./bitcoin-data:/home/bitcoin/.bitcoin"
+    command:
+      - "-printtoconsole=1"
+      # Bitcoin Core's -chain wants "main", not "mainnet" — override with
+      # BITCOIN_CORE_CHAIN in .env (init.sh derives it).
+      - "-chain=${BITCOIN_CORE_CHAIN:-${BITCOIN_NETWORK:-mainnet}}"
+      - "-rpcbind=0.0.0.0:8332"
+      - "-rpcallowip=0.0.0.0/0"
+      - "-rpcuser=${BITCOIN_RPC_USERNAME}"
+      - "-rpcpassword=${BITCOIN_RPC_PASSWORD}"
+      # txindex is required by the BDK wallet to resolve historical
+      # transactions; pruning is incompatible with the wallet history sync.
+      - "-txindex=${BITCOIN_TXINDEX:-1}"
+      - "-prune=${BITCOIN_PRUNE:-0}"
+      - "-fallbackfee=0.0002"
+    # Uncomment to expose the Bitcoin RPC to the host
+    # ports:
+    #   - "8332:8332"
+    profiles:
+      - bitcoin
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────
+  # Optional: BTC block explorer  (profile: bitcoin)
+  #
+  # btc-rpc-explorer, wired to the local bitcoind. Gives the web-gui
+  # something to link txs/addresses to on regtest, where no public
+  # explorer exists. Published to loopback only; public networks default
+  # to mempool.space links instead (override with BITCOIN_EXPLORER_URL).
+  # ─────────────────────────────────────────
+  btc-explorer:
+    image: "${BTC_EXPLORER_IMAGE:-ghcr.io/mintlayer/web-gui/btc-explorer:latest}"
+    build:
+      context: ./btc-explorer
+      args:
+        BTC_RPC_EXPLORER_REF: "${BTC_RPC_EXPLORER_REF:-v3.5.1}"
+    depends_on:
+      - bitcoind
+    environment:
+      BTCEXP_BITCOIND_URI: "bitcoin://${BITCOIN_RPC_USERNAME}:${BITCOIN_RPC_PASSWORD}@bitcoind:8332?timeout=15000"
+      BTCEXP_HOST: "0.0.0.0"
+      BTCEXP_PORT: "3002"
+      BTCEXP_ADDRESS_API: "none"
+    ports:
+      - "127.0.0.1:${BITCOIN_EXPLORER_PORT:-3002}:3002"
+    profiles:
+      - bitcoin
+    restart: unless-stopped
+  # ─────────────────────────────────────────
+  # Optional: BDK Bitcoin wallet sidecar  (profile: bitcoin)
+  #
+  # Light wallet (BIP84) holding the BTC keys; talks to bitcoind for chain
+  # data and broadcasting. The web-gui proxies all requests to its HTTP API.
+  # Secrets never leave this container; only the compose network can reach it.
+  # ─────────────────────────────────────────
+  bdk-wallet:
+    build: ./bdk-wallet
+    image: "${BDK_WALLET_IMAGE:-ghcr.io/mintlayer/web-gui/bdk-wallet:latest}"
+    # Match the bind-mount owner (init.sh pre-creates ./bitcoin-wallet-data
+    # as the host user; ML_USER_ID/GROUP_ID follow the host user like web-gui).
+    user: "${ML_USER_ID:-1000}:${ML_GROUP_ID:-1000}"
+    depends_on:
+      - bitcoind
+    volumes:
+      - "./bitcoin-wallet-data:/data"
+    environment:
+      BITCOIN_NETWORK: "${BITCOIN_NETWORK:-mainnet}"
+      BITCOIN_RPC_URL: "http://bitcoind:8332"
+      BITCOIN_RPC_USERNAME: "${BITCOIN_RPC_USERNAME}"
+      BITCOIN_RPC_PASSWORD: "${BITCOIN_RPC_PASSWORD}"
+      WALLET_HTTP_USERNAME: "${BITCOIN_WALLET_HTTP_USERNAME}"
+      WALLET_HTTP_PASSWORD: "${BITCOIN_WALLET_HTTP_PASSWORD}"
+      DATA_DIR: "/data"
+      RUST_LOG: "${RUST_LOG:-info}"
+    profiles:
+      - bitcoin
     restart: unless-stopped
 
   # ─────────────────────────────────────────
@@ -172,7 +276,10 @@ services:
 
   api-blockchain-scanner-daemon:
     <<: *common
-    image: "${ML_API_SCANNER_IMAGE:-mintlayer/api-blockchain-scanner-daemon:latest}"
+    image: "${ML_API_SCANNER_IMAGE:-ghcr.io/mintlayer/web-gui/api-blockchain-scanner-daemon:latest}"
+    # The daemon runtime image has no baked-in CMD; the entrypoint (gosu
+    # wrapper) needs the binary path as its argument.
+    command: "/usr/bin/api-blockchain-scanner-daemon"
     labels:
       com.centurylinklabs.watchtower.enable: "true"
     depends_on:
@@ -194,7 +301,9 @@ services:
     restart: unless-stopped
 
   api-web-server:
-    image: "${ML_API_WEB_SERVER_IMAGE:-mintlayer/api-web-server:latest}"
+    image: "${ML_API_WEB_SERVER_IMAGE:-ghcr.io/mintlayer/web-gui/api-web-server:latest}"
+    # No baked-in CMD in the runtime image — pass the binary explicitly.
+    command: "/usr/bin/api-web-server"
     labels:
       com.centurylinklabs.watchtower.enable: "true"
     depends_on:
@@ -216,5 +325,54 @@ services:
       - indexer
     restart: unless-stopped
 
+  # ─────────────────────────────────────────
+  # LAN HTTPS gateway (profile: web)
+  #
+  # Caddy terminates TLS in front of web-gui using its own local Certificate
+  # Authority (no public domain needed). Enable via init.sh's access-mode
+  # question (or WEB_GUI_TLS=true in .env + --profile web). Browsers show a
+  # one-time warning until the CA root is imported on the client — download
+  # it from Settings → HTTPS, which serves it out of the same volume.
+  # web-gui keeps binding to 127.0.0.1 on the host; only Caddy is exposed.
+  # ─────────────────────────────────────────
+  caddy:
+    image: "${CADDY_IMAGE:-caddy:2-alpine}"
+    depends_on:
+      - web-gui
+    ports:
+      - "${WEB_GUI_TLS_BIND:-0.0.0.0}:${WEB_GUI_TLS_PORT:-443}:443"
+    volumes:
+      - "./caddy/Caddyfile:/etc/caddy/Caddyfile:ro"
+      - "caddy-data:/data"
+      - "caddy-config:/config"
+      # Public export of the CA root. Caddy's PKI volume also holds the CA
+      # private keys — those stay caddy-exclusive; only root.crt crosses.
+      - "ca-public:/ca-public"
+    environment:
+      WEB_GUI_HOST: "${WEB_GUI_HOST:-localhost}"
+    # Run caddy alongside a tiny loop that publishes the CA root into the
+    # ca-public volume (the root is generated lazily on first cert issue).
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        caddy run --config /etc/caddy/Caddyfile --adapter caddyfile &
+        while :; do
+          if [ -f /data/caddy/pki/authorities/local/root.crt ]; then
+            if ! cmp -s /data/caddy/pki/authorities/local/root.crt /ca-public/root.crt 2>/dev/null; then
+              cp -f /data/caddy/pki/authorities/local/root.crt /ca-public/root.crt
+              chmod 644 /ca-public/root.crt
+              echo "published local CA root to /ca-public/root.crt"
+            fi
+          fi
+          sleep 5
+        done
+    profiles:
+      - web
+    restart: unless-stopped
+
 volumes:
   postgres-data:
+  caddy-data:
+  caddy-config:
+  ca-public:
