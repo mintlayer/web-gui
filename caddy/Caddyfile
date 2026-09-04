@@ -1,0 +1,24 @@
+# LAN HTTPS gateway for the web GUI.
+#
+# Mounted read-only into the caddy container (profile "web"). The site
+# address comes from the WEB_GUI_HOST env var (Caddy {$VAR} syntax) — set by
+# docker-compose from the value chosen in init.sh, e.g. ml1.local.
+#
+# `local_certs` makes Caddy act as its own Certificate Authority: it
+# generates a root certificate on first start (persisted in the caddy-data
+# volume) and issues valid TLS certificates for the configured hostname.
+# Browsers warn until the root is imported on the client — download it from
+# Settings → HTTPS in the web GUI, which serves it out of the same volume.
+
+{
+	local_certs
+}
+
+{$WEB_GUI_HOST} {
+	# Overwrite (not append) X-Forwarded-For: the app trusts the first entry
+	# when TRUST_PROXY=true, so an appended attacker-controlled chain would
+	# defeat per-IP login rate limiting. Overwriting keeps it honest.
+	reverse_proxy web-gui:4321 {
+		header_up X-Forwarded-For {client_ip}
+	}
+}

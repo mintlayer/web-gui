@@ -97,6 +97,10 @@ services:
       - "./mintlayer-data/prefs:/app/prefs"
       # Installed plugins — persists across restarts
       - "./mintlayer-data/plugins:/app/plugins"
+      # Public part of Caddy's local CA (root.crt only — never the PKI keys).
+      # The caddy container exports the root into this volume; see its
+      # command wrapper below.
+      - "ca-public:/certs:ro"
     ports:
       - "${WEB_GUI_BIND:-127.0.0.1}:${WEB_GUI_PORT:-4321}:4321"  # loopback by default; opt in via WEB_GUI_BIND
     environment:
@@ -121,6 +125,8 @@ services:
       BITCOIN_WALLET_PASSWORD: "${BITCOIN_WALLET_HTTP_PASSWORD:-}"
       BITCOIN_EXPLORER_URL: "${BITCOIN_EXPLORER_URL:-}"
       HOST: "0.0.0.0"
+      # Settings -> HTTPS section renders only when the gateway is enabled
+      WEB_GUI_TLS: "${WEB_GUI_TLS:-false}"
       PORT: "4321"
     restart: unless-stopped
 
@@ -319,5 +325,54 @@ services:
       - indexer
     restart: unless-stopped
 
+  # ─────────────────────────────────────────
+  # LAN HTTPS gateway (profile: web)
+  #
+  # Caddy terminates TLS in front of web-gui using its own local Certificate
+  # Authority (no public domain needed). Enable via init.sh's access-mode
+  # question (or WEB_GUI_TLS=true in .env + --profile web). Browsers show a
+  # one-time warning until the CA root is imported on the client — download
+  # it from Settings → HTTPS, which serves it out of the same volume.
+  # web-gui keeps binding to 127.0.0.1 on the host; only Caddy is exposed.
+  # ─────────────────────────────────────────
+  caddy:
+    image: "${CADDY_IMAGE:-caddy:2-alpine}"
+    depends_on:
+      - web-gui
+    ports:
+      - "${WEB_GUI_TLS_BIND:-0.0.0.0}:${WEB_GUI_TLS_PORT:-443}:443"
+    volumes:
+      - "./caddy/Caddyfile:/etc/caddy/Caddyfile:ro"
+      - "caddy-data:/data"
+      - "caddy-config:/config"
+      # Public export of the CA root. Caddy's PKI volume also holds the CA
+      # private keys — those stay caddy-exclusive; only root.crt crosses.
+      - "ca-public:/ca-public"
+    environment:
+      WEB_GUI_HOST: "${WEB_GUI_HOST:-localhost}"
+    # Run caddy alongside a tiny loop that publishes the CA root into the
+    # ca-public volume (the root is generated lazily on first cert issue).
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        caddy run --config /etc/caddy/Caddyfile --adapter caddyfile &
+        while :; do
+          if [ -f /data/caddy/pki/authorities/local/root.crt ]; then
+            if ! cmp -s /data/caddy/pki/authorities/local/root.crt /ca-public/root.crt 2>/dev/null; then
+              cp -f /data/caddy/pki/authorities/local/root.crt /ca-public/root.crt
+              chmod 644 /ca-public/root.crt
+              echo "published local CA root to /ca-public/root.crt"
+            fi
+          fi
+          sleep 5
+        done
+    profiles:
+      - web
+    restart: unless-stopped
+
 volumes:
   postgres-data:
+  caddy-data:
+  caddy-config:
+  ca-public:

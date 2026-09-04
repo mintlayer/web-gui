@@ -396,27 +396,58 @@ while ! [[ "$WEB_GUI_PORT" =~ ^[0-9]+$ ]] || (( WEB_GUI_PORT < 1 || WEB_GUI_PORT
 done
 
 ask "Expose the web GUI to your network?"
-hint "By default the GUI binds to 127.0.0.1 and is reachable only from this machine (recommended)."
-hint "Only expose it if other devices on your LAN need to open the login page."
-hint "Note: LAN access is plain HTTP — browsers reject the Secure session cookie on"
-hint "non-localhost hostnames, so login will fail from other machines anyway."
-prompt WEB_GUI_BIND_ANSWER "Expose to network? [y/N]:" "n"
-case "$WEB_GUI_BIND_ANSWER" in
-  [yY]|[yY][eE][sS])
+hint "Three access modes:"
+hint "  localhost only — the GUI is reachable solely from this machine;"
+hint "    open it through an SSH tunnel. Most secure."
+hint "  LAN over HTTPS — other devices open it at https://<hostname>; Caddy"
+hint "    terminates TLS with a local Certificate Authority (works without a"
+hint "    public domain). Browsers warn once until you import the CA root,"
+hint "    downloadable from Settings -> HTTPS after setup."
+hint "  LAN plain HTTP — not recommended: traffic is unencrypted and the"
+hint "    session cookie is refused on non-localhost origins, so sign-in only"
+hint "    works from this machine anyway."
+hint "Running your own TLS proxy on a public domain? Pick 'localhost only'"
+hint "and set WEB_GUI_HOST + PASSKEY_* in .env manually (see .env.example)."
+ACCESS_CHOICE=""
+choose ACCESS_CHOICE "Access mode:" \
+  "localhost only (SSH tunnel)" \
+  "LAN over HTTPS (Caddy local CA)" \
+  "LAN plain HTTP (not recommended)"
+
+WEB_GUI_TLS="false"
+WEB_GUI_BIND="127.0.0.1"
+WEB_GUI_HOST="localhost"
+case "$ACCESS_CHOICE" in
+  *"LAN over HTTPS"*)
+    WEB_GUI_TLS="true"
+    ask "Hostname for the HTTPS certificate"
+    hint "Must resolve to this machine from your devices, e.g. ml1.local"
+    hint "(mDNS) or an entry in your router's DNS / your device's hosts file."
+    prompt WEB_GUI_HOST "Hostname:" "$(hostname -s 2>/dev/null || echo mintlayer-gui).local"
+    # Hostname flows into the Caddyfile (pre-parse textual substitution),
+    # docker-compose env interpolation, and the WebAuthn RP ID — so it must
+    # be a plain lowercase DNS name. Uppercase is normalized; everything
+    # else invalid is re-asked.
+    while ! [[ "${WEB_GUI_HOST,,}" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$ ]]; do
+      printf "${CYAN}│${RESET}  ${RED}Enter a valid hostname (letters, digits, dots, hyphens — no ports, spaces or underscores)${RESET}\n"
+      prompt WEB_GUI_HOST "Hostname:" "$(hostname -s 2>/dev/null || echo mintlayer-gui).local"
+    done
+    WEB_GUI_HOST="${WEB_GUI_HOST,,}"
+    warn "The GUI stays bound to 127.0.0.1 — only the HTTPS gateway (port 443) is exposed."
+    hint "Always open https://${WEB_GUI_HOST} — plain http:// (port 80) is not published."
+    ;;
+  *"LAN plain HTTP"*)
     WEB_GUI_BIND="0.0.0.0"
     warn "GUI will be reachable from other machines (plain HTTP)."
+    warn "Login requires a Secure session cookie, which browsers refuse on"
+    warn "plain HTTP for non-localhost origins — sign-in works only locally."
     ;;
   *)
-    WEB_GUI_BIND="127.0.0.1"
     ;;
 esac
 
-ask "Public hostname (optional — required for Passkeys)"
-hint "If you access this GUI via a DNS name (e.g. DuckDNS, your own domain), enter it here."
-hint "Passkeys (biometric / hardware-key login) require a proper hostname — they do not work"
-hint "with raw IP addresses. Leave blank to use localhost-only access."
-hint "Example: wallet.duckdns.org"
-prompt WEB_GUI_HOST "Hostname (leave blank for localhost):" ""
+# Passkeys (WebAuthn) need a proper DNS hostname — they never work from raw
+# IPs. The HTTPS mode implies one; localhost/plain-HTTP keep passkeys off.
 
 # Derive passkey config from hostname
 if [[ -z "$WEB_GUI_HOST" || "$WEB_GUI_HOST" == "localhost" ]]; then
@@ -652,6 +683,7 @@ printf "${CYAN}│${RESET}  %-22s %s\n" "Network:"           "${BOLD}${NETWORK}$
 printf "${CYAN}│${RESET}  %-22s %s\n" "Passwords:"  "${BOLD}$([ "$USE_RANDOM_PASSWORDS" == "yes" ] && echo "randomly generated" || echo "custom")${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Web UI auth:"  "${BOLD}password + TOTP 2FA${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Web GUI:"    "${BOLD}${PASSKEY_ORIGIN}${RESET}"
+printf "${CYAN}│${RESET}  %-22s %s\n" "LAN HTTPS:"   "${BOLD}$([ "$WEB_GUI_TLS" == "true" ] && echo "enabled (${WEB_GUI_HOST}, local CA)" || echo "disabled")${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Passkeys:"   "${BOLD}$([ "$WEB_GUI_HOST" != "localhost" ] && echo "enabled (${WEB_GUI_HOST})" || echo "localhost only")${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Indexer:"      "${BOLD}$([ "$ENABLE_INDEXER" == "yes" ] && echo "enabled (port ${API_WEB_SERVER_PORT}) — Token Management + Trading active" || echo "disabled — Token Management + Trading hidden")${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Bitcoin:"     "${BOLD}$([ "$ENABLE_BITCOIN" == "yes" ] && echo "enabled (node + BTC wallet)" || echo "disabled")${RESET}"
@@ -739,6 +771,9 @@ WEB_GUI_PORT=${WEB_GUI_PORT}
 WEB_GUI_HOST=${WEB_GUI_HOST}
 # Bind address for the GUI port: 127.0.0.1 (default) or 0.0.0.0 (opted in above)
 WEB_GUI_BIND=${WEB_GUI_BIND}
+
+# LAN HTTPS gateway (Caddy local CA, profile: web)
+WEB_GUI_TLS=${WEB_GUI_TLS}
 
 # Passkeys (WebAuthn) — derived from WEB_GUI_HOST above
 # Override these if running behind a reverse proxy that changes the visible hostname.
@@ -830,6 +865,9 @@ if [[ "$START" == "yes" ]]; then
   if [[ "$ENABLE_WATCHTOWER" == "yes" ]]; then
     PROFILES="$PROFILES --profile watchtower"
   fi
+  if [[ "$WEB_GUI_TLS" == "true" ]]; then
+    PROFILES="$PROFILES --profile web"
+  fi
 
   # Pull the CI-built multi-arch images (amd64+arm64) from ghcr.io and start.
   # Local rebuilds stay available: docker compose build (see README).
@@ -868,6 +906,13 @@ if [[ "$ENABLE_BITCOIN" == "yes" ]]; then
   printf "  ${DIM}Bitcoin: the BTC node syncs independently (days on mainnet).${RESET}\n"
   printf "  ${DIM}Open the Bitcoin page in the web UI to create your BTC wallet${RESET}\n"
   printf "  ${DIM}and back up its seed phrase when prompted.${RESET}\n"
+fi
+if [[ "$WEB_GUI_TLS" == "true" ]]; then
+  printf "\n"
+  printf "  ${DIM}HTTPS: Caddy generates the local CA on first start (may take a few seconds).${RESET}\n"
+  printf "  ${DIM}Open https://${WEB_GUI_HOST} once, accept the warning, then download the CA${RESET}\n"
+  printf "  ${DIM}root from Settings -> HTTPS to silence it permanently on your devices.${RESET}\n"
+  printf "  ${DIM}Passkeys are available automatically since you have a proper hostname.${RESET}\n"
 fi
 printf "\n"
 
