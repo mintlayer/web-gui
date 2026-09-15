@@ -233,6 +233,43 @@ To expose the wallet RPC port to the host, uncomment the `ports` block for `wall
 
 ---
 
+## Optional: MCP server (AI assistants)
+
+The image ships a [Model Context Protocol](https://modelcontextprotocol.io) server
+(`app/scripts/mcp-server.mjs`, stdio) that exposes your wallet to AI assistants
+such as Claude Desktop or Cursor.
+
+**Enable it** in the web GUI: *Management → Settings → MCP Server*. Three tiers:
+
+| Tier | Grants | Requires |
+| ---- | ------ | -------- |
+| read | balances, addresses, transactions, UTXOs, staking and order overviews | Enabled |
+| actions | new address, start/stop staking, abandon transaction | Allow wallet actions |
+| spend | send coins, sweep, token issuance/management, order trading | Allow fund-moving operations |
+
+Granting the actions or spend tiers requires 2FA to be configured and a valid
+authenticator code. Permissions are re-read from the prefs database on every
+tool call, so changes apply immediately. Secret operations (seed phrase,
+private-key unlock) are never available through MCP. A per-transaction send cap
+can be set with the `mcp.max_send_amount` pref (decimal ML).
+
+**Client configuration** (shown in the settings panel):
+
+```json
+{
+  "mcpServers": {
+    "mintlayer-wallet": {
+      "command": "docker",
+      "args": ["compose", "-f", "/path/to/mintlayer-web-gui/docker-compose.yml",
+               "run", "--rm", "-T", "--no-deps",
+               "web-gui", "node", "scripts/mcp-server.mjs"]
+    }
+  }
+}
+```
+
+Tests: `cd app && npx vitest run scripts/mcp-server.test.mjs scripts/mcp-permissions.test.mjs`.
+
 ## Credential recovery
 
 ### Change password (you know the current one)
