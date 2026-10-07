@@ -33,7 +33,7 @@ export const GET: APIRoute = async ({ request, clientAddress }) => {
     userVerification: 'preferred',
   });
 
-  const token = createChallenge(options.challenge);
+  const token = createChallenge(options.challenge, 'authentication');
 
   return json(options, 200, {
     'Set-Cookie': makeChallengeCookieHeader(token),

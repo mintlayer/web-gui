@@ -53,7 +53,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     },
   });
 
-  const token = createChallenge(options.challenge);
+  const token = createChallenge(options.challenge, 'registration');
 
   return json(options, 200, {
     'Set-Cookie': makeChallengeCookieHeader(token),

@@ -28,7 +28,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     return json({ error: 'Passkeys require a DNS hostname.' }, 400);
   }
 
-  const expectedChallenge = consumeChallengeFromRequest(request);
+  const expectedChallenge = consumeChallengeFromRequest(request, 'authentication');
 
   if (!expectedChallenge) {
     return json({ error: 'Challenge expired or missing. Please try again.' }, 400, {
