@@ -23,10 +23,18 @@ if (Astro.request.method === 'POST') {
       if (!file || typeof file === 'string' || file.size === 0) {
         result = { action: 'error', message: 'No file selected.' };
       } else {
+        // Server-side self-call: undici fetch sends no Origin of its own,
+        // which the CSRF guard reads as cross-site for form-like bodies —
+        // relay the browser's Origin so the request keeps its same-origin
+        // status and every API-side gate (CSRF, 2FA, size cap) still runs.
+        const relay = {
+          cookie: Astro.request.headers.get('cookie') ?? '',
+          origin: Astro.request.headers.get('origin') ?? '',
+        };
         const res  = await fetch(new URL('/api/plugins/install', Astro.url), {
           method: 'POST',
           body:    form,
-          headers: { cookie: Astro.request.headers.get('cookie') ?? '' },
+          headers: relay,
         });
         const data = await res.json() as { ok: boolean; plugin?: { name: string }; error?: string };
         result = data.ok
@@ -40,6 +48,7 @@ if (Astro.request.method === 'POST') {
         headers: {
           'Content-Type': 'application/json',
           cookie: Astro.request.headers.get('cookie') ?? '',
+          origin: Astro.request.headers.get('origin') ?? '',
         },
         // Enabling activates dormant plugin code — carries the TOTP code for
         // the step-up gate; disabling needs no code.
@@ -53,7 +62,10 @@ if (Astro.request.method === 'POST') {
       const res  = await fetch(new URL(`/api/plugins/${pluginId}/uninstall`, Astro.url), {
         method: 'POST',
         body:    form, // carries totp_code for the step-up auth gate
-        headers: { cookie: Astro.request.headers.get('cookie') ?? '' },
+        headers: {
+          cookie: Astro.request.headers.get('cookie') ?? '',
+          origin: Astro.request.headers.get('origin') ?? '',
+        },
       });
       const data = await res.json() as { ok: boolean; error?: string };
       result = data.ok
@@ -188,18 +200,22 @@ const plugins = getInstalledPlugins().map((p) => ({
                 <input type="hidden" name="plugin_id" value={plugin.id} />
                 <input type="hidden" name="enabled" value={plugin.enabled ? 'false' : 'true'} />
                 {!plugin.enabled && (
-                  <input
-                    type="text"
-                    name="totp_code"
-                    inputmode="numeric"
-                    autocomplete="one-time-code"
-                    pattern="[0-9]{6}"
-                    maxlength="6"
-                    required
-                    placeholder="2FA"
-                    title="Enabling dormant plugin code needs a fresh 2FA code"
-                    class="w-20 rounded bg-gray-800 border border-gray-700 text-gray-100 px-2 py-1.5 text-sm tracking-[0.2em] focus:outline-none focus:ring-2 focus:ring-mint-600"
-                  />
+                  <div class="flex flex-col items-end">
+                    <input
+                      type="text"
+                      name="totp_code"
+                      aria-label="2FA code (required to enable)"
+                      inputmode="numeric"
+                      autocomplete="one-time-code"
+                      pattern="[0-9]{6}"
+                      maxlength="6"
+                      required
+                      placeholder="2FA"
+                      title="Enabling dormant plugin code needs a fresh 2FA code"
+                      class="w-20 rounded bg-gray-800 border border-gray-700 text-gray-100 px-2 py-1.5 text-sm tracking-[0.2em] focus:outline-none focus:ring-2 focus:ring-mint-600"
+                    />
+                    <span class="text-[10px] text-gray-500 mt-1">Enabling needs a fresh 2FA code</span>
+                  </div>
                 )}
                 <button
                   type="submit"
@@ -231,10 +247,16 @@ const plugins = getInstalledPlugins().map((p) => ({
   </div>
 
   <!-- Uninstall confirmation modal -->
-  <div id="uninstall-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+  <div
+    id="uninstall-modal"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="uninstall-modal-title"
+    class="hidden fixed inset-0 z-50 flex items-center justify-center"
+  >
     <div class="absolute inset-0 bg-black/60" onclick="closeUninstallModal()"></div>
     <div class="relative bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-sm mx-4 p-6 space-y-4">
-      <h3 class="text-base font-semibold text-gray-100">Uninstall plugin?</h3>
+      <h3 id="uninstall-modal-title" class="text-base font-semibold text-gray-100">Uninstall plugin?</h3>
       <p class="text-sm text-gray-400">
         This will permanently remove <strong id="uninstall-plugin-name" class="text-gray-200"></strong> and delete all its files. This action cannot be undone.
       </p>
@@ -276,7 +298,9 @@ const plugins = getInstalledPlugins().map((p) => ({
   </div>
 
   <script is:inline>
+    let lastFocusedBeforeModal = null;
     function openUninstallModal(id, name) {
+      lastFocusedBeforeModal = document.activeElement;
       document.getElementById('uninstall-plugin-id').value = id;
       document.getElementById('uninstall-plugin-name').textContent = name;
       document.getElementById('uninstall-modal').classList.remove('hidden');
@@ -285,9 +309,24 @@ const plugins = getInstalledPlugins().map((p) => ({
     }
     function closeUninstallModal() {
       document.getElementById('uninstall-modal').classList.add('hidden');
+      if (lastFocusedBeforeModal && typeof lastFocusedBeforeModal.focus === 'function') {
+        lastFocusedBeforeModal.focus();
+        lastFocusedBeforeModal = null;
+      }
     }
     document.addEventListener('keydown', function(e) {
-      if (e.key === 'Escape') closeUninstallModal();
+      if (e.key === 'Escape') { e.preventDefault(); closeUninstallModal(); }
+    });
+    // One submission per form: the POST re-renders the page, but a slow
+    // upload (install) or double-click would otherwise fire two requests
+    // and burn two 2FA codes.
+    document.querySelectorAll('form[method="post"]').forEach(function (f) {
+      f.addEventListener('submit', function (e) {
+        if (f.dataset.submitted === 'true') { e.preventDefault(); return; }
+        f.dataset.submitted = 'true';
+        var btn = f.querySelector('button[type="submit"]');
+        if (btn) btn.disabled = true;
+      });
     });
   </script>
 
