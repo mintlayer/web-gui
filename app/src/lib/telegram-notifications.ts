@@ -116,7 +116,7 @@ export async function pollNotifications(
     if (state.rpcFailures === OFFLINE_THRESHOLD) {
       const msg = err instanceof WalletRpcError ? err.message : String(err);
       await maybeNotify(botToken, chatId, 'offline',
-        `🔴 <b>Node appears offline</b>\n\n${msg}`, true);
+        `🔴 <b>Node appears offline</b>\n\n${escapeHtml(msg)}`, true);
       state.nodeOnline = false;
     }
     // Don't update state further - we have no fresh data
@@ -205,6 +205,11 @@ export async function pollNotifications(
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
+
+/** Escape text for Telegram HTML parse_mode (raw daemon errors can contain <>&). */
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 
 async function maybeNotify(
   botToken: string,
