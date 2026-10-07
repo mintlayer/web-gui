@@ -228,6 +228,9 @@ export function DecommissionButton({ poolId }: DecommissionProps) {
   const needsTotp = totp.length !== 6;
 
   const handleClick = async () => {
+    if (!window.confirm(`Decommission pool ${poolId}? Your stake is returned to the output address. This cannot be undone.`)) {
+      return;
+    }
     setLoading(true);
     setError(null);
     try {

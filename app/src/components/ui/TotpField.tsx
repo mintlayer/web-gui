@@ -1,4 +1,4 @@
-import type { RefObject } from 'react';
+import { useId, type RefObject } from 'react';
 
 /**
  * Shared 6-digit TOTP input used by token-authority flows. Strips non-digits
@@ -17,10 +17,12 @@ export function TotpField({
   disabled?: boolean;
   className?: string;
 }) {
+  const id = useId();
   return (
     <div>
-      <label className="block text-xs text-gray-400 mb-1">2FA code</label>
+      <label htmlFor={id} className="block text-xs text-gray-400 mb-1">2FA code</label>
       <input
+        id={id}
         ref={inputRef}
         type="text"
         inputMode="numeric"
@@ -30,7 +32,6 @@ export function TotpField({
         onChange={e => onChange(e.target.value.replace(/\D/g, '').slice(0, 6))}
         placeholder="000000"
         disabled={disabled}
-        aria-invalid={false}
         className={
           className ||
           'w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600 px-3 py-2 text-sm font-mono tracking-[0.3em] focus:outline-none focus:ring-2 focus:ring-mint-600 disabled:opacity-50'

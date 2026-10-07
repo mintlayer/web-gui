@@ -261,7 +261,7 @@ export default function DelegationPanel({ poolId, initialDelegations, network }:
       }
 
       setNewState("success");
-      setNewMsg("");
+      setNewMsg("Delegation created. It appears below once confirmed; use a fresh 2FA code to add funds to it.");
       setNewTotp("");
 
       // Refresh list — the new delegation row appears with its own Add input.
