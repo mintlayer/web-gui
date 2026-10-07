@@ -7,7 +7,9 @@ export const ALLOWED_RPC_METHODS = new Set([
   // Addresses
   'address_new',
   'address_show',
-  'address_send',
+  // NOTE: address_send and token_send are intentionally absent — sends are
+  // money movement and require TOTP step-up via POST /api/send. They must not
+  // be callable through the browser proxy or the plugin context.
   // Staking
   'staking_status',
   'staking_start',
@@ -27,7 +29,6 @@ export const ALLOWED_RPC_METHODS = new Set([
   'wallet_best_block',
   // Tokens
   'node_get_tokens_info',
-  'token_send',
   'token_issue_new',
   'token_nft_issue_new',
   'token_mint',

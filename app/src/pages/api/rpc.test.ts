@@ -163,6 +163,8 @@ describe('allowlist enforcement - blocked methods', () => {
     'wallet_create',           // server-side only — must not be callable via proxy
     'wallet_show_seed_phrase', // sensitive — server-side only
     'wallet_unlock_private_keys', // sensitive — server-side only
+    'address_send',            // money movement — TOTP step-up via /api/send only
+    'token_send',              // money movement — TOTP step-up via /api/send only
   ])('blocks method "%s"', async (method) => {
     const { status, json } = await postRpc({ method, params: {} });
     expect(status).toBe(403);
