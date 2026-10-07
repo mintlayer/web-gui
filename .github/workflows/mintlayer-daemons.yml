@@ -2,7 +2,7 @@ name: Mintlayer Daemon Images
 
 # Builds the four Mintlayer daemon images (node-daemon, wallet-rpc-daemon,
 # api-blockchain-scanner-daemon, api-web-server) for amd64 + arm64 from
-# mintlayer-core v1.4.0 — upstream Docker Hub images are amd64-only, which
+# mintlayer-core v1.4.1 — upstream Docker Hub images are amd64-only, which
 # blocks installs on ARM hosts (RPi / arm64 VPS).
 #
 # Native builds on GitHub's free amd64 + arm64 runners (public repos);
@@ -18,7 +18,12 @@ env:
   REGISTRY: ghcr.io
   OWNER: mintlayer
   IMAGE_NS: ghcr.io/mintlayer/web-gui
-  ML_CORE_REF: v1.4.0
+  ML_CORE_REF: v1.4.1
+  # v1.4.1 api-web-server adds: /v2/stream SSE (tx_seen/block/reorg),
+  # /v2/mempool/transactions + mempool fallback on /v2/transaction/{id},
+  # keyset pagination + holders + order book endpoints, WS auto-reconnect
+  # in the scanner. Storage version 25->26: indexer profile needs a resync
+  # after pulling these images.
   DAEMONS: "node-daemon wallet-rpc-daemon api-blockchain-scanner-daemon api-web-server"
 
 permissions:
@@ -40,7 +45,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Checkout mintlayer-core (v1.4.0)
+      - name: Checkout mintlayer-core (v1.4.1)
         uses: actions/checkout@v7
         with:
           repository: mintlayer/mintlayer-core
