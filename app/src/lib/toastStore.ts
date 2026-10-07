@@ -3,7 +3,7 @@
  * Uses useSyncExternalStore-compatible subscribe/getSnapshot pattern.
  */
 
-export type ToastStatus = 'pending' | 'confirmed' | 'failed';
+export type ToastStatus = 'pending' | 'confirmed' | 'failed' | 'untracked';
 
 export interface TxToast {
   id: string;       // same as txId
@@ -156,9 +156,13 @@ export async function submitWithToast(
       } else if (st.status === 'pending') {
         toastStore.update(txId, { stale: true });
       } else {
+        // Unknown means the indexer cannot see the tx (unreachable, legacy
+        // pre-1.4.1 indexer, or session expired). That is NOT a failure -
+        // the tx may still confirm - so keep it out of the red "failed"
+        // state and hand the user to the explorer instead.
         toastStore.update(txId, {
-          status: 'failed',
-          errorMessage: 'Transaction confirmation timed out',
+          status: 'untracked',
+          errorMessage: 'Confirmation not tracked — check the explorer for the latest state.',
         });
       }
     });

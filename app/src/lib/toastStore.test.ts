@@ -311,7 +311,7 @@ describe('submitWithToast indexer-backed status checks', () => {
     expect(toastStore.getSnapshot().find(t => t.id === 'txLate')?.status).toBe('confirmed');
   });
 
-  it('watcher timeout + indexer cannot see the tx: failed with the timeout message', async () => {
+  it('watcher timeout + indexer cannot see the tx: neutral untracked, not failed', async () => {
     vi.useFakeTimers();
     fetchMock.mockReturnValue(txStatusResponse({ status: 'unknown' }));
     const txPromise = vi.fn().mockResolvedValue('txGone');
@@ -321,8 +321,9 @@ describe('submitWithToast indexer-backed status checks', () => {
     await vi.advanceTimersByTimeAsync(0);
 
     const toast = toastStore.getSnapshot().find(t => t.id === 'txGone');
-    expect(toast?.status).toBe('failed');
-    expect(toast?.errorMessage).toBe('Transaction confirmation timed out');
+    // "unknown" is not ground truth of failure - the tx may still confirm.
+    expect(toast?.status).toBe('untracked');
+    expect(toast?.errorMessage).toBe('Confirmation not tracked — check the explorer for the latest state.');
   });
 
   it('non-timeout rejections still fail immediately without consulting the indexer', async () => {
