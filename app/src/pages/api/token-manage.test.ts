@@ -148,7 +148,20 @@ describe('POST /api/token-manage', () => {
     );
     const res = await POST(makeCtx({ action: 'token_mint', params: VALID.mint, ...TOTP }));
     expect(res.status).toBe(502);
-    expect(await res.json()).toMatchObject({ ok: false, code_consumed: true });
+    expect(await res.json()).toMatchObject({ ok: false, code_consumed: true, error: 'not enough funds' });
+  });
+
+  it('redacts transport-class daemon errors (no URL leak)', async () => {
+    const { POST } = await import('@/pages/api/token-manage');
+    vi.mocked(rpcCall).mockRejectedValue(
+      new WalletRpcError('Cannot reach wallet-rpc-daemon at http://127.0.0.1:8556 — is it running?', -32000),
+    );
+    const res = await POST(makeCtx({ action: 'token_mint', params: VALID.mint, ...TOTP }));
+    expect(res.status).toBe(502);
+    const data = await res.json();
+    expect(data.code_consumed).toBe(true);
+    expect(data.error).not.toContain('127.0.0.1');
+    expect(data.error).toContain('wallet service is unavailable');
   });
 
   it('flags code_consumed with a generic message on unexpected errors (500)', async () => {

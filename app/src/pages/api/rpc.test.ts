@@ -166,8 +166,20 @@ describe('allowlist enforcement - blocked methods', () => {
     'address_send',            // money movement — TOTP step-up via /api/send only
     'token_send',              // money movement — TOTP step-up via /api/send only
     'address_sweep_spendable', // money movement — full-drain sweep, no cookie-only path
-    // delegation_withdraw / staking_sweep_delegation stay allowed (risk accepted
-    // — DelegationPanel withdraw flow); see rpc-allowlist.ts comment.
+    // Staking/pool/delegation fund-movement methods — TOTP step-up via
+    // /api/stake-trade only (pool creation burns ~1000 ML; stake/withdraw
+    // move coins; sweep drains a delegation).
+    'staking_create_pool',
+    'staking_decommission_pool',
+    'delegation_create',
+    'delegation_stake',
+    'delegation_withdraw',
+    'staking_sweep_delegation',
+    // Order placement/filling/cancellation — fund-movement transactions,
+    // TOTP step-up via /api/stake-trade only (shared with the NFT marketplace).
+    'order_create',
+    'order_fill',
+    'order_conclude',
     // Token authority methods — TOTP step-up via /api/token-manage only
     // (issue/mint mutate supply + burn fees; lock_supply and an is_unfreezable
     // freeze are irreversible; change_authority hands the token away).

@@ -12,22 +12,18 @@ export const ALLOWED_RPC_METHODS = new Set([
   // be callable through the browser proxy or the plugin context.
   // Staking
   'staking_status',
+  // staking_start / staking_stop are local wallet toggles (no transaction,
+  // no fund movement) — a hijacker can only pause rewards, not steal them.
   'staking_start',
   'staking_stop',
   'staking_list_pools',
   'staking_list_created_block_ids',
-  'staking_decommission_pool',
-  'staking_create_pool',
   'delegation_list_ids',
-  'delegation_create',
-  'delegation_stake',
-  // delegation_withdraw / staking_sweep_delegation KEPT for now (risk accepted):
-  // DelegationPanel.tsx withdraw flow calls them through this proxy, so removing
-  // them breaks a shipped feature. They DO move coins to a client-chosen
-  // destination — a stolen session cookie can drain delegated funds without the
-  // TOTP step-up. Migrate to a dedicated requireStepUp endpoint, then remove.
-  'delegation_withdraw',
-  'staking_sweep_delegation',
+  // Pool creation/decommission and delegation create/stake/withdraw all sign
+  // fee-bearing transactions that move funds (pool creation ~1000 ML,
+  // stake/withdraw move coins). They are only reachable through POST
+  // /api/stake-trade, which requires a fresh TOTP code (step-up) like
+  // /api/send. The plugin context inherits this exclusion.
   // Wallet — open/create are handled server-side only (setup.astro, wallet.astro)
   // and must not be callable through the browser proxy or plugin context.
   'wallet_info',
@@ -43,9 +39,10 @@ export const ALLOWED_RPC_METHODS = new Set([
   // Orders / Trading
   'order_list_own',
   'order_list_all_active',
-  'order_create',
-  'order_fill',
-  'order_conclude',
+  // order_create / order_fill / order_conclude sign fund-moving transactions
+  // (placing an order locks coins/tokens; filling pays the ask). Only
+  // reachable through POST /api/stake-trade (TOTP step-up) — shared by the
+  // order book and the NFT marketplace.
   'order_freeze',
   // Wallet settings — non-sensitive only
   // NOTE: wallet_show_seed_phrase and wallet_unlock_private_keys are intentionally

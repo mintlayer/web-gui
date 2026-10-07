@@ -6,6 +6,8 @@ import { submitWithToast } from "@/lib/toastStore";
 import { CopyButton } from "@/components/CopyButton";
 import type { OrderInfo, TokenCurrency } from "@/lib/wallet-rpc";
 import { rpc } from '@/lib/client-rpc';
+import { stakeTrade } from '@/lib/stake-trade-client';
+import { TotpField } from '@/components/ui/TotpField';
 
 // Raw shape returned by order_list_all_active (flat, no existing_order_data wrapper)
 interface ActiveOrderRaw {
@@ -155,6 +157,8 @@ function BuySellPanel({
   const [mlAmount, setMlAmount] = useState(""); // ML to spend (buy market)
   const [loading, setLoading] = useState(false);
   const [error, setError]   = useState<string | null>(null);
+  const [totp, setTotp]     = useState("");
+  const totpRef             = useRef<HTMLInputElement>(null);
 
   const effectiveTokenId = selectedTokenId ?? tokenId;
   const effectiveTicker  = selectedTokenId ? ticker : (tokenId ? tokenId.slice(0, 8) + "…" : "TOKEN");
@@ -182,13 +186,20 @@ function BuySellPanel({
     ? (parseFloat(amount) * parseFloat(bestBidPrice)).toPrecision(6).replace(/\.?0+$/, "")
     : null;
 
-  const canSubmit = !loading && !!effectiveTokenId && (
+  const canSubmit = !loading && !!effectiveTokenId && totp.length === 6 && (
     type === "limit"
       ? (!!amount && !!price && parseFloat(amount) > 0 && parseFloat(price) > 0)
       : side === "buy"
         ? (!!mlAmount && parseFloat(mlAmount) > 0 && !!bestAsk)
         : (!!amount && parseFloat(amount) > 0 && !!bestBid)
   );
+
+  const failTotp = () => {
+    // The code was consumed by a rejected transaction - clear it and let the
+    // user paste a fresh one.
+    setTotp("");
+    setTimeout(() => totpRef.current?.focus(), 0);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -200,18 +211,25 @@ function BuySellPanel({
           const total = (parseFloat(amount) * parseFloat(price)).toString();
           // conclude_address is required - fetch a fresh receive address
           const addrRes = await rpc<{ address: string }>("address_new", { account: 0 });
-          const res = await rpc<{ tx_id: string }>("order_create", {
-            account: 0,
-            give: side === "buy"
-              ? { type: "Coin", content: { amount: { decimal: total } } }
-              : { type: "Token", content: { id: effectiveTokenId, amount: { decimal: amount } } },
-            ask: side === "buy"
-              ? { type: "Token", content: { id: effectiveTokenId, amount: { decimal: amount } } }
-              : { type: "Coin", content: { amount: { decimal: total } } },
-            conclude_address: addrRes.address,
-            options: {},
-          });
-          return res.tx_id;
+          const r = await stakeTrade({
+            action: "order_create",
+            params: {
+              account: 0,
+              give: side === "buy"
+                ? { type: "Coin", content: { amount: { decimal: total } } }
+                : { type: "Token", content: { id: effectiveTokenId, amount: { decimal: amount } } },
+              ask: side === "buy"
+                ? { type: "Token", content: { id: effectiveTokenId, amount: { decimal: amount } } }
+                : { type: "Coin", content: { amount: { decimal: total } } },
+              conclude_address: addrRes.address,
+              options: {},
+            },
+          }, totp);
+          if (!r.ok) {
+            if (r.code_consumed) failTotp();
+            throw new Error(r.error);
+          }
+          return r.results[0]?.tx_id as string ?? "submitted";
         } else {
           // Market: fill the best available order on the opposite side
           const targetOrder = side === "buy" ? bestAsk : bestBid;
@@ -219,18 +237,25 @@ function BuySellPanel({
           // buy market → fill ask → provide ML (what the ask order asks for)
           // sell market → fill bid → provide Token (what the bid order asks for)
           const fillAmt = side === "buy" ? mlAmount : amount;
-          const res = await rpc<{ tx_id: string }>("order_fill", {
-            account: 0,
-            order_id: targetOrder.order_id,
-            fill_amount_in_ask_currency: { decimal: fillAmt },
-            output_address: null,
-            options: {},
-          });
-          return res.tx_id;
+          const r = await stakeTrade({
+            action: "order_fill",
+            params: {
+              account: 0,
+              order_id: targetOrder.order_id,
+              fill_amount_in_ask_currency: { decimal: fillAmt },
+              output_address: null,
+              options: {},
+            },
+          }, totp);
+          if (!r.ok) {
+            if (r.code_consumed) failTotp();
+            throw new Error(r.error);
+          }
+          return r.results[0]?.tx_id as string ?? "submitted";
         }
       }, watchTx);
 
-      setAmount(""); setPrice(""); setMlAmount("");
+      setAmount(""); setPrice(""); setMlAmount(""); setTotp("");
       if (type === "limit") onCreated(); else onPairRefresh();
     } catch (err) {
       setError(friendlyError(err));
@@ -267,7 +292,7 @@ function BuySellPanel({
       </div>
 
       {error && (
-        <div className="rounded-lg border border-red-700 bg-red-900/30 p-3 text-red-300 text-sm">{error}</div>
+        <div className="rounded-lg border border-red-700 bg-red-900/30 p-3 text-red-300 text-sm" role="alert">{error}</div>
       )}
 
       {/* ── Balance display ── */}
@@ -365,6 +390,8 @@ function BuySellPanel({
         </div>
       )}
 
+      <TotpField value={totp} onChange={setTotp} inputRef={totpRef} disabled={loading} />
+
       <button type="submit" disabled={!canSubmit}
         className={`w-full rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition-colors disabled:opacity-50 flex items-center justify-center gap-2 ${
           side === "buy" ? "bg-green-700 hover:bg-green-600" : "bg-red-700 hover:bg-red-600"
@@ -385,23 +412,61 @@ function BuySellPanel({
 
 // ── My orders ─────────────────────────────────────────────────────────────────
 
-function MyOrderRow({ order, onAction, tickerMap }: { order: OrderInfo; onAction: () => void; tickerMap: Map<string, string> }) {
+function MyOrderRow({ order, onAction, tickerMap, totp, onTotpChange, onTotpConsumed }: {
+  order: OrderInfo;
+  onAction: () => void;
+  tickerMap: Map<string, string>;
+  totp: string;             // shared section-level 2FA code
+  onTotpChange: (v: string) => void;
+  onTotpConsumed: () => void; // clear + refocus after burn
+}) {
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState<string | null>(null);
+  const needsTotp = totp.length !== 6;
 
-  const run = async (method: string, extraParams: Record<string, unknown> = {}) => {
+  // Freeze is a wallet-local flag (no transaction, no funds move) - stays on
+  // the plain RPC allowlist.
+  const freeze = async () => {
     setLoading(true);
     setError(null);
     try {
       await submitWithToast(
         async () => {
-          const res = await rpc<{ tx_id: string }>(method, {
+          const res = await rpc<{ tx_id?: string }>("order_freeze", {
             account: 0,
             order_id: order.order_id,
             options: {},
-            ...extraParams,
           });
-          return res.tx_id;
+          return res.tx_id ?? "frozen";
+        },
+        watchTx,
+      );
+      onAction();
+    } catch (err) {
+      setError(friendlyError(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Conclude settles the remaining order balance back on-chain - TOTP-gated
+  // via /api/stake-trade.
+  const conclude = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      await submitWithToast(
+        async () => {
+          const r = await stakeTrade(
+            { action: "order_conclude", params: { account: 0, order_id: order.order_id } },
+            totp,
+          );
+          if (!r.ok) {
+            if (r.code_consumed) onTotpConsumed();
+            throw new Error(r.error);
+          }
+          onTotpConsumed(); // burned - clear the field
+          return r.results[0]?.tx_id as string ?? "submitted";
         },
         watchTx,
       );
@@ -429,14 +494,15 @@ function MyOrderRow({ order, onAction, tickerMap }: { order: OrderInfo; onAction
         </div>
         <div className="flex gap-2 shrink-0">
           {!isConcluded && !isFrozen && (
-            <button onClick={() => run("order_freeze")} disabled={loading}
+            <button onClick={freeze} disabled={loading}
               className="rounded-lg bg-gray-700 hover:bg-gray-600 border border-gray-600 px-3 py-1.5 text-xs
                          font-medium text-gray-300 transition-colors disabled:opacity-40">
               Freeze
             </button>
           )}
           {!isConcluded && (
-            <button onClick={() => run("order_conclude")} disabled={loading}
+            <button onClick={conclude} disabled={loading || needsTotp}
+              title={needsTotp ? "Enter your 2FA code to conclude" : undefined}
               className="rounded-lg bg-red-900/40 hover:bg-red-800/60 border border-red-800 px-3 py-1.5 text-xs
                          font-medium text-red-300 transition-colors disabled:opacity-40">
               {loading ? "…" : "Conclude"}
@@ -488,7 +554,7 @@ function MyOrderRow({ order, onAction, tickerMap }: { order: OrderInfo; onAction
         )}
       </div>
 
-      {error && <p className="text-xs text-red-400 break-all">{error}</p>}
+      {error && <p className="text-xs text-red-400 break-all" role="alert">{error}</p>}
     </div>
   );
 }
@@ -506,15 +572,20 @@ function PairBookRow({
   side,
   ticker,
   onFilled,
+  totp,
+  onTotpConsumed,
 }: {
   order: OrderInfo;
   side: "ask" | "bid";
   ticker: string;
   onFilled: () => void;
+  totp: string;               // shared section-level 2FA code
+  onTotpConsumed: () => void; // clear + refocus after burn
 }) {
   const [fillAmount, setFillAmount] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const needsTotp = totp.length !== 6;
 
   const data = order.existing_order_data;
   if (!data || data.is_frozen || order.is_marked_as_concluded_in_wallet) return null;
@@ -532,14 +603,22 @@ function PairBookRow({
     try {
       await submitWithToast(
         async () => {
-          const res = await rpc<{ tx_id: string }>("order_fill", {
-            account: 0,
-            order_id: order.order_id,
-            fill_amount_in_ask_currency: { decimal: fillAmount },
-            output_address: null,
-            options: {},
-          });
-          return res.tx_id;
+          const r = await stakeTrade({
+            action: "order_fill",
+            params: {
+              account: 0,
+              order_id: order.order_id,
+              fill_amount_in_ask_currency: { decimal: fillAmount },
+              output_address: null,
+              options: {},
+            },
+          }, totp);
+          if (!r.ok) {
+            if (r.code_consumed) onTotpConsumed();
+            throw new Error(r.error);
+          }
+          onTotpConsumed(); // burned - clear the field
+          return r.results[0]?.tx_id as string ?? "submitted";
         },
         watchTx,
       );
@@ -567,14 +646,15 @@ function PairBookRow({
                        px-2 py-1 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-mint-600 disabled:opacity-50"
           />
           <button
-            onClick={handleFill} disabled={loading || !fillAmount}
+            onClick={handleFill} disabled={loading || !fillAmount || needsTotp}
+            title={needsTotp ? "Enter your 2FA code to fill" : undefined}
             className="rounded-lg bg-mint-700 hover:bg-mint-600 px-2.5 py-1 text-xs font-medium text-white
                        transition-colors disabled:opacity-40"
           >
             {loading ? "…" : "Fill"}
           </button>
         </div>
-        {error && <p className="text-xs text-red-400 mt-0.5 break-all">{error}</p>}
+        {error && <p className="text-xs text-red-400 mt-0.5 break-all" role="alert">{error}</p>}
       </td>
     </tr>
   );
@@ -589,6 +669,8 @@ function PairBookPanel({
   ticker,
   colorClass,
   onFilled,
+  totp,
+  onTotpConsumed,
 }: {
   title: string;
   orders: OrderInfo[];
@@ -596,6 +678,8 @@ function PairBookPanel({
   ticker: string;
   colorClass: string;
   onFilled: () => void;
+  totp: string;
+  onTotpConsumed: () => void;
 }) {
   return (
     <div className="rounded-xl border border-gray-800 overflow-x-auto">
@@ -616,7 +700,8 @@ function PairBookPanel({
           </thead>
           <tbody className="divide-y divide-gray-800/60">
             {orders.map(o => (
-              <PairBookRow key={o.order_id} order={o} side={side} ticker={ticker} onFilled={onFilled} />
+              <PairBookRow key={o.order_id} order={o} side={side} ticker={ticker} onFilled={onFilled}
+                totp={totp} onTotpConsumed={onTotpConsumed} />
             ))}
           </tbody>
         </table>
@@ -657,6 +742,16 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
   const [filterText, setFilterText] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'concluded' | 'frozen'>('all');
   const [filterDir, setFilterDir] = useState<'all' | 'buy' | 'sell'>('all');
+
+  // Shared 2FA codes: filling order-book rows and concluding own orders both
+  // move funds and burn a code server-side. One field per section keeps the
+  // rows uncluttered.
+  const [fillTotp, setFillTotp] = useState("");
+  const fillTotpRef             = useRef<HTMLInputElement>(null);
+  const [concludeTotp, setConcludeTotp] = useState("");
+  const concludeTotpRef         = useRef<HTMLInputElement>(null);
+  const consumeFillTotp    = () => { setFillTotp("");    setTimeout(() => fillTotpRef.current?.focus(), 0); };
+  const consumeConcludeTotp = () => { setConcludeTotp(""); setTimeout(() => concludeTotpRef.current?.focus(), 0); };
 
   useEffect(() => {
     (async () => {
@@ -934,23 +1029,33 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
               <p className="text-sm text-gray-500">Loading orders…</p>
             )}
             {!pairLoading && (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <PairBookPanel
-                  title={`Asks - ${selectedTicker} Sell Orders`}
-                  orders={pairAsks}
-                  side="ask"
-                  ticker={selectedTicker}
-                  colorClass="text-red-400"
-                  onFilled={() => loadPairOrders(selectedTokenId)}
-                />
-                <PairBookPanel
-                  title={`Bids - ${selectedTicker} Buy Orders`}
-                  orders={pairBids}
-                  side="bid"
-                  ticker={selectedTicker}
-                  colorClass="text-green-400"
-                  onFilled={() => loadPairOrders(selectedTokenId)}
-                />
+              <div className="space-y-3">
+                <TotpField value={fillTotp} onChange={setFillTotp} inputRef={fillTotpRef} />
+                <p className="text-xs text-gray-500 -mt-1">
+                  Filling an order moves funds and needs your 2FA code.
+                </p>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <PairBookPanel
+                    title={`Asks - ${selectedTicker} Sell Orders`}
+                    orders={pairAsks}
+                    side="ask"
+                    ticker={selectedTicker}
+                    colorClass="text-red-400"
+                    onFilled={() => loadPairOrders(selectedTokenId)}
+                    totp={fillTotp}
+                    onTotpConsumed={consumeFillTotp}
+                  />
+                  <PairBookPanel
+                    title={`Bids - ${selectedTicker} Buy Orders`}
+                    orders={pairBids}
+                    side="bid"
+                    ticker={selectedTicker}
+                    colorClass="text-green-400"
+                    onFilled={() => loadPairOrders(selectedTokenId)}
+                    totp={fillTotp}
+                    onTotpConsumed={consumeFillTotp}
+                  />
+                </div>
               </div>
             )}
           </div>
@@ -1045,8 +1150,13 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
           <p className="text-sm text-gray-500">No orders match the current filter.</p>
         ) : (
           <div className="space-y-3">
+            <TotpField value={concludeTotp} onChange={setConcludeTotp} inputRef={concludeTotpRef} />
+            <p className="text-xs text-gray-500 -mt-1">
+              Concluding an order settles the remaining balance back to your wallet and needs your 2FA code.
+            </p>
             {filteredOrders.map(o => (
-              <MyOrderRow key={o.order_id} order={o} onAction={refreshOwn} tickerMap={tickerMap} />
+              <MyOrderRow key={o.order_id} order={o} onAction={refreshOwn} tickerMap={tickerMap}
+                totp={concludeTotp} onTotpChange={setConcludeTotp} onTotpConsumed={consumeConcludeTotp} />
             ))}
           </div>
         )}

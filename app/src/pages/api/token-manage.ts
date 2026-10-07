@@ -184,7 +184,17 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     // submitted. Flag it so the UI can ask for a FRESH code instead of the
     // user silently retrying the dead one.
     if (err instanceof WalletRpcError) {
-      return json({ ok: false, error: err.message, code_consumed: true }, 502);
+      // Transport-class failures (-32000/-32001/5xx) carry the daemon URL in
+      // their message — never forward those to the browser (mirror of the
+      // rpc.ts proxy redaction). Daemon user-actionable messages still pass
+      // through.
+      const transport = err.code === -32000 || err.code === -32001 || err.code >= 500;
+      if (transport) console.error('[token-manage]', action, err.message);
+      return json({
+        ok: false,
+        error: transport ? 'The wallet service is unavailable. Check that all services are running.' : err.message,
+        code_consumed: true,
+      }, 502);
     }
     console.error('[token-manage]', action, err);
     return json({ ok: false, error: 'Token operation failed', code_consumed: true }, 500);
