@@ -13,8 +13,14 @@ import {
 import { generateSessionToken, makeSessionCookieHeader } from '@/lib/auth';
 import { getPref } from '@/lib/prefs-db';
 import { json } from '@/lib/api-utils';
+import { checkRpcRateLimit, getClientAddress } from '@/lib/auth';
 
-export const POST: APIRoute = async ({ request }) => {
+export const POST: APIRoute = async ({ request, clientAddress }) => {
+  // Pre-auth route: WebAuthn verification is CPU-heavy; throttle per IP.
+  if (!checkRpcRateLimit(getClientAddress(request, clientAddress))) {
+    return json({ error: 'Too many requests. Please slow down.' }, 429);
+  }
+
   const rpId = getRpId(request.url);
   const origin = getOrigin(request.url);
 

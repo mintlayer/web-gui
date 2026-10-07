@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro';
-import { verifyTOTP, generateTotpSecret } from '@/lib/auth';
+import { generateTotpSecret } from '@/lib/auth';
+import { verifyAndBurnTotpCode } from '@/lib/step-up';
 import { getStringPref, setPref } from '@/lib/prefs-db';
 import { json, readFormData } from '@/lib/api-utils';
 
@@ -14,8 +15,9 @@ export const POST: APIRoute = async ({ request }) => {
     return json({ ok: false, error: '2FA not configured' }, 400);
   }
 
-  if (!verifyTOTP(totpCode, currentSecret)) {
-    return json({ ok: false, error: 'Invalid authenticator code' }, 401);
+  const burn = verifyAndBurnTotpCode(totpCode, currentSecret);
+  if (!burn.ok) {
+    return json({ ok: false, error: burn.error }, 401);
   }
 
   const newSecret = generateTotpSecret();

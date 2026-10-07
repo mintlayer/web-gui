@@ -3,7 +3,7 @@
  * the security-critical rule (enabling AI write/spend access requires a valid
  * current TOTP code) is unit-testable independently of the Astro page.
  */
-import { verifyTOTP } from '@/lib/auth';
+import { verifyAndBurnTotpCode } from '@/lib/step-up';
 import { getStringPref } from '@/lib/prefs-db';
 
 export interface McpSettingsInput {
@@ -33,7 +33,7 @@ export function resolveMcpSettings(input: McpSettingsInput): McpSettingsDecision
     if (!totpSecret) {
       return { ok: false, error: '2FA must be configured before enabling MCP write access.' };
     }
-    if (!verifyTOTP(input.totpCode, totpSecret)) {
+    if (!verifyAndBurnTotpCode(input.totpCode, totpSecret).ok) {
       return {
         ok: false,
         error: 'A valid authenticator code is required to enable wallet actions or fund-moving operations.',

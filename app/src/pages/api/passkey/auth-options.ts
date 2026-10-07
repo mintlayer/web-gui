@@ -8,8 +8,14 @@ import {
   makeChallengeCookieHeader,
 } from '@/lib/passkey';
 import { json } from '@/lib/api-utils';
+import { checkRpcRateLimit, getClientAddress } from '@/lib/auth';
 
-export const GET: APIRoute = async ({ request }) => {
+export const GET: APIRoute = async ({ request, clientAddress }) => {
+  // Pre-auth route: throttle challenge generation per IP.
+  if (!checkRpcRateLimit(getClientAddress(request, clientAddress))) {
+    return json({ error: 'Too many requests. Please slow down.' }, 429);
+  }
+
   const rpId = getRpId(request.url);
 
   if (!isValidRpId(rpId)) {

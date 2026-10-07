@@ -3,8 +3,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('@/lib/plugins', () => ({
   uninstallPlugin: vi.fn(),
 }));
-vi.mock('@/lib/auth', () => ({
-  verifyTOTP: vi.fn().mockReturnValue(true),
+vi.mock('@/lib/step-up', () => ({
+  verifyAndBurnTotpCode: vi.fn().mockReturnValue({ ok: true }),
 }));
 vi.mock('@/lib/prefs-db', () => ({
   getStringPref: vi.fn().mockReturnValue('totp-secret'),
@@ -12,19 +12,19 @@ vi.mock('@/lib/prefs-db', () => ({
 
 import { POST } from '@/pages/api/plugins/[id]/uninstall';
 import { uninstallPlugin } from '@/lib/plugins';
-import { verifyTOTP } from '@/lib/auth';
+import { verifyAndBurnTotpCode } from '@/lib/step-up';
 import { getStringPref } from '@/lib/prefs-db';
 import { makeApiContext } from '@/test/api-context';
 
 const mockUninstallPlugin = vi.mocked(uninstallPlugin);
-const mockVerifyTOTP = vi.mocked(verifyTOTP);
+const mockVerifyTOTP = vi.mocked(verifyAndBurnTotpCode);
 const mockGetStringPref = vi.mocked(getStringPref);
 
 beforeEach(() => {
   vi.clearAllMocks();
   // Restore per-test defaults (mockReturnValue overrides below would stick)
   mockGetStringPref.mockReturnValue('totp-secret');
-  mockVerifyTOTP.mockReturnValue(true);
+  mockVerifyTOTP.mockReturnValue({ ok: true });
 });
 
 function makeCtx(id: string, totpCode: string | null = '123456') {
@@ -48,14 +48,14 @@ describe('POST /api/plugins/[id]/uninstall - TOTP step-up gate', () => {
   });
 
   it('returns 401 when the TOTP code is invalid', async () => {
-    mockVerifyTOTP.mockReturnValueOnce(false);
+    mockVerifyTOTP.mockReturnValueOnce({ ok: false, error: 'Invalid authenticator code' });
     const res = await POST(makeCtx('my-plugin'));
     expect(res.status).toBe(401);
     expect(mockUninstallPlugin).not.toHaveBeenCalled();
   });
 
   it('returns 401 when the request carries no code (empty body)', async () => {
-    mockVerifyTOTP.mockReturnValue(false); // an empty code verifies as false
+    mockVerifyTOTP.mockReturnValue({ ok: false, error: 'Invalid authenticator code' }); // an empty code fails
     const res = await POST(makeCtx('my-plugin', null));
     expect(res.status).toBe(401);
     expect(mockUninstallPlugin).not.toHaveBeenCalled();
