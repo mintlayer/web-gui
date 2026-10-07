@@ -152,5 +152,222 @@ export async function listIndexerPools(offset = 0, items = 50): Promise<IndexerP
 
 /** Get pool block stats (how many blocks the pool has produced). */
 export async function getPoolBlockStats(poolId: string): Promise<IndexerPoolBlockStats> {
-  return indexerGet<IndexerPoolBlockStats>(`/pool/${poolId}/block-stats`);
+  return indexerGet<IndexerPoolBlockStats>(`/pool/${encodeURIComponent(poolId)}/block-stats`);
+}
+
+// ── 1.4.1 endpoints ───────────────────────────────────────────────────────────────────
+//
+// Everything below requires an api-web-server built from mintlayer-core
+// v1.4.1 or newer. On older indexers these endpoints return 404, so callers
+// should gate them on getIndexerCapabilities() (indexer-capabilities.ts) and
+// degrade to the pre-1.4.1 paths when the probe reports them absent.
+
+/** Cursor-paginated listing envelope (items 1..=100 per page). */
+export interface IndexerCursorPage<T> {
+  items: T[];
+  /** Opaque cursor for the next page; null when the listing is exhausted. */
+  next_cursor: string | null;
+  /** Order book only: the storage cap truncated the scan, so the levels are an incomplete aggregation. */
+  truncated?: boolean;
+}
+
+function clampPageItems(items: number): number {
+  return Math.min(Math.max(Math.trunc(items), 1), 100);
+}
+
+async function indexerGetCursorPage<T>(
+  path: string,
+  params: Record<string, string | number>,
+): Promise<IndexerCursorPage<T>> {
+  return indexerGet<IndexerCursorPage<T>>(path, params);
+}
+
+function cursorPageParams(
+  opts: { cursor?: string; items?: number },
+  extra: Record<string, string | number> = {},
+): Record<string, string | number> {
+  const params: Record<string, string | number> = {
+    ...extra,
+    items: clampPageItems(opts.items ?? 50),
+  };
+  if (opts.cursor) params.cursor = opts.cursor;
+  return params;
+}
+
+// ── Transactions: pending (mempool) visibility ────────────────────────────────
+
+/**
+ * Transaction info as returned by /transaction/{id} and the mempool listing.
+ * For a pending transaction the api-server sets block_id/timestamp/
+ * confirmations to null, omits the fee, and leaves the spent utxos of the
+ * inputs unpopulated; once confirmed the same fields carry real values.
+ */
+export interface IndexerTransactionInfo {
+  id: string;
+  block_id: string | null;
+  timestamp: number | null;
+  confirmations: number | null;
+  /** Omitted for pending transactions. */
+  fee?: IndexerAmount;
+  inputs: unknown[];
+  outputs: unknown[];
+}
+
+/** A pending transaction has not been indexed into a block yet. */
+export function isPendingIndexerTransaction(
+  info: Pick<IndexerTransactionInfo, 'block_id' | 'confirmations'>,
+): boolean {
+  return info.block_id === null || info.confirmations === null;
+}
+
+/**
+ * Get transaction info by id. On a 1.4.1 indexer this falls back to the
+ * connected node's mempool, so pending transactions are found too (the
+ * response then has null block/timestamp/confirmations and no fee). Callers
+ * that care about the distinction should check isPendingIndexerTransaction().
+ */
+export async function getTransactionInfo(txId: string): Promise<IndexerTransactionInfo> {
+  return indexerGet<IndexerTransactionInfo>(`/transaction/${encodeURIComponent(txId)}`);
+}
+
+export interface IndexerMempoolListing {
+  transactions: IndexerTransactionInfo[];
+  /** Which ordering the listing actually ended up in (dependency can fall back to insertion). */
+  ordering: 'insertion' | 'dependency';
+}
+
+/**
+ * List the connected node's pending transactions. The cost is proportional to
+ * the mempool size (not the page), so this is not a polling endpoint.
+ */
+export async function listMempoolTransactions(
+  offset = 0,
+  items = 50,
+  order?: 'insertion' | 'dependency',
+): Promise<IndexerMempoolListing> {
+  const url = new URL(`${INDEXER_URL}/api/v2/mempool/transactions`);
+  url.searchParams.set('offset', String(offset));
+  url.searchParams.set('items', String(clampPageItems(items)));
+  if (order) url.searchParams.set('order', order);
+  const res = await fetch(url.toString(), { signal: AbortSignal.timeout(10_000) });
+  if (!res.ok) {
+    throw new Error(`Indexer error ${res.status}: ${await res.text()}`);
+  }
+  const transactions = (await res.json()) as IndexerTransactionInfo[];
+  const header = res.headers.get('x-mempool-ordering');
+  return { transactions, ordering: header === 'dependency' ? 'dependency' : 'insertion' };
+}
+
+// ── Order book ───────────────────────────────────────────────────────────────────────
+
+/**
+ * One aggregated price level of the order book. The price is expressed in the
+ * quote currency per one base unit; price.atoms is the rational "numer/denom"
+ * of the level.
+ */
+export interface IndexerBookLevel {
+  price: IndexerAmount;
+  /** Total base-currency amount available at this price level. */
+  amount: IndexerAmount;
+}
+
+export type IndexerOrderBookSide = 'ask' | 'bid';
+
+/**
+ * Aggregated order book for a trading pair (pair format "ML_<token_id>" or
+ * "<token_id>_<token_id>"). The ask book is ordered by ascending price, the
+ * bid book by descending price. Cursors are side-specific: a cursor minted
+ * for one side is rejected on the other. Check `truncated` before presenting
+ * the result as the complete book - the aggregation caps how many live orders
+ * are scanned.
+ */
+export async function getOrderBook(
+  pair: string,
+  side: IndexerOrderBookSide,
+  opts: { cursor?: string; items?: number } = {},
+): Promise<IndexerCursorPage<IndexerBookLevel>> {
+  return indexerGetCursorPage<IndexerBookLevel>(
+    `/order/pair/${encodeURIComponent(pair)}/book`,
+    cursorPageParams(opts, { side }),
+  );
+}
+
+// ── Supply statistics ───────────────────────────────────────────────────────────────
+
+export interface IndexerSupplyStatistics {
+  circulating_supply: IndexerAmount;
+  preminted: IndexerAmount;
+  burned: IndexerAmount;
+  staked: IndexerAmount;
+}
+
+/** ML supply statistics. */
+export async function getCoinStatistics(): Promise<IndexerSupplyStatistics> {
+  return indexerGet<IndexerSupplyStatistics>('/statistics/coin');
+}
+
+/** Supply statistics for a token (circulating/preminted/burned/staked). */
+export async function getTokenStatistics(tokenId: string): Promise<IndexerSupplyStatistics> {
+  return indexerGet<IndexerSupplyStatistics>(`/statistics/token/${encodeURIComponent(tokenId)}`);
+}
+
+// ── Holders ───────────────────────────────────────────────────────────────────
+
+/** One entry of a top-holders listing, ordered by balance (zero balances excluded). */
+export interface IndexerHolder {
+  address: string;
+  amount: IndexerAmount;
+}
+
+/** Top ML holders (cursor-paginated). */
+export async function listCoinHolders(
+  opts: { cursor?: string; items?: number } = {},
+): Promise<IndexerCursorPage<IndexerHolder>> {
+  return indexerGetCursorPage<IndexerHolder>('/statistics/coin/holders', cursorPageParams(opts));
+}
+
+/** Top holders of a token (cursor-paginated). */
+export async function listTokenHolders(
+  tokenId: string,
+  opts: { cursor?: string; items?: number } = {},
+): Promise<IndexerCursorPage<IndexerHolder>> {
+  return indexerGetCursorPage<IndexerHolder>(
+    `/statistics/token/${encodeURIComponent(tokenId)}/holders`,
+    cursorPageParams(opts),
+  );
+}
+
+// ── Fee rate ──────────────────────────────────────────────────────────────────
+
+/**
+ * Estimated fee rate to be in the top `inTopXMb` MB of the mempool, in atoms
+ * per kB (a JSON string; parse before arithmetic).
+ */
+export async function getFeerate(inTopXMb = 5): Promise<string> {
+  return indexerGet<string>('/feerate', { in_top_x_mb: inTopXMb });
+}
+
+// ── Cursor-paginated deep walks ───────────────────────────────────────────────
+
+/**
+ * Walk pools ordered by creation height with stable keyset pagination. The
+ * offset-based listIndexerPools() stays the right choice for shallow listings;
+ * this variant is for deep walks where offset pagination is unstable.
+ */
+export async function listIndexerPoolsByHeight(
+  opts: { cursor?: string; items?: number } = {},
+): Promise<IndexerCursorPage<IndexerPool>> {
+  return indexerGetCursorPage<IndexerPool>(
+    '/pool',
+    cursorPageParams(opts, { sort: 'by_height' }),
+  );
+}
+
+// ── Authority discovery ───────────────────────────────────────────────────────
+
+/**
+ * Token ids whose authority (mint/freeze/manage) is held by the given address.
+ */
+export async function listTokenAuthorities(address: string): Promise<string[]> {
+  return indexerGet<string[]>(`/address/${encodeURIComponent(address)}/token-authority`);
 }
