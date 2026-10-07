@@ -126,7 +126,10 @@ function calcPrice(mlDecimal: string, tokenDecimal: string): string {
   const ml = parseFloat(mlDecimal);
   const tok = parseFloat(tokenDecimal);
   if (!tok || !ml) return "-";
-  return (ml / tok).toPrecision(6).replace(/\.?0+$/, "");
+  // Plain decimal formatting: toPrecision(6) switches to exponent notation
+  // for large prices ("1.50000e+6") and the trailing-zero strip turns
+  // 100000 into "1" - both mangled what the user can click "Fill" on.
+  return (ml / tok).toLocaleString("en-US", { maximumFractionDigits: 8 });
 }
 
 // ── Buy / Sell panel ──────────────────────────────────────────────────────────
@@ -674,7 +677,13 @@ function DepthStrip({ asks, bids, ticker }: { asks: OrderInfo[]; bids: OrderInfo
   const bestBid = bidLvls[0]?.price ?? 0;
   const hasBoth = bestAsk > 0 && bestBid > 0;
   const spread = hasBoth ? bestAsk - bestBid : null;
-  const maxMl = Math.max(...askLvls.map(l => l.mlTotal), ...bidLvls.map(l => l.mlTotal), 0);
+  // Bars plot CUMULATIVE depth, so normalize by the largest cumulative total,
+  // not the largest single level - otherwise every side whose running total
+  // passes its biggest level clips at 100% and one-sided/deep books all look
+  // equally saturated.
+  const askCum = askLvls.reduce((s, l) => s + l.mlTotal, 0);
+  const bidCum = bidLvls.reduce((s, l) => s + l.mlTotal, 0);
+  const maxMl = Math.max(askCum, bidCum, 0);
 
   const LevelColumn = ({ levels, side }: { levels: typeof askLvls; side: "ask" | "bid" }) => {
     let cumulative = 0;
@@ -695,7 +704,7 @@ function DepthStrip({ asks, bids, ticker }: { asks: OrderInfo[]; bids: OrderInfo
                   <div
                     aria-hidden
                     className={`absolute inset-y-0 left-0 ${side === "ask" ? "bg-red-900/30" : "bg-mint-900/30"}`}
-                    style={{ width: `${maxMl > 0 ? (cumulative / maxMl) * 100 : 0}%` }}
+                    style={{ width: `${maxMl > 0 ? Math.min((cumulative / maxMl) * 100, 100) : 0}%` }}
                   />
                   <div className="relative flex justify-between gap-2">
                     <span className={side === "ask" ? "text-red-300" : "text-mint-300"}>{fmtQty(l.price)}</span>
