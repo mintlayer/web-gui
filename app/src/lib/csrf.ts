@@ -14,9 +14,10 @@
  * Deployment assumption: trusting X-Forwarded-* unconditionally is safe only
  * while web-gui is reachable exclusively via loopback or via a proxy that
  * sanitizes inbound X-Forwarded-* (caddy ignores client-supplied values by
- * default). If web-gui is ever exposed directly to an untrusted network,
- * these headers become attacker-controlled and this check must be gated on
- * a trust-proxy signal.
+ * default). When TRUST_PROXY=true is set, forwarded headers are honored
+ * (matching lib/auth.ts getClientAddress); without it, only the request's
+ * own URL is used — attacker-supplied X-Forwarded-* on a directly exposed
+ * instance can no longer forge the expected origin to defeat this check.
  */
 
 const FORM_CONTENT_TYPES = ['application/x-www-form-urlencoded', 'multipart/form-data', 'text/plain'];
@@ -29,11 +30,14 @@ function firstForwarded(value: string | null): string | undefined {
 /** Origin the app should treat as its own, honoring TLS-terminating proxies. */
 export function expectedOrigin(request: Request): string {
   const url = new URL(request.url);
-  const proto = (
-    firstForwarded(request.headers.get('x-forwarded-proto')) ?? url.protocol.replace(/:$/, '')
-  ).toLowerCase();
-  const host =
-    firstForwarded(request.headers.get('x-forwarded-host')) ?? request.headers.get('host') ?? url.host;
+  // Forwarded headers are honored only when TRUST_PROXY is explicitly set
+  // (same gate as getClientAddress). Otherwise they are attacker-controllable
+  // on any non-loopback direct exposure.
+  const trustProxy = process.env.TRUST_PROXY === 'true';
+  const forwardedProto = trustProxy ? firstForwarded(request.headers.get('x-forwarded-proto')) : undefined;
+  const forwardedHost = trustProxy ? firstForwarded(request.headers.get('x-forwarded-host')) : undefined;
+  const proto = (forwardedProto ?? url.protocol.replace(/:$/, '')).toLowerCase();
+  const host = forwardedHost ?? request.headers.get('host') ?? url.host;
   return `${proto}://${host}`;
 }
 

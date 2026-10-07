@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { expectedOrigin, isForbiddenCrossSiteRequest } from '@/lib/csrf';
 
 const BASE = 'http://web-gui:4321/login';
@@ -10,6 +10,12 @@ function req(
 ): Request {
   return new Request(url, { method, headers });
 }
+
+// Tests default to the proxy deployment (TRUST_PROXY=true) where forwarded
+// headers are honored; the untrusted-direct-exposure describe overrides it.
+beforeEach(() => {
+  process.env.TRUST_PROXY = 'true';
+});
 
 describe('expectedOrigin', () => {
   it('uses the request URL when no proxy headers are present', () => {
@@ -32,6 +38,19 @@ describe('expectedOrigin', () => {
     expect(expectedOrigin(req('POST', { host: 'localhost:4321', 'x-forwarded-host': 'ml1.local' }))).toBe(
       'http://ml1.local',
     );
+  });
+
+  it('ignores forwarded headers when TRUST_PROXY is not set', () => {
+    process.env.TRUST_PROXY = 'false';
+    expect(
+      expectedOrigin(
+        req('POST', {
+          host: 'web-gui:4321',
+          'x-forwarded-proto': 'https',
+          'x-forwarded-host': 'evil.example',
+        }),
+      ),
+    ).toBe('http://web-gui:4321');
   });
 });
 
@@ -105,6 +124,18 @@ describe('isForbiddenCrossSiteRequest', () => {
     const r = req('POST', {
       'content-type': 'multipart/form-data; boundary=x',
       host: 'localhost:4321',
+    });
+    expect(isForbiddenCrossSiteRequest(r)).toBe(true);
+  });
+
+  it('a forged X-Forwarded-Host cannot make an attacker origin "same-origin" when TRUST_PROXY is off', () => {
+    process.env.TRUST_PROXY = 'false';
+    const r = req('POST', {
+      origin: 'https://evil.example',
+      'content-type': 'application/x-www-form-urlencoded',
+      host: 'web-gui:4321',
+      'x-forwarded-proto': 'https',
+      'x-forwarded-host': 'evil.example',
     });
     expect(isForbiddenCrossSiteRequest(r)).toBe(true);
   });
