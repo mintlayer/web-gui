@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { watchTx } from "@/lib/txWatcher";
 import { submitWithToast } from "@/lib/toastStore";
 import { hexToText } from "@/lib/token-utils";
+import { safeImageUri } from "@/lib/safe-uri";
 import type { TokenCurrency, OrderInfo } from "@/lib/wallet-rpc";
 import { rpc } from '@/lib/client-rpc';
 
@@ -40,8 +41,10 @@ interface NFTListing {
 
 function resolveUri(raw: string | null): string | null {
   if (!raw) return null;
-  if (raw.startsWith("ipfs://")) return "https://ipfs.io/ipfs/" + raw.slice(7);
-  return raw;
+  // Chain-controlled URIs are whitelist-filtered (https/ipfs/data:image) —
+  // never rendered raw into <img src>.
+  const mapped = raw.startsWith("ipfs://") ? "https://ipfs.io/ipfs/" + raw.slice(7) : raw;
+  return safeImageUri(mapped);
 }
 
 function friendlyError(err: unknown): string {

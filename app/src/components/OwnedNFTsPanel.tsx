@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { hexToText } from "@/lib/token-utils";
+import { safeImageUri } from "@/lib/safe-uri";
 import { CopyButton } from "@/components/CopyButton";
 import { rpc } from '@/lib/client-rpc';
 
@@ -20,8 +21,10 @@ interface Props {
 
 function resolveUri(raw: string | null): string | null {
   if (!raw) return null;
-  if (raw.startsWith("ipfs://")) return "https://ipfs.io/ipfs/" + raw.slice(7);
-  return raw;
+  // Chain-controlled URIs are whitelist-filtered (https/ipfs/data:image) —
+  // never rendered raw into <img src>.
+  const mapped = raw.startsWith("ipfs://") ? "https://ipfs.io/ipfs/" + raw.slice(7) : raw;
+  return safeImageUri(mapped);
 }
 
 // ── Image cell ────────────────────────────────────────────────────────────────
