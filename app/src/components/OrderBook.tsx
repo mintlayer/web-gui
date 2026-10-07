@@ -8,6 +8,7 @@ import type { OrderInfo, TokenCurrency } from "@/lib/wallet-rpc";
 import { rpc } from '@/lib/client-rpc';
 import { stakeTrade } from '@/lib/stake-trade-client';
 import { TotpField } from '@/components/ui/TotpField';
+import { aggregateLevels, fmtQty } from '@/components/orderBookDepth';
 
 // Raw shape returned by order_list_all_active (flat, no existing_order_data wrapper)
 interface ActiveOrderRaw {
@@ -660,6 +661,74 @@ function PairBookRow({
   );
 }
 
+// ── Aggregated depth view ───────────────────────────────────────────────────
+
+function DepthStrip({ asks, bids, ticker }: { asks: OrderInfo[]; bids: OrderInfo[]; ticker: string }) {
+  // Best level first per side; the ask column renders reversed so the two
+  // best prices sit next to each other across the spread, like an exchange book.
+  const askLvls = aggregateLevels(asks, "ask").slice(0, 6);
+  const bidLvls = aggregateLevels(bids, "bid").slice(0, 6);
+  if (askLvls.length === 0 && bidLvls.length === 0) return null;
+
+  const bestAsk = askLvls[0]?.price ?? 0;
+  const bestBid = bidLvls[0]?.price ?? 0;
+  const hasBoth = bestAsk > 0 && bestBid > 0;
+  const spread = hasBoth ? bestAsk - bestBid : null;
+  const maxMl = Math.max(...askLvls.map(l => l.mlTotal), ...bidLvls.map(l => l.mlTotal), 0);
+
+  const LevelColumn = ({ levels, side }: { levels: typeof askLvls; side: "ask" | "bid" }) => {
+    let cumulative = 0;
+    const rows = side === "ask" ? [...levels].reverse() : levels;
+    return (
+      <div>
+        <div className="text-xs text-gray-500 mb-1.5 uppercase tracking-wider">
+          {side === "ask" ? "Sell depth" : "Buy depth"}
+        </div>
+        {rows.length === 0 ? (
+          <p className="text-xs text-gray-600">No orders.</p>
+        ) : (
+          <div className="space-y-1">
+            {rows.map(l => {
+              cumulative += l.mlTotal;
+              return (
+                <div key={l.price} className="relative rounded px-2 py-1 text-xs font-mono overflow-hidden">
+                  <div
+                    aria-hidden
+                    className={`absolute inset-y-0 left-0 ${side === "ask" ? "bg-red-900/30" : "bg-mint-900/30"}`}
+                    style={{ width: `${maxMl > 0 ? (cumulative / maxMl) * 100 : 0}%` }}
+                  />
+                  <div className="relative flex justify-between gap-2">
+                    <span className={side === "ask" ? "text-red-300" : "text-mint-300"}>{fmtQty(l.price)}</span>
+                    <span className="text-gray-400">{fmtQty(l.mlTotal)} ML</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-4">
+      <div className="grid grid-cols-2 gap-6">
+        <LevelColumn levels={askLvls} side="ask" />
+        <LevelColumn levels={bidLvls} side="bid" />
+      </div>
+      {spread !== null && (
+        <p className="mt-3 text-xs text-gray-500 text-center">
+          Spread <span className="font-mono text-gray-300">{fmtQty(spread)}</span> ML · mid{" "}
+          <span className="font-mono text-gray-300">{fmtQty((bestAsk + bestBid) / 2)}</span> ML
+          {askLvls.some(l => l.count > 1) || bidLvls.some(l => l.count > 1)
+            ? " · levels group orders at the same price"
+            : ""}
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ── Pair order book panel ─────────────────────────────────────────────────────
 
 function PairBookPanel({
@@ -1030,6 +1099,7 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
             )}
             {!pairLoading && (
               <div className="space-y-3">
+                <DepthStrip asks={pairAsks} bids={pairBids} ticker={selectedTicker} />
                 <TotpField value={fillTotp} onChange={setFillTotp} inputRef={fillTotpRef} />
                 <p className="text-xs text-gray-500 -mt-1">
                   Filling an order moves funds and needs your 2FA code.
