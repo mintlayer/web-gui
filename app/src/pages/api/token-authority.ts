@@ -44,8 +44,10 @@ export const POST: APIRoute = async ({ request }) => {
     // Fan-out: one request per address, all in parallel
     const perAddress = await Promise.all(
       addresses.map(async (addr) => {
+        // The endpoint takes no query params (verified in api-server v2.rs):
+        // it always returns the full authority list for the address.
         const res = await fetch(
-          `${INDEXER_URL}/api/v2/address/${encodeURIComponent(addr)}/token-authority?items=100`,
+          `${INDEXER_URL}/api/v2/address/${encodeURIComponent(addr)}/token-authority`,
           { signal: AbortSignal.timeout(5000) },
         );
         if (!res.ok) return [] as string[];
