@@ -48,14 +48,14 @@ describe('POST /api/plugins/[id]/uninstall - TOTP step-up gate', () => {
   });
 
   it('returns 401 when the TOTP code is invalid', async () => {
-    mockVerifyTOTP.mockReturnValueOnce({ ok: false, error: 'Invalid authenticator code' });
+    mockVerifyTOTP.mockReturnValueOnce({ ok: false, error: 'Invalid authenticator code.', reason: 'invalid' as const });
     const res = await POST(makeCtx('my-plugin'));
     expect(res.status).toBe(401);
     expect(mockUninstallPlugin).not.toHaveBeenCalled();
   });
 
   it('returns 401 when the request carries no code (empty body)', async () => {
-    mockVerifyTOTP.mockReturnValue({ ok: false, error: 'Invalid authenticator code' }); // an empty code fails
+    mockVerifyTOTP.mockReturnValue({ ok: false, error: 'Invalid authenticator code.', reason: 'invalid' as const }); // an empty code fails
     const res = await POST(makeCtx('my-plugin', null));
     expect(res.status).toBe(401);
     expect(mockUninstallPlugin).not.toHaveBeenCalled();
@@ -71,7 +71,7 @@ describe('POST /api/plugins/[id]/uninstall - TOTP step-up gate', () => {
       }),
     }));
     expect(res.status).toBe(200);
-    expect(mockVerifyTOTP).toHaveBeenCalledWith('654321', 'totp-secret');
+    expect(mockVerifyTOTP).toHaveBeenCalledWith('654321', 'totp-secret', 'unknown');
   });
 });
 

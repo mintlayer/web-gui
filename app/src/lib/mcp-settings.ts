@@ -11,6 +11,8 @@ export interface McpSettingsInput {
   allowActions: boolean;
   allowSpend: boolean;
   totpCode: string;
+  /** Client address/key for the failed-TOTP-attempt throttle (optional). */
+  totpThrottleKey?: string;
 }
 
 export type McpSettingsDecision =
@@ -33,7 +35,7 @@ export function resolveMcpSettings(input: McpSettingsInput): McpSettingsDecision
     if (!totpSecret) {
       return { ok: false, error: '2FA must be configured before enabling MCP write access.' };
     }
-    if (!verifyAndBurnTotpCode(input.totpCode, totpSecret).ok) {
+    if (!verifyAndBurnTotpCode(input.totpCode, totpSecret, input.totpThrottleKey).ok) {
       return {
         ok: false,
         error: 'A valid authenticator code is required to enable wallet actions or fund-moving operations.',

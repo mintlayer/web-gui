@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@/lib/auth', () => ({
   generateTotpSecret: vi.fn(),
+  getClientAddress: vi.fn(() => '127.0.0.1'),
 }));
 
 vi.mock('@/lib/step-up', () => ({
@@ -50,7 +51,7 @@ describe('POST /api/settings/reset-2fa', () => {
 
   it('returns 401 when TOTP code is invalid', async () => {
     vi.mocked(getStringPref).mockReturnValue('SECRETSECRET');
-    vi.mocked(verifyAndBurnTotpCode).mockReturnValue({ ok: false, error: 'Invalid authenticator code' });
+    vi.mocked(verifyAndBurnTotpCode).mockReturnValue({ ok: false, error: 'Invalid authenticator code.', reason: 'invalid' as const });
     const res = await POST(makeCtx(makeForm({ totp_code: '000000' })));
     expect(res.status).toBe(401);
     const body = await res.json();

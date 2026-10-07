@@ -40,7 +40,7 @@ describe('resolveMcpSettings', () => {
 
   it('rejects granting spend with an invalid authenticator code', () => {
     vi.mocked(getStringPref).mockReturnValue('SECRET');
-    vi.mocked(verifyAndBurnTotpCode).mockReturnValue({ ok: false, error: 'Invalid authenticator code' });
+    vi.mocked(verifyAndBurnTotpCode).mockReturnValue({ ok: false, error: 'Invalid authenticator code.', reason: 'invalid' as const });
     const d = resolveMcpSettings({ enabled: true, allowActions: false, allowSpend: true, totpCode: '000000' });
     expect(d.ok).toBe(false);
     if (!d.ok) expect(d.error).toMatch(/valid authenticator code/);
@@ -54,7 +54,7 @@ describe('resolveMcpSettings', () => {
       ok: true,
       prefs: { 'mcp.enabled': true, 'mcp.allow_actions': true, 'mcp.allow_spend': true },
     });
-    expect(verifyAndBurnTotpCode).toHaveBeenCalledWith('654321', 'SECRET');
+    expect(verifyAndBurnTotpCode).toHaveBeenCalledWith('654321', 'SECRET', undefined);
   });
 
   it('never grants write access without enabled, even if the boxes are ticked', () => {

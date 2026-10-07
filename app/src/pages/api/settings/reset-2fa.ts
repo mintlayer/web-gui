@@ -1,10 +1,10 @@
 import type { APIRoute } from 'astro';
-import { generateTotpSecret } from '@/lib/auth';
+import { generateTotpSecret, getClientAddress } from '@/lib/auth';
 import { verifyAndBurnTotpCode } from '@/lib/step-up';
 import { getStringPref, setPref } from '@/lib/prefs-db';
 import { json, readFormData } from '@/lib/api-utils';
 
-export const POST: APIRoute = async ({ request }) => {
+export const POST: APIRoute = async ({ request, clientAddress }) => {
   const form = await readFormData(request);
   if (!form) return json({ ok: false, error: 'Invalid request body' }, 400);
 
@@ -15,7 +15,10 @@ export const POST: APIRoute = async ({ request }) => {
     return json({ ok: false, error: '2FA not configured' }, 400);
   }
 
-  const burn = verifyAndBurnTotpCode(totpCode, currentSecret);
+  // throttleKey: failed TOTP attempts from one address lock out after 5 —
+  // this endpoint returns the NEW secret on success, so an unthrottled
+  // guess loop is a 2FA takeover primitive.
+  const burn = verifyAndBurnTotpCode(totpCode, currentSecret, getClientAddress(request, clientAddress));
   if (!burn.ok) {
     return json({ ok: false, error: burn.error }, 401);
   }

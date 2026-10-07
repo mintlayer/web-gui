@@ -49,7 +49,11 @@ if (Astro.request.method === 'POST' && !unconfigured) {
     const password  = (form.get('password')  as string | null) ?? '';
     const totpCode  = (form.get('totp_code') as string | null) ?? '';
 
-    // Always evaluate both factors to avoid timing side-channels
+    // Always evaluate both factors to avoid timing side-channels.
+    // Deliberately raw verifyTOTP, NOT verifyAndBurnTotpCode: login is already
+    // IP-throttled by the login limiter, and burning here would consume the
+    // code the user needs seconds later for a step-up (or vice versa — a send
+    // would lock them out of logging in for ~60s).
     const [passwordOk, totpOk] = await Promise.all([
       verifyPassword(password, passwordHash),
       Promise.resolve(verifyTOTP(totpCode, totpSecret)),
@@ -106,7 +110,7 @@ if (Astro.request.method === 'POST' && !unconfigured) {
       )}
 
       {errorMessage && (
-        <div class="mb-4 px-4 py-3 rounded-lg border border-red-800 bg-red-950/50 text-red-300 text-sm">
+        <div role="alert" class="mb-4 px-4 py-3 rounded-lg border border-red-800 bg-red-950/50 text-red-300 text-sm">
           {errorMessage}
         </div>
       )}
@@ -174,7 +178,7 @@ if (Astro.request.method === 'POST' && !unconfigured) {
             <div class="flex-1 h-px bg-gray-800"></div>
           </div>
 
-          <div id="passkey-error" class="hidden mb-3 px-4 py-3 rounded-lg border border-red-800 bg-red-950/50 text-red-300 text-sm"></div>
+          <div id="passkey-error" role="alert" tabindex="-1" class="hidden mb-3 px-4 py-3 rounded-lg border border-red-800 bg-red-950/50 text-red-300 text-sm"></div>
 
           <button
             id="passkey-btn"
@@ -208,6 +212,9 @@ if (Astro.request.method === 'POST' && !unconfigured) {
       if (!errorBox) return;
       errorBox.textContent = msg;
       errorBox.classList.remove('hidden');
+      // Move focus so screen readers announce the asynchronously-populated
+      // error (the ceremony leaves focus on the disabled button).
+      errorBox.focus();
     }
 
     const passkeyIcon = `<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg> Sign in with a Passkey`;
@@ -244,7 +251,10 @@ if (Astro.request.method === 'POST' && !unconfigured) {
         window.location.href = safeDest;
       } catch (err: unknown) {
         const e = err as { name?: string; message?: string };
-        if (e?.name !== 'AbortError') {
+        // AbortError: caller cancelled. NotAllowedError: the user dismissed
+        // the OS prompt or it timed out — a routine action, not an error;
+        // silently reset so the user can retry.
+        if (e?.name !== 'AbortError' && e?.name !== 'NotAllowedError') {
           showError(e?.message ?? 'Passkey authentication failed.');
         }
         btn.disabled = false;

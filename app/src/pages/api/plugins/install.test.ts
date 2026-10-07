@@ -57,21 +57,21 @@ describe('POST /api/plugins/install - TOTP step-up gate', () => {
   });
 
   it('returns 401 when the TOTP code is invalid', async () => {
-    mockVerifyTOTP.mockReturnValueOnce({ ok: false, error: 'Invalid authenticator code' });
+    mockVerifyTOTP.mockReturnValueOnce({ ok: false, error: 'Invalid authenticator code.', reason: 'invalid' as const });
     const res = await POST({ request: makeRequest(makeFile(100)) } as Parameters<typeof POST>[0]);
     expect(res.status).toBe(401);
-    await expect(res.clone().json()).resolves.toMatchObject({ ok: false, error: 'Invalid authenticator code' });
+    await expect(res.clone().json()).resolves.toMatchObject({ ok: false, error: 'Invalid authenticator code.' });
   });
 
   it('returns 401 when the TOTP code is missing', async () => {
-    mockVerifyTOTP.mockReturnValue({ ok: false, error: 'Invalid authenticator code' }); // an empty code fails
+    mockVerifyTOTP.mockReturnValue({ ok: false, error: 'Invalid authenticator code.', reason: 'invalid' as const }); // an empty code fails
     const res = await POST({ request: makeRequest(makeFile(100), null) } as Parameters<typeof POST>[0]);
     expect(res.status).toBe(401);
     expect(mockInstallPlugin).not.toHaveBeenCalled();
   });
 
   it('verifies the code BEFORE touching the uploaded archive', async () => {
-    mockVerifyTOTP.mockReturnValueOnce({ ok: false, error: 'Invalid authenticator code' });
+    mockVerifyTOTP.mockReturnValueOnce({ ok: false, error: 'Invalid authenticator code.', reason: 'invalid' as const });
     await POST({ request: makeRequest(makeFile(100)) } as Parameters<typeof POST>[0]);
     expect(mockInstallPlugin).not.toHaveBeenCalled();
   });

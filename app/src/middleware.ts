@@ -102,7 +102,17 @@ export const onRequest = defineMiddleware(async (context, next) => {
   // out mid-session. The version is baked into the token we just verified;
   // a refreshed stale-version token only survives until the next request's
   // version check, so a version bump still invalidates the session cleanly.
-  if (!contentType.includes('text/event-stream') && !alreadySetsCookie) {
+  //
+  // Re-read the version AFTER the page ran: a bump mid-request (password
+  // change, logout-all) must not be rolled forward onto a stale token —
+  // that would hand back a cookie for a revoked session and make the next
+  // navigation fail after the page already said "Password updated".
+  const sessionVersionNow = getPref<number>('auth.session_version') ?? 0;
+  if (
+    sessionVersionNow === sessionVersion &&
+    !contentType.includes('text/event-stream') &&
+    !alreadySetsCookie
+  ) {
     const newToken = generateSessionToken(sessionVersion);
     response.headers.set('Set-Cookie', makeSessionCookieHeader(newToken));
   }
