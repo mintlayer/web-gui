@@ -8,10 +8,17 @@
  * browsers / devices / CLI.
  *
  * Returns { ok: true, result: string[] } - deduplicated token IDs.
+ *
+ * Session-authenticated so this endpoint is not an open indexer proxy: the
+ * GUI binds all interfaces and this route fans out one upstream request per
+ * address, which would otherwise let anyone multiply requests against the
+ * indexer without limit.
  */
 
 import type { APIRoute } from 'astro';
 import { json } from '@/lib/api-utils';
+import { verifySessionToken, SESSION_COOKIE_NAME } from '@/lib/auth';
+import { getPref } from '@/lib/prefs-db';
 
 const INDEXER_URL = process.env.INDEXER_URL ?? 'http://api-web-server:3000';
 
@@ -20,6 +27,16 @@ const INDEXER_URL = process.env.INDEXER_URL ?? 'http://api-web-server:3000';
 const MAX_ADDRESSES = 200;
 
 export const POST: APIRoute = async ({ request }) => {
+  // Same session check as /api/tx-status: verify against the CURRENT session
+  // version so revoked tokens stay revoked.
+  const cookieHeader = request.headers.get('cookie') ?? '';
+  const sessionToken =
+    cookieHeader.match(new RegExp(`(?:^|;\\s*)${SESSION_COOKIE_NAME}=([^;]+)`))?.[1] ?? '';
+  const sessionVersion = getPref<number>('auth.session_version') ?? 0;
+  if (!verifySessionToken(sessionToken, sessionVersion)) {
+    return new Response('Unauthorized', { status: 401 });
+  }
+
   let addresses: string[] = [];
   try {
     const body = await request.json() as { addresses?: unknown };
