@@ -41,9 +41,14 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     });
   } catch (err) {
     const code = err instanceof WalletRpcError ? err.code : -1;
-    const message = err instanceof WalletRpcError
-      ? err.message
-      : 'An internal error occurred';
+    // Transport-level failures (-32000/-32001) and daemon 5xx carry internal
+    // details (daemon URL, HTTP status text) in their messages — never forward
+    // them to the browser. The full error is logged above for server-side
+    // diagnostics; the client gets an actionable, information-free message.
+    const message =
+      err instanceof WalletRpcError && code !== -32000 && code !== -32001 && code < 500
+        ? err.message
+        : 'The wallet service is unavailable. Check that all services are running.';
     console.error('[rpc-proxy]', method, err);
     return new Response(
       JSON.stringify({ ok: false, error: { message, code } }),

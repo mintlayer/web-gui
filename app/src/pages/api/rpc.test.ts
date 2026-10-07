@@ -168,6 +168,18 @@ describe('allowlist enforcement - blocked methods', () => {
     'address_sweep_spendable', // money movement — full-drain sweep, no cookie-only path
     // delegation_withdraw / staking_sweep_delegation stay allowed (risk accepted
     // — DelegationPanel withdraw flow); see rpc-allowlist.ts comment.
+    // Token authority methods — TOTP step-up via /api/token-manage only
+    // (issue/mint mutate supply + burn fees; lock_supply and an is_unfreezable
+    // freeze are irreversible; change_authority hands the token away).
+    'token_issue_new',
+    'token_nft_issue_new',
+    'token_mint',
+    'token_unmint',
+    'token_lock_supply',
+    'token_freeze',
+    'token_unfreeze',
+    'token_change_authority',
+    'token_change_metadata_uri',
   ])('blocks method "%s"', async (method) => {
     const { status, json } = await postRpc({ method, params: {} });
     expect(status).toBe(403);
@@ -245,7 +257,35 @@ describe('error paths', () => {
     const error = (json as { error: { message: string } }).error;
     expect(error.message).not.toContain('wallet-rpc-daemon');
     expect(error.message).not.toContain('ECONNREFUSED');
-    expect(error.message).toBe('An internal error occurred');
+    expect(error.message).toBe('The wallet service is unavailable. Check that all services are running.');
+  });
+
+  it('redacts transport errors (-32000) that carry the daemon URL', async () => {
+    vi.mocked(rpcCall).mockRejectedValueOnce(
+      new WalletRpcError('Cannot reach wallet-rpc-daemon at http://127.0.0.1:8256: connect ECONNREFUSED', -32000),
+    );
+    const { json } = await postRpc({ method: 'wallet_info', params: {} });
+    const error = (json as { error: { message: string } }).error;
+    expect(error.message).not.toContain('127.0.0.1');
+    expect(error.message).not.toContain('8256');
+    expect(error.message).toBe('The wallet service is unavailable. Check that all services are running.');
+  });
+
+  it('redacts daemon HTTP 5xx but still forwards user-level RPC errors', async () => {
+    vi.mocked(rpcCall).mockRejectedValueOnce(
+      new WalletRpcError('HTTP 503 Service Unavailable from wallet-rpc-daemon', 503),
+    );
+    const redacted = await postRpc({ method: 'wallet_info', params: {} });
+    const errBody = (redacted.json as { error: { message: string } }).error;
+    expect(errBody.message).not.toContain('503');
+    expect(errBody.message).toBe('The wallet service is unavailable. Check that all services are running.');
+
+    vi.mocked(rpcCall).mockRejectedValueOnce(
+      new WalletRpcError('Not enough funds to cover transaction', -32005),
+    );
+    const forwarded = await postRpc({ method: 'wallet_info', params: {} });
+    const fwdBody = (forwarded.json as { error: { message: string } }).error;
+    expect(fwdBody.message).toBe('Not enough funds to cover transaction');
   });
 
   it('returns Content-Type: application/json on error responses', async () => {

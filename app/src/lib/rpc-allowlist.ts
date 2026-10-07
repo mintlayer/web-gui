@@ -34,15 +34,12 @@ export const ALLOWED_RPC_METHODS = new Set([
   'wallet_best_block',
   // Tokens
   'node_get_tokens_info',
-  'token_issue_new',
-  'token_nft_issue_new',
-  'token_mint',
-  'token_unmint',
-  'token_lock_supply',
-  'token_freeze',
-  'token_unfreeze',
-  'token_change_authority',
-  'token_change_metadata_uri',
+  // Token AUTHORITY methods (issue/mint/unmint/lock/freeze/change) are
+  // intentionally absent — they mutate on-chain token state, several
+  // irreversibly (lock_supply, is_unfreezable freeze, change_authority), and
+  // burn fees. They are only reachable through POST /api/token-manage, which
+  // requires a fresh TOTP code (step-up) like /api/send. The plugin context
+  // inherits this exclusion: plugins can never mint/freeze/reassign tokens.
   // Orders / Trading
   'order_list_own',
   'order_list_all_active',

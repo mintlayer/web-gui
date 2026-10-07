@@ -15,6 +15,10 @@ import { json } from '@/lib/api-utils';
 
 const INDEXER_URL = process.env.INDEXER_URL ?? 'http://api-web-server:3000';
 
+// One upstream indexer request per address — cap the fan-out like
+// address-tokens.ts so a runaway tab can't hammer the indexer.
+const MAX_ADDRESSES = 200;
+
 export const POST: APIRoute = async ({ request }) => {
   let addresses: string[] = [];
   try {
@@ -31,6 +35,9 @@ export const POST: APIRoute = async ({ request }) => {
 
   if (addresses.length === 0) {
     return json({ ok: false, error: 'Missing addresses' }, 400);
+  }
+  if (addresses.length > MAX_ADDRESSES) {
+    return json({ ok: false, error: `Too many addresses (max ${MAX_ADDRESSES})` }, 400);
   }
 
   try {
@@ -51,6 +58,6 @@ export const POST: APIRoute = async ({ request }) => {
     const tokenIds = [...new Set(perAddress.flat())];
     return json({ ok: true, result: tokenIds }, 200);
   } catch (err) {
-    return json({ ok: false, error: String(err) }, 502);
+    return json({ ok: false, error: 'Indexer request failed' }, 502);
   }
 };
