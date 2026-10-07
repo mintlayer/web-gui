@@ -28,6 +28,11 @@ export const POST: APIRoute = async ({ request }) => {
     });
   }
 
+  // Authority note: this endpoint persists a login credential, but it can only
+  // run with a challenge that register-options issued AFTER a successful
+  // 2FA step-up burn. The challenge cookie is single-use and expires in
+  // minutes, so no separate TOTP check is needed here.
+
   let body: RegistrationResponseJSON & { name?: string };
   try {
     body = await request.json();
