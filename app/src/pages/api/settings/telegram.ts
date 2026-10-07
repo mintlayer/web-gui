@@ -8,10 +8,12 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
   const form = await readFormData(request);
   if (!form) return json({ ok: false, error: 'Invalid request body' }, 400);
 
-  const botToken = (form.get('bot_token') as string | null) ?? '';
-  const chatId   = (form.get('chat_id')   as string | null) ?? '';
+  // Coerce non-strings (e.g. File parts) to '' so they fail validation cleanly.
+  const str = (v: FormDataEntryValue | null) => (typeof v === 'string' ? v : '');
+  const botToken = str(form.get('bot_token'));
+  const chatId   = str(form.get('chat_id'));
   const test     = form.get('test') === '1';
-  const totpCode = (form.get('totp_code') as string | null) ?? '';
+  const totpCode = str(form.get('totp_code'));
 
   if (!botToken || !chatId) {
     return json({ ok: false, error: 'Bot token and chat ID are required' }, 400);

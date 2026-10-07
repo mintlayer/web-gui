@@ -8,7 +8,10 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
   const form = await readFormData(request);
   if (!form) return json({ ok: false, error: 'Invalid request body' }, 400);
 
-  const totpCode = (form.get('totp_code') as string | null) ?? '';
+  // Coerce non-strings (e.g. File parts) to '' so they fail validation cleanly
+  // instead of crashing hash-style checks downstream.
+  const str = (v: FormDataEntryValue | null) => (typeof v === 'string' ? v : '');
+  const totpCode = str(form.get('totp_code'));
 
   const currentSecret = getStringPref('auth.totp_secret');
   if (!currentSecret) {
