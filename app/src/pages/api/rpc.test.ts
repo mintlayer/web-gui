@@ -165,6 +165,9 @@ describe('allowlist enforcement - blocked methods', () => {
     'wallet_unlock_private_keys', // sensitive — server-side only
     'address_send',            // money movement — TOTP step-up via /api/send only
     'token_send',              // money movement — TOTP step-up via /api/send only
+    'address_sweep_spendable', // money movement — full-drain sweep, no cookie-only path
+    // delegation_withdraw / staking_sweep_delegation stay allowed (risk accepted
+    // — DelegationPanel withdraw flow); see rpc-allowlist.ts comment.
   ])('blocks method "%s"', async (method) => {
     const { status, json } = await postRpc({ method, params: {} });
     expect(status).toBe(403);

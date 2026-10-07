@@ -21,6 +21,11 @@ export const ALLOWED_RPC_METHODS = new Set([
   'delegation_list_ids',
   'delegation_create',
   'delegation_stake',
+  // delegation_withdraw / staking_sweep_delegation KEPT for now (risk accepted):
+  // DelegationPanel.tsx withdraw flow calls them through this proxy, so removing
+  // them breaks a shipped feature. They DO move coins to a client-chosen
+  // destination — a stolen session cookie can drain delegated funds without the
+  // TOTP step-up. Migrate to a dedicated requireStepUp endpoint, then remove.
   'delegation_withdraw',
   'staking_sweep_delegation',
   // Wallet — open/create are handled server-side only (setup.astro, wallet.astro)
@@ -56,5 +61,10 @@ export const ALLOWED_RPC_METHODS = new Set([
   'transaction_abandon',
   // UTXOs
   'account_utxos',
-  'address_sweep_spendable',
+  // address_sweep_spendable removed: with `all: true` (or empty from_addresses)
+  // it moves every spendable UTXO to a client-chosen destination in one call —
+  // a full wallet drain reachable with a bare session cookie, which defeats
+  // the address_send/token_send removal. If the UI ever needs sweep, expose it
+  // through a dedicated step-up-protected endpoint (requireStepUp) that fixes
+  // the account server-side.
 ]);

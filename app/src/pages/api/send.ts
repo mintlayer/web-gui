@@ -29,7 +29,13 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     body = (await request.json()) as Record<string, unknown>;
     if (typeof body.address === 'string') address = body.address.trim();
     if (typeof body.amount === 'string') amount = body.amount.trim();
-    if (body.asset_type === 'token') assetType = 'token';
+    // Strict enum: anything that is not exactly one of the two kinds is a 400,
+    // never a silent fall-through to an ML send — what the user confirmed in
+    // the dialog must be what gets sent.
+    if (body.asset_type !== 'ml' && body.asset_type !== 'token') {
+      return json({ ok: false, error: 'asset_type must be "ml" or "token"' }, 400);
+    }
+    assetType = body.asset_type as 'ml' | 'token';
     if (typeof body.token_id === 'string') tokenId = body.token_id.trim();
   } catch {
     return json({ ok: false, error: 'Invalid request body' }, 400);
@@ -72,10 +78,13 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
           });
     return json({ ok: true, tx_id: result.tx_id });
   } catch (err) {
+    // Step-up already ran: the TOTP code is burned even though nothing was
+    // broadcast. Flag it so the UI can tell the user to enter a FRESH code
+    // instead of silently retrying the dead one.
     if (err instanceof WalletRpcError) {
-      return json({ ok: false, error: err.message }, 502);
+      return json({ ok: false, error: err.message, code_consumed: true }, 502);
     }
     console.error('[send]', err);
-    return json({ ok: false, error: 'Send failed' }, 500);
+    return json({ ok: false, error: 'Send failed', code_consumed: true }, 500);
   }
 };
