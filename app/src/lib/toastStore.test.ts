@@ -210,3 +210,131 @@ describe('submitWithToast', () => {
     }
   });
 });
+
+// ── submitWithToast + /api/tx-status reality checks ───────────────────────────
+
+describe('submitWithToast indexer-backed status checks', () => {
+  let submitWithToast: typeof import('@/lib/toastStore').submitWithToast;
+  let toastStore: typeof import('@/lib/toastStore').toastStore;
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    const mod = await import('@/lib/toastStore');
+    submitWithToast = mod.submitWithToast;
+    toastStore = mod.toastStore;
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  const txStatusResponse = (body: object) =>
+    Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+
+  it('escalation marks the toast stale while the tx is really pending, and re-arms', async () => {
+    vi.useFakeTimers();
+    fetchMock.mockReturnValue(txStatusResponse({ status: 'pending', confirmations: null }));
+    const txPromise = vi.fn().mockResolvedValue('txPending');
+    const watchFn = vi.fn().mockReturnValue(new Promise(() => {})); // wallet watcher never fires
+
+    await submitWithToast(txPromise, watchFn);
+    expect(toastStore.getSnapshot().find(t => t.id === 'txPending')?.stale).toBeFalsy();
+
+    // First reality check at 3 min: tx still in the mempool -> honest copy
+    await vi.advanceTimersByTimeAsync(180_001);
+    expect(toastStore.getSnapshot().find(t => t.id === 'txPending')?.stale).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toContain('/api/tx-status?id=txPending');
+
+    // Re-armed check at +2 min keeps polling while the mempool says pending
+    await vi.advanceTimersByTimeAsync(120_001);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(toastStore.getSnapshot().find(t => t.id === 'txPending')?.status).toBe('pending');
+  });
+
+  it('escalation confirms the toast when the indexer says confirmed (missed wallet event)', async () => {
+    vi.useFakeTimers();
+    fetchMock.mockReturnValue(txStatusResponse({ status: 'confirmed', confirmations: 1 }));
+    const txPromise = vi.fn().mockResolvedValue('txMissed');
+    const watchFn = vi.fn().mockReturnValue(new Promise(() => {}));
+
+    await submitWithToast(txPromise, watchFn);
+    await vi.advanceTimersByTimeAsync(180_001);
+
+    expect(toastStore.getSnapshot().find(t => t.id === 'txMissed')?.status).toBe('confirmed');
+    // No further polling once resolved
+    await vi.advanceTimersByTimeAsync(120_001);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('escalation stops polling when the indexer cannot see the tx', async () => {
+    vi.useFakeTimers();
+    fetchMock.mockReturnValue(txStatusResponse({ status: 'unknown' }));
+    const txPromise = vi.fn().mockResolvedValue('txGhost');
+    const watchFn = vi.fn().mockReturnValue(new Promise(() => {}));
+
+    await submitWithToast(txPromise, watchFn);
+    await vi.advanceTimersByTimeAsync(180_001);
+    expect(toastStore.getSnapshot().find(t => t.id === 'txGhost')?.stale).toBe(true);
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(toastStore.getSnapshot().find(t => t.id === 'txGhost')?.status).toBe('pending');
+  });
+
+  it('watcher timeout + indexer says pending: toast stays pending, not failed', async () => {
+    vi.useFakeTimers();
+    fetchMock.mockReturnValue(txStatusResponse({ status: 'pending', confirmations: null }));
+    const txPromise = vi.fn().mockResolvedValue('txSlow');
+    const watchFn = vi.fn().mockRejectedValue(new Error('Transaction confirmation timed out'));
+
+    await submitWithToast(txPromise, watchFn);
+    await vi.advanceTimersByTimeAsync(0);
+
+    const toast = toastStore.getSnapshot().find(t => t.id === 'txSlow');
+    expect(toast?.status).toBe('pending');
+    expect(toast?.stale).toBe(true);
+  });
+
+  it('watcher timeout + indexer says confirmed: toast is confirmed', async () => {
+    vi.useFakeTimers();
+    fetchMock.mockReturnValue(txStatusResponse({ status: 'confirmed', confirmations: 2 }));
+    const txPromise = vi.fn().mockResolvedValue('txLate');
+    const watchFn = vi.fn().mockRejectedValue(new Error('Transaction confirmation timed out'));
+
+    await submitWithToast(txPromise, watchFn);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(toastStore.getSnapshot().find(t => t.id === 'txLate')?.status).toBe('confirmed');
+  });
+
+  it('watcher timeout + indexer cannot see the tx: failed with the timeout message', async () => {
+    vi.useFakeTimers();
+    fetchMock.mockReturnValue(txStatusResponse({ status: 'unknown' }));
+    const txPromise = vi.fn().mockResolvedValue('txGone');
+    const watchFn = vi.fn().mockRejectedValue(new Error('Transaction confirmation timed out'));
+
+    await submitWithToast(txPromise, watchFn);
+    await vi.advanceTimersByTimeAsync(0);
+
+    const toast = toastStore.getSnapshot().find(t => t.id === 'txGone');
+    expect(toast?.status).toBe('failed');
+    expect(toast?.errorMessage).toBe('Transaction confirmation timed out');
+  });
+
+  it('non-timeout rejections still fail immediately without consulting the indexer', async () => {
+    fetchMock.mockReturnValue(txStatusResponse({ status: 'confirmed' }));
+    const txPromise = vi.fn().mockResolvedValue('txConflicted');
+    const watchFn = vi.fn().mockRejectedValue(new Error('transaction conflicted'));
+
+    await submitWithToast(txPromise, watchFn);
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+
+    const toast = toastStore.getSnapshot().find(t => t.id === 'txConflicted');
+    expect(toast?.status).toBe('failed');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
