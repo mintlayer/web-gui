@@ -115,7 +115,7 @@ services:
       PINATA_JWT: "${PINATA_JWT:-}"
       IPFS_PROVIDER: "${IPFS_PROVIDER:-}"
       FILEBASE_TOKEN: "${FILEBASE_TOKEN:-}"
-      SESSION_SECRET: "${SESSION_SECRET}"
+      SESSION_SECRET: "${SESSION_SECRET:?SESSION_SECRET is not set - run ./init.sh for a real deployment, or 'make dev' for a loopback dev stack}"
       WALLET_RPC_CMD: "${WALLET_RPC_CMD:-}"
       INDEXER_ENABLED: "${INDEXER_ENABLED:-false}"
       BITCOIN_ENABLED: "${BITCOIN_ENABLED:-false}"
@@ -127,6 +127,11 @@ services:
       HOST: "0.0.0.0"
       # Settings -> HTTPS section renders only when the gateway is enabled
       WEB_GUI_TLS: "${WEB_GUI_TLS:-false}"
+      # Gate for proxy-derived headers (client IP + Origin): set true ONLY when
+      # traffic arrives through the shipped caddy gateway, which overwrites
+      # X-Forwarded-For with the real client IP. Direct/LAN exposure must keep
+      # it unset — X-Forwarded-* is attacker-controllable then.
+      TRUST_PROXY: "${TRUST_PROXY:-}"
       PORT: "4321"
     restart: unless-stopped
 
@@ -310,7 +315,9 @@ services:
       - postgres
       - node-daemon
     ports:
-      - "${API_WEB_SERVER_PORT:-3000}:3000"
+      # Unauthenticated indexer API - loopback only. The GUI reaches it over
+      # the compose network; never expose this to the LAN/internet.
+      - "127.0.0.1:${API_WEB_SERVER_PORT:-3000}:3000"
     environment:
       ML_API_WEB_SRV_NETWORK: "${NETWORK:-mainnet}"
       ML_API_WEB_SRV_BIND_ADDRESS: "0.0.0.0:3000"

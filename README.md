@@ -226,7 +226,21 @@ docker compose pull && docker compose up -d
 
 ## Development
 
-Run the Astro app locally against a running daemon:
+The quickest loop is `make dev`: it boots the full stack (node + wallet prod images, indexer
+profile) with the web-gui source mounted for hot reload at <http://localhost:4321>.
+
+On first use it generates `.env.dev` automatically: fixed development credentials (`dev` / `dev`
+etc., from `env.dev.example`), your host UID/GID, and a fresh random `SESSION_SECRET`. The dev
+stack binds the web UI to `127.0.0.1` and publishes no daemon ports, so those fixed credentials
+are local-only by design — they are never valid for a real deployment (use `./init.sh`, which
+generates random secrets, for that). Delete `.env.dev` to re-roll the secret.
+
+> The daemon images (`ghcr.io/mintlayer/web-gui/node-daemon`, `wallet-rpc-daemon`,
+> `api-blockchain-scanner-daemon`, `api-web-server`) are private. Pull them after
+> `docker login ghcr.io` (a GitHub PAT with `read:packages`), or build them locally with
+> `./build-core-images.sh` and run `make dev-local` instead.
+
+To run the Astro app directly on the host against a running daemon:
 
 ```bash
 cd app

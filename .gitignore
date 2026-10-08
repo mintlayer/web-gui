@@ -5,6 +5,7 @@ TODO.md
 
 # Environment
 .env
+.env.dev
 
 # Node
 node_modules/

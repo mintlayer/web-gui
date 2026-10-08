@@ -1,9 +1,10 @@
-.PHONY: up down restart nuke restart-gui build logs dev dev-build dev-local wallet-cli bitcoin bitcoin-cli nft-images-public pending-transactions list-utxos
+.PHONY: up down restart nuke restart-gui build logs dev dev-build dev-local dev-env wallet-cli bitcoin bitcoin-cli nft-images-public pending-transactions list-utxos
 
 ACCOUNT ?= 0
 
 ## Start all services
 up:
+	@test -f .env || { echo "ERROR: no .env found - run ./init.sh to configure a real deployment (or 'make dev' for a loopback dev stack)."; exit 1; }
 	docker compose up -d
 
 ## Stop and remove all containers (including optional profiles and orphaned run containers)
@@ -46,17 +47,28 @@ logs:
 
 ## Start all services in dev mode with HMR (rebuilds web-gui image, includes indexer stack)
 ## Tears down existing containers first so you always start clean.
-dev:
-	docker compose --profile indexer -f docker-compose.yml -f docker-compose.dev.yml down --remove-orphans 2>/dev/null || true
-	docker compose --profile indexer -f docker-compose.yml -f docker-compose.dev.yml up --build
+dev: dev-env
+	docker compose --profile indexer --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml down --remove-orphans 2>/dev/null || true
+	docker compose --profile indexer --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml up --build
 
 ## Like dev, but uses locally-built core images (run ./build-core-images.sh first)
-dev-local:
-	docker compose --profile indexer -f docker-compose.yml -f docker-compose.dev.yml up
+dev-local: dev-env
+	docker compose --profile indexer --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml up
 
 ## Rebuild dev image only (run after adding npm packages, then re-run make dev)
-dev-build:
-	docker compose --profile indexer -f docker-compose.yml -f docker-compose.dev.yml build web-gui
+dev-build: dev-env
+	docker compose --profile indexer --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml build web-gui
+
+## Generate .env.dev (fixed dev credentials + fresh random SESSION_SECRET) on first use.
+## Dev-only: loopback-bound, never valid for a real deployment (use ./init.sh for that).
+dev-env:
+	@if [ ! -f .env.dev ]; then \
+		cp env.dev.example .env.dev; \
+		secret=$$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'); \
+		printf 'SESSION_SECRET=%s\n' "$$secret" >> .env.dev; \
+		printf 'ML_USER_ID=%s\nML_GROUP_ID=%s\n' "$$(id -u)" "$$(id -g)" >> .env.dev; \
+		echo "Generated .env.dev with dev credentials and a fresh SESSION_SECRET."; \
+	fi
 
 ## Open an interactive wallet-cli session connected to the running wallet-rpc-daemon
 wallet-cli:
