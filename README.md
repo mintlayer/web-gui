@@ -60,8 +60,7 @@ A `Makefile` wraps the most common Docker Compose commands:
 | `make restart-gui` | Rebuild and restart only the web-gui container |
 | `make build` | Rebuild all images without starting |
 | `make logs` | Tail logs for all services |
-| `make dev` | Start web-gui in dev mode with HMR (node + wallet use prod images) |
-| `make dev-indexer` | Dev mode + full indexer stack |
+| `make dev` | Start web-gui in dev mode with HMR — full stack including the indexer profile (node + wallet use prod images) |
 | `make dev-build` | Rebuild the dev image (run after adding npm packages) |
 | `make wallet-cli` | Open an interactive wallet-cli session |
 | `make bitcoin` | Start the optional Bitcoin node + BTC wallet |
@@ -136,6 +135,18 @@ docker compose --profile indexer up -d
 ```
 
 The REST API is available at <http://localhost:3000> (configurable via `API_WEB_SERVER_PORT` in `.env`).
+
+**Use a v1.4.1 (or newer) indexer.** Older indexers still power the Token Management and Trading
+pages, but some features detect the version and switch off gracefully:
+
+- Pending-transaction awareness: toasts for outgoing transactions verify against the indexer's
+  mempool endpoint, so a stuck transaction shows as *still pending* instead of a false failure.
+- Supply statistics & top holders on the token manage page (v1.4.1 `/statistics` endpoints).
+- Daemon images are pinned in `.env` (`ML_*_DAEMON_IMAGE`); the CI workflow builds them from the
+  Mintlayer version set in `.github/workflows/mintlayer-daemons.yml`.
+
+> Upgrading from an indexer older than v1.4.1 requires a **full indexer resync** (storage format
+> change); the node and wallet daemons should be upgraded together.
 
 ---
 
