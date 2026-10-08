@@ -78,6 +78,20 @@ export const onRequest = defineMiddleware(async (context, next) => {
     return response;
   }
 
+  // First-run bootstrap: /setup is the page that CREATES the login password
+  // and 2FA, so it must be reachable while authentication is still
+  // unconfigured. Once both exist, /setup is session-gated like every other
+  // page - otherwise anyone could re-run setup on an installed wallet.
+  if (pathname === '/setup') {
+    const authConfigured =
+      Boolean(getPref('auth.password_hash')) && Boolean(getPref('auth.totp_secret'));
+    if (!authConfigured) {
+      const response = await next();
+      applySecurityHeaders(response);
+      return response;
+    }
+  }
+
   const cookieHeader = context.request.headers.get('cookie') ?? '';
   const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${SESSION_COOKIE_NAME}=([^;]+)`));
   const token = match?.[1] ?? '';
