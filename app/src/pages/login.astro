@@ -10,8 +10,9 @@ import {
   checkLoginRateLimit,
   recordLoginFailure,
   SESSION_COOKIE_NAME,
-  verifySessionToken, getClientAddress } from '@/lib/auth';
-import { getStringPref, getPref, setPref } from '@/lib/prefs-db';
+  verifySessionToken, getClientAddress, generateTotpSecret } from '@/lib/auth';
+import { getStringPref, getPref, setPref, deletePref } from '@/lib/prefs-db';
+import TotpQrCode from '@/components/TotpQrCode';
 import { getCredentials, isValidRpId, getRpId } from '@/lib/passkey';
 
 // Current session version; incremented on password change to invalidate old tokens.
@@ -29,6 +30,25 @@ const passwordHash = getStringPref('auth.password_hash');
 const totpSecret   = getStringPref('auth.totp_secret');
 const unconfigured = !passwordHash || !totpSecret;
 
+// ── First-run credential bootstrap ──────────────────────────────────────────
+// The /setup wizard only creates the WALLET — its password field encrypts the
+// wallet file for the daemon, not the web login. On a fresh install there is
+// no web credential source (init.sh only ships secrets for deployments), so
+// the login page bootstraps them in two steps: (1) choose a password,
+// (2) scan the staged TOTP secret and confirm a first code. Pending state
+// lives in prefs so reloads and restarts keep it. Public only until both
+// factors exist (see middleware.ts).
+const restartRequested =
+  new URL(Astro.request.url).searchParams.has('restart');
+if (restartRequested && unconfigured) {
+  deletePref('auth.password_pending');
+  deletePref('auth.totp_secret_pending');
+}
+const pendingHash   = getStringPref('auth.password_pending');
+const pendingSecret = getStringPref('auth.totp_secret_pending');
+const bootstrapping = unconfigured && Boolean(pendingHash) && Boolean(pendingSecret);
+
+
 // Passkeys: only show if at least one is enrolled AND the RP ID is valid
 const passkeys = getCredentials();
 const rpId = getRpId(Astro.request.url);
@@ -37,6 +57,49 @@ const hasPasskeys = passkeys.length > 0 && isValidRpId(rpId);
 const nextParam = new URL(Astro.request.url).searchParams.get('next') ?? '/';
 
 let errorMessage: string | null = null;
+
+if (Astro.request.method === 'POST' && unconfigured) {
+  const ip = getClientAddress(Astro.request, Astro.clientAddress as string | undefined);
+  if (!checkLoginRateLimit(ip)) {
+    errorMessage = 'Too many attempts. Try again in 15 minutes.';
+  } else {
+    const form = await Astro.request.formData();
+    const stagedHash = getStringPref('auth.password_pending');
+    if (!stagedHash) {
+      // Step 1: stage the chosen password and a fresh TOTP secret.
+      const password = (form.get('password') as string | null) ?? '';
+      const confirm  = (form.get('password_confirm') as string | null) ?? '';
+      if (password.length < 8) {
+        errorMessage = 'Password must be at least 8 characters.';
+      } else if (password !== confirm) {
+        errorMessage = 'Passwords do not match.';
+      } else {
+        setPref('auth.password_pending', await hashPassword(password));
+        setPref('auth.totp_secret_pending', generateTotpSecret());
+        return Astro.redirect(`/login?next=${encodeURIComponent(nextParam)}`, 302);
+      }
+    } else {
+      // Step 2: enroll the authenticator by confirming a first code.
+      const totpCode = ((form.get('totp_code') as string | null) ?? '').trim();
+      if (/^\d{6}$/.test(totpCode) && verifyTOTP(totpCode, getStringPref('auth.totp_secret_pending'))) {
+        setPref('auth.password_hash', stagedHash);
+        setPref('auth.totp_secret', getStringPref('auth.totp_secret_pending'));
+        deletePref('auth.password_pending');
+        deletePref('auth.totp_secret_pending');
+        const token = generateSessionToken(sessionVersion);
+        const safeDest = nextParam.startsWith('/') && !nextParam.startsWith('//') ? nextParam : '/';
+        return new Response(null, {
+          status: 302,
+          headers: { Location: safeDest, 'Set-Cookie': makeSessionCookieHeader(token) },
+        });
+      }
+      recordLoginFailure(ip);
+      // Artificial delay to slow brute-force before lockout kicks in
+      await new Promise((r) => setTimeout(r, 500));
+      errorMessage = 'Invalid authenticator code.';
+    }
+  }
+}
 
 if (Astro.request.method === 'POST' && !unconfigured) {
   // Socket address first; x-forwarded-for only when TRUST_PROXY=true.
@@ -103,9 +166,10 @@ if (Astro.request.method === 'POST' && !unconfigured) {
         <p class="text-gray-500 text-sm">Sign in to your wallet</p>
       </div>
 
-      {unconfigured && (
+      {unconfigured && !bootstrapping && (
         <div class="mb-4 px-4 py-3 rounded-lg border border-amber-800 bg-amber-950/50 text-amber-300 text-sm">
-          Authentication is not configured yet. Complete <a href="/setup" class="underline hover:text-amber-200">first-time setup</a> to create a password and 2FA.
+          First-time setup: create the login credentials for this web UI below.
+          (Wallet creation lives at <a href="/setup" class="underline hover:text-amber-200">/setup</a>.)
         </div>
       )}
 
@@ -115,6 +179,67 @@ if (Astro.request.method === 'POST' && !unconfigured) {
         </div>
       )}
 
+      {unconfigured && !bootstrapping && (
+        <form
+          method="post"
+          class="bg-gray-900 border border-gray-800 rounded-xl p-6 shadow-xl space-y-4"
+        >
+          <p class="text-xs text-gray-500">Choose a password of at least 8 characters; you'll enroll two-factor authentication next.</p>
+          <div>
+            <label for="password" class="block text-sm font-medium text-gray-400 mb-1.5">New password</label>
+            <input id="password" name="password" type="password" required minlength="8"
+              autocomplete="new-password"
+              class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 focus:outline-none focus:ring-2 focus:ring-mint-600 focus:border-transparent transition" />
+          </div>
+          <div>
+            <label for="password_confirm" class="block text-sm font-medium text-gray-400 mb-1.5">Confirm password</label>
+            <input id="password_confirm" name="password_confirm" type="password" required minlength="8"
+              autocomplete="new-password"
+              class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 focus:outline-none focus:ring-2 focus:ring-mint-600 focus:border-transparent transition" />
+          </div>
+          <button
+            type="submit"
+            class="w-full py-2.5 px-4 rounded-lg bg-mint-600 hover:bg-mint-700 text-white font-medium
+                   transition-colors focus:outline-none focus:ring-2 focus:ring-mint-500
+                   focus:ring-offset-2 focus:ring-offset-gray-900"
+          >
+            Continue to 2FA enrollment
+          </button>
+        </form>
+      )}
+
+      {bootstrapping && (
+        <form
+          method="post"
+          class="bg-gray-900 border border-gray-800 rounded-xl p-6 shadow-xl space-y-4"
+        >
+          <p class="text-xs text-gray-500">Scan this QR code with your authenticator app, then enter the 6-digit code to finish setup.</p>
+          <div class="flex flex-col items-center gap-3">
+            <TotpQrCode client:load uri={`otpauth://totp/${encodeURIComponent('Mintlayer GUI-X')}?secret=${pendingSecret}&issuer=${encodeURIComponent('Mintlayer')}`} />
+            <div class="bg-gray-800 rounded-lg p-3 space-y-1 w-full">
+              <p class="text-xs text-gray-400">Secret key (manual entry):</p>
+              <p class="font-mono text-xs text-gray-200 break-all">{pendingSecret}</p>
+            </div>
+          </div>
+          <div>
+            <label for="totp_code" class="block text-sm font-medium text-gray-400 mb-1.5">Authenticator code</label>
+            <input id="totp_code" name="totp_code" type="text" required inputmode="numeric" maxlength="6"
+              autocomplete="one-time-code" pattern="[0-9]{6}" placeholder="000000"
+              class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-mint-600 focus:border-transparent tracking-[0.4em] text-center font-mono transition" />
+          </div>
+          <button
+            type="submit"
+            class="w-full py-2.5 px-4 rounded-lg bg-mint-600 hover:bg-mint-700 text-white font-medium
+                   transition-colors focus:outline-none focus:ring-2 focus:ring-mint-500
+                   focus:ring-offset-2 focus:ring-offset-gray-900"
+          >
+            Finish setup and sign in
+          </button>
+          <a href="/login?restart=1" class="block text-center text-xs text-gray-500 hover:text-gray-400">Start over</a>
+        </form>
+      )}
+
+      {!unconfigured && (
       <form
         method="post"
         class="bg-gray-900 border border-gray-800 rounded-xl p-6 shadow-xl space-y-4"
@@ -169,6 +294,7 @@ if (Astro.request.method === 'POST' && !unconfigured) {
           Sign in
         </button>
       </form>
+      )}
 
       {hasPasskeys && (
         <div class="mt-4">
