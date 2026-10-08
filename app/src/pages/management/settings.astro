@@ -1,9 +1,10 @@
 ---
 import ManagementLayout from '@/layouts/ManagementLayout.astro';
 import TotpQrCode from '@/components/TotpQrCode';
-import { verifyTOTP, generateTotpSecret } from '@/lib/auth';
+import { generateTotpSecret, getClientAddress } from '@/lib/auth';
+import { verifyAndBurnTotpCode } from '@/lib/step-up';
 import { getPref, getStringPref, setPref } from '@/lib/prefs-db';
-import { sendTelegramMessage } from '@/lib/telegram';
+import { sendTelegramMessage, getUpdates } from '@/lib/telegram';
 import { getCredentials, saveCredentials, isValidRpId, getRpId } from '@/lib/passkey';
 import { resolveMcpSettings } from '@/lib/mcp-settings';
 import { resolvePasswordChange, applyPasswordChange } from '@/lib/password-change';
@@ -38,7 +39,9 @@ if (Astro.request.method === 'POST') {
       result = { action: 'error', section, message: decision.error + '.' };
     } else {
       applyPasswordChange(decision.newHash); // invalidates all existing sessions
-      result = { action: 'success', section, message: 'Password updated successfully.' };
+      // The user's own session dies too (by design). Say it up front so the
+      // next navigation to /login reads as expected, not as a bug.
+      result = { action: 'success', section, message: 'Password updated. For security you have been signed out everywhere — sign in with your new password.' };
     }
 
   } else if (section === 'reset_2fa') {
@@ -46,18 +49,22 @@ if (Astro.request.method === 'POST') {
     const currentSecret = getStringPref('auth.totp_secret');
 
     if (!currentSecret) {
-      result = { action: 'error', section, message: '2FA not configured.' };
-    } else if (!verifyTOTP(totpCode, currentSecret)) {
-      result = { action: 'error', section, message: 'Invalid authenticator code.' };
+      result = { action: 'error', section, message: '2FA is not configured. Complete first-time setup at /setup to enable it.' };
     } else {
-      const newSecret = generateTotpSecret();
-      setPref('auth.totp_secret', newSecret);
-      const label = encodeURIComponent('Mintlayer GUI-X');
-      const issuer = encodeURIComponent('Mintlayer');
-      const uri = `otpauth://totp/${label}?secret=${newSecret}&issuer=${issuer}`;
-      result = { action: 'success', section, message: 'New 2FA secret generated. Scan the QR code below.', extra: { secret: newSecret, uri } };
+      const burn = verifyAndBurnTotpCode(totpCode, currentSecret, getClientAddress(Astro.request, Astro.clientAddress));
+      if (!burn.ok) {
+        // Surface the real reason: "already used" (wait ~60s) must not read
+        // as "invalid" (broken authenticator → panic 2FA reset).
+        result = { action: 'error', section, message: burn.error };
+      } else {
+        const newSecret = generateTotpSecret();
+        setPref('auth.totp_secret', newSecret);
+        const label = encodeURIComponent('Mintlayer GUI-X');
+        const issuer = encodeURIComponent('Mintlayer');
+        const uri = `otpauth://totp/${label}?secret=${newSecret}&issuer=${issuer}`;
+        result = { action: 'success', section, message: 'New 2FA secret generated. Scan the QR code below.', extra: { secret: newSecret, uri } };
+      }
     }
-
   } else if (section === 'remove_passkey') {
     const credentialId = str(form.get('credential_id'));
     if (!credentialId) {
@@ -77,14 +84,26 @@ if (Astro.request.method === 'POST') {
     const provider      = (form.get('provider')       as string | null) ?? '';
     const filebaseToken = str(form.get('filebase_token'));
     const pinataJwt     = (form.get('pinata_jwt')     as string | null) ?? '';
+    const totpCode      = str(form.get('totp_code'));
 
     if (!['filebase', 'pinata', ''].includes(provider)) {
       result = { action: 'error', section, message: `Invalid provider: ${provider}` };
     } else {
-      setPref('ipfs.provider',       provider);
-      setPref('ipfs.filebase_token', filebaseToken);
-      setPref('ipfs.pinata_jwt',     pinataJwt);
-      result = { action: 'success', section, message: 'IPFS settings saved.' };
+      // Pinata/Filebase keys are third-party account credentials: whoever sets
+      // them can pivot into the owner's pinning account. Same sensitivity class
+      // as the Telegram bot token — fresh 2FA code required.
+      const burn = verifyAndBurnTotpCode(totpCode, getStringPref('auth.totp_secret') ?? '', getClientAddress(Astro.request, Astro.clientAddress));
+      if (!burn.ok) {
+        result = { action: 'error', section, message: burn.error };
+      } else {
+        setPref('ipfs.provider',       provider);
+        // Disabling IPFS also clears any stored provider keys — keeping them
+        // on disk while "Disabled" protects nothing and leaves third-party
+        // credentials behind.
+        setPref('ipfs.filebase_token', provider === '' ? '' : filebaseToken);
+        setPref('ipfs.pinata_jwt',     provider === '' ? '' : pinataJwt);
+        result = { action: 'success', section, message: 'IPFS settings saved.' };
+      }
     }
 
   } else if (section === 'telegram_notif') {
@@ -99,24 +118,61 @@ if (Astro.request.method === 'POST') {
     result = { action: 'success', section, message: 'Notification preferences saved.' };
 
   } else if (section === 'telegram') {
-    const botToken = str(form.get('bot_token'));
-    const chatId   = (form.get('chat_id')   as string | null) ?? '';
-    const test     = form.get('test') === '1';
+    // Bot token is write-only: the form field stays empty unless the user is
+    // rotating it, so the stored secret never lands in the HTML source.
+    const currentToken = getStringPref('telegram.bot_token') ?? '';
+    const postedToken  = str(form.get('bot_token'));
+    const chatId       = str(form.get('chat_id'));
+    const totpCode     = str(form.get('totp_code'));
 
-    if (!botToken || !chatId) {
-      result = { action: 'error', section, message: 'Bot token and chat ID are required.' };
+    if (!postedToken && !currentToken) {
+      result = { action: 'error', section, message: 'Bot token is required — paste the token from @BotFather.' };
+    } else if (!/^[0-9]{1,20}$/.test(chatId)) {
+      // Private chats have positive ids; negative ids are groups, where every
+      // member could run /balance and /address.
+      result = { action: 'error', section, message: 'Chat ID must be your personal chat id (a positive number). Group chats are not supported.' };
     } else {
-      setPref('telegram.bot_token', botToken);
-      setPref('telegram.chat_id',   chatId);
-      if (test) {
-        try {
-          await sendTelegramMessage(botToken, chatId, '✅ Test message from <b>Mintlayer GUI-X</b> - Telegram notifications are working.');
-          result = { action: 'success', section, message: 'Settings saved and test message sent.' };
-        } catch (err) {
-          result = { action: 'error', section, message: `Saved, but test failed: ${(err as Error).message}` };
-        }
+      const currentSecret = getStringPref('auth.totp_secret');
+      if (!currentSecret) {
+        // Missing secret must not read as "invalid code" (and burn attempts
+        // against the IP throttle on first-run).
+        result = { action: 'error', section, message: '2FA is not configured yet — set it up in Security → Two-factor authentication first.' };
       } else {
-        result = { action: 'success', section, message: 'Telegram settings saved.' };
+        // Changing the notification channel redirects every wallet alert — same
+        // sensitivity class as a password change, so it needs a fresh 2FA code.
+        const burn = verifyAndBurnTotpCode(totpCode, currentSecret, getClientAddress(Astro.request, Astro.clientAddress));
+        if (!burn.ok) {
+          result = { action: 'error', section, message: burn.error };
+        } else {
+          // Every save sends a test message — a typo'd token must not go live
+          // silently with a bot that never answers.
+          const botToken = postedToken || currentToken;
+          setPref('telegram.bot_token', botToken);
+          setPref('telegram.chat_id',   chatId);
+          try {
+            await sendTelegramMessage(botToken, chatId, '✅ Test message from <b>Mintlayer GUI-X</b> - Telegram notifications are working.');
+            result = { action: 'success', section, message: 'Settings saved and test message delivered. The bot answers /help within about a minute.' };
+          } catch (err) {
+            result = { action: 'error', section, message: `Saved — the new settings are live, but the test message could not be delivered: ${(err as Error).message}` };
+          }
+        }
+      }
+    }
+  } else if (section === 'telegram_detect') {
+    // Onboarding helper: list chat ids the bot has actually received messages
+    // from, instead of sending users hunting for @userinfobot.
+    const token = getStringPref('telegram.bot_token');
+    if (!token) {
+      result = { action: 'error', section, message: 'Save a bot token first — detection talks to the Telegram API.' };
+    } else {
+      try {
+        const updates = await getUpdates(token, 0, 0);
+        const ids = [...new Set(updates.map(u => u.message?.chat.id).filter((x): x is number => typeof x === 'number'))];
+        result = ids.length > 0
+          ? { action: 'success', section, message: `Chats seen by your bot: ${ids.join(', ')} — copy yours into the Chat ID field above.` }
+          : { action: 'error', section, message: 'No messages seen yet. Send any message to your bot in Telegram, then click Detect chat ID again.' };
+      } catch (err) {
+        result = { action: 'error', section, message: `Detection failed — check the bot token. (${(err as Error).message})` };
       }
     }
 
@@ -132,6 +188,7 @@ if (Astro.request.method === 'POST') {
       allowActions: form.get('mcp_allow_actions') === '1',
       allowSpend:   form.get('mcp_allow_spend') === '1',
       totpCode:     str(form.get('totp_code')),
+      totpThrottleKey: getClientAddress(Astro.request, Astro.clientAddress),
     });
     if (!decision.ok) {
       result = { action: 'error', section, message: decision.error };
@@ -218,26 +275,26 @@ if (localCaPem) {
 
     <!-- ── Security ──────────────────────────────────────────────────────────── -->
     <section class="bg-gray-900 border border-gray-800 rounded-xl p-6">
-      <h2 class="text-lg font-semibold text-gray-100 mb-5">Security</h2>
+      <h2 id="security" class="text-lg font-semibold text-gray-100 mb-5">Security</h2>
 
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
         <!-- Change password -->
         <div>
-          <h3 class="text-sm font-medium text-gray-300 mb-3">Change Password</h3>
+          <h3 id="change-password" class="text-sm font-medium text-gray-300 mb-3">Change Password</h3>
 
           {result.action === 'success' && result.section === 'password' && (
-            <div class="mb-3 px-3 py-2 rounded-lg border border-emerald-800 bg-emerald-950/50 text-emerald-300 text-sm">
+            <div role="status" class="mb-3 px-3 py-2 rounded-lg border border-emerald-800 bg-emerald-950/50 text-emerald-300 text-sm">
               {result.message}
             </div>
           )}
           {result.action === 'error' && result.section === 'password' && (
-            <div class="mb-3 px-3 py-2 rounded-lg border border-red-800 bg-red-950/50 text-red-300 text-sm">
+            <div role="alert" class="mb-3 px-3 py-2 rounded-lg border border-red-800 bg-red-950/50 text-red-300 text-sm">
               {result.message}
             </div>
           )}
 
-          <form method="post" class="space-y-3">
+          <form method="post" action="/management/settings#change-password" class="space-y-3">
             <input type="hidden" name="section" value="password" />
             <div>
               <label class="block text-xs text-gray-400 mb-1" for="current_password">Current Password</label>
@@ -278,19 +335,19 @@ if (localCaPem) {
 
         <!-- Reset 2FA -->
         <div>
-          <h3 class="text-sm font-medium text-gray-300 mb-3">Reset Two-Factor Authentication</h3>
+          <h3 id="reset-2fa" class="text-sm font-medium text-gray-300 mb-3">Reset Two-Factor Authentication</h3>
           <p class="text-xs text-gray-500 mb-3">
             Generates a new TOTP secret. You must confirm with your current authenticator code.
             After reset, immediately scan the new QR code - your old code will stop working.
           </p>
 
           {result.action === 'success' && result.section === 'reset_2fa' && (
-            <div class="mb-3 px-3 py-2 rounded-lg border border-emerald-800 bg-emerald-950/50 text-emerald-300 text-sm">
+            <div role="status" class="mb-3 px-3 py-2 rounded-lg border border-emerald-800 bg-emerald-950/50 text-emerald-300 text-sm">
               {result.message}
             </div>
           )}
           {result.action === 'error' && result.section === 'reset_2fa' && (
-            <div class="mb-3 px-3 py-2 rounded-lg border border-red-800 bg-red-950/50 text-red-300 text-sm">
+            <div role="alert" class="mb-3 px-3 py-2 rounded-lg border border-red-800 bg-red-950/50 text-red-300 text-sm">
               {result.message}
             </div>
           )}
@@ -309,8 +366,16 @@ if (localCaPem) {
             </div>
           )}
 
-          <form method="post" class="space-y-3">
+          <form method="post" action="/management/settings#reset-2fa" class="space-y-3">
             <input type="hidden" name="section" value="reset_2fa" />
+            <p class="text-xs text-amber-400/90">
+              Resetting replaces your current secret immediately — every device enrolled with the old secret stops
+              working the moment you save. The new secret is shown only once, right after saving.
+            </p>
+            <label class="flex items-start gap-2 text-xs text-gray-400">
+              <input type="checkbox" required class="mt-0.5 accent-mint-600" />
+              <span>I understand my current 2FA stops working immediately and I'm ready to scan the new secret.</span>
+            </label>
             <div>
               <label class="block text-xs text-gray-400 mb-1" for="totp_code_reset">Current Authenticator Code</label>
               <input
@@ -334,7 +399,7 @@ if (localCaPem) {
 
         <!-- Passkeys -->
         <div class="lg:col-span-2">
-          <h3 class="text-sm font-medium text-gray-300 mb-3">Passkeys</h3>
+          <h3 id="passkeys" class="text-sm font-medium text-gray-300 mb-3">Passkeys</h3>
           <p class="text-xs text-gray-500 mb-4">
             Passkeys let you sign in using your device biometrics or a hardware key - no password or authenticator code needed.
             {!passkeysSupported && (
@@ -345,12 +410,12 @@ if (localCaPem) {
           </p>
 
           {result.action === 'success' && result.section === 'remove_passkey' && (
-            <div class="mb-3 px-3 py-2 rounded-lg border border-emerald-800 bg-emerald-950/50 text-emerald-300 text-sm">
+            <div role="status" class="mb-3 px-3 py-2 rounded-lg border border-emerald-800 bg-emerald-950/50 text-emerald-300 text-sm">
               {result.message}
             </div>
           )}
           {result.action === 'error' && result.section === 'remove_passkey' && (
-            <div class="mb-3 px-3 py-2 rounded-lg border border-red-800 bg-red-950/50 text-red-300 text-sm">
+            <div role="alert" class="mb-3 px-3 py-2 rounded-lg border border-red-800 bg-red-950/50 text-red-300 text-sm">
               {result.message}
             </div>
           )}
@@ -369,7 +434,7 @@ if (localCaPem) {
                           {new Date(pk.createdAt).toLocaleDateString()}
                         </span>
                       </div>
-                      <form method="post">
+                      <form method="post" action="/management/settings#passkeys">
                         <input type="hidden" name="section" value="remove_passkey" />
                         <input type="hidden" name="credential_id" value={pk.id} />
                         <button
@@ -384,7 +449,7 @@ if (localCaPem) {
                 </ul>
               )}
 
-              <div id="passkey-register-error" class="hidden px-3 py-2 rounded-lg border border-red-800 bg-red-950/50 text-red-300 text-sm"></div>
+              <div id="passkey-register-error" role="alert" class="hidden px-3 py-2 rounded-lg border border-red-800 bg-red-950/50 text-red-300 text-sm" tabindex="-1"></div>
 
               <button
                 id="passkey-register-btn"
@@ -408,7 +473,7 @@ if (localCaPem) {
     <!-- ── HTTPS (LAN access) ──────────────────────────────────────────────────── -->
     {tlsEnabled && (
       <section class="bg-gray-900 border border-gray-800 rounded-xl p-6">
-        <h2 class="text-lg font-semibold text-gray-100 mb-1">HTTPS (LAN access)</h2>
+        <h2 id="https" class="text-lg font-semibold text-gray-100 mb-1">HTTPS (LAN access)</h2>
         <p class="text-sm text-gray-500 mb-4">
           The GUI is served over HTTPS with a local Certificate Authority (Caddy).
           Browsers show a one-time warning until you import the CA root certificate
@@ -467,23 +532,23 @@ if (localCaPem) {
 
     <!-- ── IPFS Storage ───────────────────────────────────────────────────────── -->
     <section class="bg-gray-900 border border-gray-800 rounded-xl p-6">
-      <h2 class="text-lg font-semibold text-gray-100 mb-1">IPFS Storage</h2>
+      <h2 id="ipfs" class="text-lg font-semibold text-gray-100 mb-1">IPFS Storage</h2>
       <p class="text-sm text-gray-500 mb-5">
         Used for token logo and metadata uploads. Choose a provider and supply its API key.
       </p>
 
       {result.action === 'success' && result.section === 'ipfs' && (
-        <div class="mb-4 px-3 py-2 rounded-lg border border-emerald-800 bg-emerald-950/50 text-emerald-300 text-sm">
+        <div role="status" class="mb-4 px-3 py-2 rounded-lg border border-emerald-800 bg-emerald-950/50 text-emerald-300 text-sm">
           {result.message}
         </div>
       )}
       {result.action === 'error' && result.section === 'ipfs' && (
-        <div class="mb-4 px-3 py-2 rounded-lg border border-red-800 bg-red-950/50 text-red-300 text-sm">
+        <div role="alert" class="mb-4 px-3 py-2 rounded-lg border border-red-800 bg-red-950/50 text-red-300 text-sm">
           {result.message}
         </div>
       )}
 
-      <form method="post" class="space-y-4 max-w-md" id="ipfs-form">
+      <form method="post" action="/management/settings#ipfs" class="space-y-4 max-w-md" id="ipfs-form">
         <input type="hidden" name="section" value="ipfs" />
 
         <div>
@@ -521,6 +586,20 @@ if (localCaPem) {
           />
         </div>
 
+        <div>
+          <label class="block text-xs text-gray-400 mb-1" for="totp_code_ipfs">2FA code</label>
+          <input
+            id="totp_code_ipfs" name="totp_code" type="text"
+            inputmode="numeric" autocomplete="one-time-code"
+            pattern="[0-9]{6}" maxlength="6"
+            placeholder="123456" required
+            title="Changing pinning credentials needs a fresh 2FA code"
+            class="w-32 px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 text-sm tracking-[0.3em]
+                   placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-mint-600 focus:border-transparent transition"
+          />
+          <p class="text-xs text-gray-500 mt-1">Saving provider keys requires a fresh 2FA code. Switching to Disabled also clears the stored keys.</p>
+        </div>
+
         <button
           type="submit"
           class="py-2 px-4 rounded-lg bg-mint-600 hover:bg-mint-700 text-white text-sm font-medium
@@ -547,14 +626,14 @@ if (localCaPem) {
     <!-- ── Bitcoin ───────────────────────────────────────────────────────────── -->
     {bitcoinEnabled && (
       <section class="bg-gray-900 border border-gray-800 rounded-xl p-6">
-        <h2 class="text-lg font-semibold text-gray-100 mb-1">Bitcoin</h2>
+        <h2 id="bitcoin" class="text-lg font-semibold text-gray-100 mb-1">Bitcoin</h2>
         <p class="text-sm text-gray-500 mb-5">
           Optional BTC wallet backed by your own Bitcoin node. Node and wallet services are
           managed from the host with <code class="font-mono text-xs">docker compose --profile bitcoin</code>.
         </p>
 
         {result.action === 'success' && result.section === 'bitcoin' && (
-          <div class="mb-4 px-3 py-2 rounded-lg border border-emerald-800 bg-emerald-950/50 text-emerald-300 text-sm">
+          <div role="status" class="mb-4 px-3 py-2 rounded-lg border border-emerald-800 bg-emerald-950/50 text-emerald-300 text-sm">
             {result.message}
           </div>
         )}
@@ -563,7 +642,7 @@ if (localCaPem) {
           Checking node status…
         </div>
 
-        <form method="post" class="space-y-3 max-w-md">
+        <form method="post" action="/management/settings#bitcoin" class="space-y-3 max-w-md">
           <input type="hidden" name="section" value="bitcoin" />
           <label class="flex items-center gap-3 cursor-pointer group">
             <input
@@ -628,37 +707,38 @@ if (localCaPem) {
 
     <!-- ── Telegram Notifications ─────────────────────────────────────────────── -->
     <section class="bg-gray-900 border border-gray-800 rounded-xl p-6">
-      <h2 class="text-lg font-semibold text-gray-100 mb-1">Telegram Notifications</h2>
+      <h2 id="telegram" class="text-lg font-semibold text-gray-100 mb-1">Telegram Notifications</h2>
       <p class="text-sm text-gray-500 mb-5">
         Receive wallet alerts via a Telegram bot. Create a bot with
         <a href="https://t.me/BotFather" target="_blank" rel="noopener" class="text-mint-400 hover:text-mint-300 transition-colors">@BotFather</a>,
-        then start a chat with it and use its <code class="font-mono text-xs">/start</code> command to get your chat ID
-        (or use <a href="https://t.me/userinfobot" target="_blank" rel="noopener" class="text-mint-400 hover:text-mint-300 transition-colors">@userinfobot</a>).
+        send any message to your bot from your own account, then click
+        <strong class="text-gray-400">Detect chat ID</strong> below
+        (or ask <a href="https://t.me/userinfobot" target="_blank" rel="noopener" class="text-mint-400 hover:text-mint-300 transition-colors">@userinfobot</a>).
       </p>
 
       {result.action === 'success' && result.section === 'telegram' && (
-        <div class="mb-4 px-3 py-2 rounded-lg border border-emerald-800 bg-emerald-950/50 text-emerald-300 text-sm">
+        <div role="status" class="mb-4 px-3 py-2 rounded-lg border border-emerald-800 bg-emerald-950/50 text-emerald-300 text-sm">
           {result.message}
         </div>
       )}
       {result.action === 'error' && result.section === 'telegram' && (
-        <div class="mb-4 px-3 py-2 rounded-lg border border-red-800 bg-red-950/50 text-red-300 text-sm">
+        <div role="alert" class="mb-4 px-3 py-2 rounded-lg border border-red-800 bg-red-950/50 text-red-300 text-sm">
           {result.message}
         </div>
       )}
 
-      <form method="post" class="space-y-4 max-w-md">
+      <form method="post" action="/management/settings#telegram" class="space-y-4 max-w-md">
         <input type="hidden" name="section" value="telegram" />
 
         <div>
           <label class="block text-xs text-gray-400 mb-1" for="bot_token">Bot Token</label>
           <input
-            id="bot_token" name="bot_token" type="password" required
-            value={telegramBotToken}
-            placeholder="123456789:AAF..."
+            id="bot_token" name="bot_token" type="password" autocomplete="new-password"
+            placeholder={telegramBotToken ? `Saved (••••••${telegramBotToken.slice(-4)}) — fill only to replace` : '123456789:AAF...'}
             class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 text-sm
                    placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-mint-600 focus:border-transparent transition"
           />
+          <p class="text-xs text-gray-600 mt-1">Stored server-side, never displayed again. Leave blank to keep the saved token.</p>
         </div>
 
         <div>
@@ -672,32 +752,64 @@ if (localCaPem) {
           />
         </div>
 
-        <div class="flex gap-3">
+        <div class="pt-2">
+          <label class="block text-xs text-gray-400 mb-1" for="totp_code_telegram">
+            Authenticator code <span class="text-gray-600">(required to save — alerts go wherever this points)</span>
+          </label>
+          <input
+            id="totp_code_telegram" name="totp_code" type="text" required
+            inputmode="numeric" maxlength="6" pattern="[0-9]{6}" placeholder="000000"
+            autocomplete="one-time-code"
+            class="w-40 px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 text-sm
+                   placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-mint-600 focus:border-transparent
+                   tracking-[0.3em] text-center font-mono transition"
+          />
+        </div>
+
+        <div class="flex gap-3 items-center">
           <button
             type="submit"
             class="py-2 px-4 rounded-lg bg-mint-600 hover:bg-mint-700 text-white text-sm font-medium
                    transition-colors focus:outline-none focus:ring-2 focus:ring-mint-500 focus:ring-offset-2 focus:ring-offset-gray-900"
-          >
-            Save
-          </button>
-          <button
-            type="submit" name="test" value="1"
-            class="py-2 px-4 rounded-lg bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium
-                   transition-colors focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 focus:ring-offset-gray-900"
           >
             Save &amp; Send Test Message
           </button>
         </div>
       </form>
 
+      <form method="post" action="/management/settings#telegram" class="mt-3 flex items-center gap-2">
+        <input type="hidden" name="section" value="telegram_detect" />
+        <button
+          type="submit"
+          class="text-xs text-mint-400 hover:text-mint-300 underline focus:outline-none"
+        >
+          Detect chat ID
+        </button>
+        <span class="text-xs text-gray-600">— lists chats your bot has received messages from.</span>
+      </form>
+
+      {result.action !== 'none' && result.section === 'telegram_detect' && (
+        <div
+          role={result.action === 'success' ? 'status' : 'alert'}
+          class:list={[
+            'mt-2 px-3 py-2 rounded-lg border text-sm',
+            result.action === 'success'
+              ? 'border-emerald-800 bg-emerald-950/50 text-emerald-300'
+              : 'border-red-800 bg-red-950/50 text-red-300',
+          ]}
+        >
+          {result.message}
+        </div>
+      )}
+
       <!-- Notification preferences -->
-      <form method="post" class="mt-6 pt-6 border-t border-gray-800 space-y-4 max-w-md" id="notif-form">
+      <form method="post" action="/management/settings#telegram" class="mt-6 pt-6 border-t border-gray-800 space-y-4 max-w-md" id="notif-form">
         <input type="hidden" name="section" value="telegram_notif" />
         <h3 class="text-sm font-medium text-gray-300">Notification Events</h3>
         <p class="text-xs text-gray-500">Choose which events trigger a Telegram message.</p>
 
         {result.action === 'success' && result.section === 'telegram_notif' && (
-          <div class="px-3 py-2 rounded-lg border border-emerald-800 bg-emerald-950/50 text-emerald-300 text-sm">
+          <div role="status" class="px-3 py-2 rounded-lg border border-emerald-800 bg-emerald-950/50 text-emerald-300 text-sm">
             {result.message}
           </div>
         )}
@@ -766,7 +878,7 @@ if (localCaPem) {
 
     <!-- ── MCP Server (AI assistants) ─────────────────────────────────────────── -->
     <section class="bg-gray-900 border border-gray-800 rounded-xl p-6">
-      <h2 class="text-lg font-semibold text-gray-100 mb-1">MCP Server (AI Assistants)</h2>
+      <h2 id="mcp" class="text-lg font-semibold text-gray-100 mb-1">MCP Server (AI Assistants)</h2>
       <p class="text-sm text-gray-500 mb-5">
         Lets AI assistants like Claude query this wallet via the Model Context Protocol.
         Sensitive operations (seed phrase, key unlock, wallet open/create) are never exposed,
@@ -774,17 +886,17 @@ if (localCaPem) {
       </p>
 
       {result.action === 'success' && result.section === 'mcp' && (
-        <div class="mb-4 px-3 py-2 rounded-lg border border-emerald-800 bg-emerald-950/50 text-emerald-300 text-sm">
+        <div role="status" class="mb-4 px-3 py-2 rounded-lg border border-emerald-800 bg-emerald-950/50 text-emerald-300 text-sm">
           {result.message}
         </div>
       )}
       {result.action === 'error' && result.section === 'mcp' && (
-        <div class="mb-4 px-3 py-2 rounded-lg border border-red-800 bg-red-950/50 text-red-300 text-sm">
+        <div role="alert" class="mb-4 px-3 py-2 rounded-lg border border-red-800 bg-red-950/50 text-red-300 text-sm">
           {result.message}
         </div>
       )}
 
-      <form method="post" class="space-y-4 max-w-xl">
+      <form method="post" action="/management/settings#mcp" class="space-y-4 max-w-xl">
         <input type="hidden" name="section" value="mcp" />
 
         <label class="flex items-center gap-3 cursor-pointer group">
@@ -882,7 +994,7 @@ if (localCaPem) {
     <!-- Dialog -->
     <div class="relative w-full max-w-sm mx-4 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-6">
       <h3 id="passkey-modal-title" class="text-base font-semibold text-gray-100 mb-1">Name this passkey</h3>
-      <p class="text-xs text-gray-500 mb-4">Give it a name so you can identify it later (e.g. "MacBook Touch ID").</p>
+      <p class="text-xs text-gray-500 mb-4">Give it a name so you can identify it later (e.g. "MacBook Touch ID"). Enrolling requires a fresh 2FA code — a passkey is a permanent way into the wallet.</p>
 
       <input
         id="passkey-name-input"
@@ -891,8 +1003,23 @@ if (localCaPem) {
         placeholder="MacBook Touch ID"
         class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 text-sm
                placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-mint-600
-               focus:border-transparent transition mb-4"
+               focus:border-transparent transition mb-3"
       />
+
+      <label class="block text-xs text-gray-400 mb-1" for="passkey-totp-input">2FA code</label>
+      <input
+        id="passkey-totp-input"
+        type="text"
+        inputmode="numeric"
+        autocomplete="one-time-code"
+        pattern="[0-9]{6}"
+        maxlength="6"
+        placeholder="123456"
+        class="w-32 px-3 py-2 mb-4 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 text-sm tracking-[0.3em]
+               placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-mint-600
+               focus:border-transparent transition"
+      />
+      <p id="passkey-totp-hint" role="alert" class="hidden text-xs text-red-400 mb-2">2FA code must be exactly 6 digits.</p>
 
       <div class="flex gap-3 justify-end">
         <button
@@ -925,6 +1052,7 @@ if (localCaPem) {
     const modal     = document.getElementById('passkey-modal');
     const backdrop  = document.getElementById('passkey-modal-backdrop');
     const nameInput = document.getElementById('passkey-name-input') as HTMLInputElement | null;
+    const totpInput = document.getElementById('passkey-totp-input') as HTMLInputElement | null;
     const cancelBtn = document.getElementById('passkey-modal-cancel');
     const confirmBtn = document.getElementById('passkey-modal-confirm');
 
@@ -934,6 +1062,7 @@ if (localCaPem) {
       if (!errorBox) return;
       errorBox.textContent = msg;
       errorBox.classList.remove('hidden');
+      errorBox.focus();
     }
 
     function resetBtn() {
@@ -942,23 +1071,52 @@ if (localCaPem) {
       btn.innerHTML = addIcon;
     }
 
-    function openModal(): Promise<string | null> {
+    function openModal(): Promise<{ name: string; totp: string } | null> {
       return new Promise((resolve) => {
-        if (!modal || !nameInput) return resolve(null);
+        if (!modal || !nameInput || !totpInput) return resolve(null);
         nameInput.value = '';
+        totpInput.value = '';
         modal.classList.remove('hidden');
         nameInput.focus();
 
-        function close(value: string | null) {
+        function close(value: { name: string; totp: string } | null) {
           modal!.classList.add('hidden');
           confirmBtn?.removeEventListener('click', onConfirm);
           cancelBtn?.removeEventListener('click', onCancel);
           backdrop?.removeEventListener('click', onCancel);
           nameInput?.removeEventListener('keydown', onKeydown);
+          totpInput?.removeEventListener('keydown', onKeydown);
+          totpInput?.removeEventListener('input', clearTotpError);
           resolve(value);
         }
 
-        function onConfirm() { close(nameInput!.value.trim() || null); }
+        function clearTotpError() {
+          totpInput?.classList.remove('border-red-600');
+          totpInput?.removeAttribute('aria-invalid');
+          totpInput?.removeAttribute('aria-describedby');
+          document.getElementById('passkey-totp-hint')?.classList.add('hidden');
+        }
+
+        function showTotpError() {
+          totpInput?.focus();
+          totpInput?.classList.add('border-red-600');
+          totpInput?.setAttribute('aria-invalid', 'true');
+          totpInput?.setAttribute('aria-describedby', 'passkey-totp-hint');
+          document.getElementById('passkey-totp-hint')?.classList.remove('hidden');
+        }
+
+        function onConfirm() {
+          const name = nameInput!.value.trim() || 'Passkey';
+          const totp = totpInput!.value.trim();
+          if (!/^[0-9]{6}$/.test(totp)) {
+            showTotpError();
+            return;
+          }
+          clearTotpError();
+          close({ name, totp });
+        }
+        // Clear the red-border/error state as soon as the user edits the code.
+        totpInput?.addEventListener('input', clearTotpError);
         function onCancel()  { close(null); }
         function onKeydown(e: Event) {
           const ke = e as KeyboardEvent;
@@ -970,6 +1128,7 @@ if (localCaPem) {
         cancelBtn?.addEventListener('click', onCancel);
         backdrop?.addEventListener('click', onCancel);
         nameInput?.addEventListener('keydown', onKeydown);
+        totpInput?.addEventListener('keydown', onKeydown);
       });
     }
 
@@ -977,14 +1136,20 @@ if (localCaPem) {
       if (!errorBox || !btn) return;
       errorBox.classList.add('hidden');
 
-      const name = await openModal();
-      if (!name) return;
+      const input = await openModal();
+      if (!input) return;
 
       btn.disabled = true;
       btn.textContent = 'Waiting for authenticator…';
 
       try {
-        const optRes = await fetch('/api/passkey/register-options');
+        const optRes = await fetch('/api/passkey/register-options', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          // Enrolling a passkey is a step-up action: the 2FA code is burned
+          // when the challenge is issued.
+          body: JSON.stringify({ totp_code: input.totp }),
+        });
         if (!optRes.ok) {
           const { error } = await optRes.json();
           throw new Error(error ?? 'Failed to load registration options.');
@@ -996,7 +1161,7 @@ if (localCaPem) {
         const verRes = await fetch('/api/passkey/register-verify', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...regResponse, name }),
+          body: JSON.stringify({ ...regResponse, name: input.name }),
         });
         const result = await verRes.json();
 
@@ -1007,7 +1172,13 @@ if (localCaPem) {
         window.location.reload();
       } catch (err: unknown) {
         const e = err as { name?: string; message?: string };
-        if (e?.name !== 'AbortError') {
+        // AbortError: caller cancelled. NotAllowedError: user dismissed the
+        // OS prompt / timeout — silently reset. InvalidStateError: this
+        // authenticator is already registered (excludeCredentials) — say so
+        // in plain language instead of the raw browser message.
+        if (e?.name === 'InvalidStateError') {
+          showError('This passkey is already registered on this device.');
+        } else if (e?.name !== 'AbortError' && e?.name !== 'NotAllowedError') {
           showError(e?.message ?? 'Passkey registration failed.');
         }
         resetBtn();
@@ -1015,3 +1186,16 @@ if (localCaPem) {
     });
   </script>
 )}
+
+<script>
+  // After a POST the form action returns to #<section>; move focus to that
+  // heading so keyboard and screen-reader users land on the outcome instead
+  // of the top of this ~1,100-line page.
+  if (location.hash) {
+    const target = document.getElementById(location.hash.slice(1));
+    if (target) {
+      target.tabIndex = -1;
+      target.focus({ preventScroll: true });
+    }
+  }
+</script>
