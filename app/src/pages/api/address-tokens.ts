@@ -110,6 +110,7 @@ export const GET: APIRoute = async ({ url }) => {
 
     return json({ ok: true, result }, 200);
   } catch (err) {
-    return json({ ok: false, error: String(err) }, 502);
+    console.error('[address-tokens]', err);
+    return json({ ok: false, error: 'Indexer request failed' }, 502);
   }
 };

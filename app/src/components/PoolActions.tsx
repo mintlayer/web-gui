@@ -1,9 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { watchTx } from "@/lib/txWatcher";
 import { submitWithToast } from "@/lib/toastStore";
 import { rpc } from '@/lib/client-rpc';
+import { stakeTrade, type StakeTradeFailure } from '@/lib/stake-trade-client';
+import { TotpField } from '@/components/ui/TotpField';
 
 async function freshAddress(): Promise<string> {
   const addresses = await rpc<Array<{ address: string; used: boolean; purpose: string }>>(
@@ -30,6 +32,8 @@ export function CreatePoolForm({ initialDecommissionAddress, onSuccess }: Create
   const [loading,      setLoading]      = useState(false);
   const [error,        setError]        = useState<string | null>(null);
   const [success,      setSuccess]      = useState(false);
+  const [totp,         setTotp]         = useState("");
+  const totpRef                         = useRef<HTMLInputElement>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -39,22 +43,34 @@ export function CreatePoolForm({ initialDecommissionAddress, onSuccess }: Create
       const marginRatio = (parseFloat(marginPct) / 100).toFixed(4);
       await submitWithToast(
         async () => {
-          const res = await rpc<{ tx_id: string }>("staking_create_pool", {
-            account: 0,
-            amount:                    { decimal: amount },
-            cost_per_block:            { decimal: costPerBlock || "0" },
-            margin_ratio_per_thousand: marginRatio,
-            decommission_address:      decommAddr,
-            staker_address:            null,
-            vrf_public_key:            null,
-            options:                   {},
-          });
-          return res.tx_id;
+          // Pool creation burns a large network fee (~1000 ML) and is
+          // TOTP-gated server-side via /api/stake-trade.
+          const r = await stakeTrade({
+            action: "staking_create_pool",
+            params: {
+              account: 0,
+              amount:                    { decimal: amount },
+              cost_per_block:            { decimal: costPerBlock || "0" },
+              margin_ratio_per_thousand: marginRatio,
+              decommission_address:      decommAddr,
+              staker_address:            null,
+              vrf_public_key:            null,
+              options:                   {},
+            },
+          }, totp);
+          if (!r.ok) {
+            if (r.code_consumed) {
+              setTotp("");
+              setTimeout(() => totpRef.current?.focus(), 0);
+            }
+            throw new Error(r.error);
+          }
+          return r.results[0]?.tx_id as string ?? "submitted";
         },
         watchTx,
       );
       setSuccess(true);
-      setAmount(""); setMarginPct(""); setCostPerBlock("0");
+      setAmount(""); setMarginPct(""); setCostPerBlock("0"); setTotp("");
       onSuccess?.();
       // Refresh decommission address for next pool
       const addr = await freshAddress();
@@ -69,10 +85,10 @@ export function CreatePoolForm({ initialDecommissionAddress, onSuccess }: Create
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       {error && (
-        <div className="rounded-lg border border-red-700 bg-red-900/30 p-3 text-red-300 text-sm">{error}</div>
+        <div className="rounded-lg border border-red-700 bg-red-900/30 p-3 text-red-300 text-sm" role="alert">{error}</div>
       )}
       {success && (
-        <div className="rounded-lg border border-mint-700 bg-mint-900/30 p-3 text-mint-300 text-sm">
+        <div className="rounded-lg border border-mint-700 bg-mint-900/30 p-3 text-mint-300 text-sm" role="status">
           Pool creation submitted - watch the toast for confirmation.
         </div>
       )}
@@ -126,8 +142,10 @@ export function CreatePoolForm({ initialDecommissionAddress, onSuccess }: Create
         </p>
       </div>
 
+      <TotpField value={totp} onChange={setTotp} inputRef={totpRef} disabled={loading} />
+
       <button
-        type="submit" disabled={loading || !amount || !marginPct}
+        type="submit" disabled={loading || !amount || !marginPct || totp.length !== 6}
         className="w-full rounded-lg bg-mint-700 hover:bg-mint-600 px-4 py-2 text-sm font-semibold text-white
                    transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
       >
@@ -205,24 +223,35 @@ interface DecommissionProps {
 export function DecommissionButton({ poolId }: DecommissionProps) {
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState<string | null>(null);
+  const [totp,    setTotp]    = useState("");
+  const totpRef               = useRef<HTMLInputElement>(null);
+  const needsTotp = totp.length !== 6;
 
   const handleClick = async () => {
-    if (!confirm("Are you sure you want to decommission this pool? This cannot be undone.")) return;
+    if (!window.confirm(`Decommission pool ${poolId}? Your stake is returned to the output address. This cannot be undone.`)) {
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
       await submitWithToast(
         async () => {
-          const res = await rpc<{ tx_id: string }>("staking_decommission_pool", {
-            account:        0,
-            pool_id:        poolId,
-            output_address: null,
-            options:        {},
-          });
-          return res.tx_id;
+          const r = await stakeTrade({
+            action: "staking_decommission_pool",
+            params: { account: 0, pool_id: poolId, output_address: null },
+          }, totp);
+          if (!r.ok) {
+            if (r.code_consumed) {
+              setTotp("");
+              setTimeout(() => totpRef.current?.focus(), 0);
+            }
+            throw new Error(r.error);
+          }
+          return r.results[0]?.tx_id as string ?? "submitted";
         },
         watchTx,
       );
+      setTotp("");
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -232,9 +261,10 @@ export function DecommissionButton({ poolId }: DecommissionProps) {
 
   return (
     <div>
+      <TotpField value={totp} onChange={setTotp} inputRef={totpRef} disabled={loading} />
       <button
-        onClick={handleClick} disabled={loading}
-        className="rounded-lg bg-red-900/40 hover:bg-red-800/60 border border-red-800 px-3 py-1.5 text-xs
+        onClick={handleClick} disabled={loading || needsTotp}
+        className="mt-2 rounded-lg bg-red-900/40 hover:bg-red-800/60 border border-red-800 px-3 py-1.5 text-xs
                    font-medium text-red-300 transition-colors disabled:opacity-50 flex items-center gap-1.5"
       >
         {loading && (
@@ -245,7 +275,7 @@ export function DecommissionButton({ poolId }: DecommissionProps) {
         )}
         {loading ? "Submitting…" : "Dismiss Pool"}
       </button>
-      {error && <p className="text-xs text-red-400 mt-1">{error}</p>}
+      {error && <p className="text-xs text-red-400 mt-1" role="alert">{error}</p>}
     </div>
   );
 }

@@ -1,10 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { watchTx } from "@/lib/txWatcher";
 import { submitWithToast } from "@/lib/toastStore";
 import { CopyButton } from "@/components/CopyButton";
 import { rpc } from '@/lib/client-rpc';
+import { stakeTrade, type StakeTradeFailure } from '@/lib/stake-trade-client';
+import { TotpField } from '@/components/ui/TotpField';
 
 interface Delegation {
   delegation_id: string;
@@ -46,6 +48,18 @@ function DelegationRow({
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [state, setState]                 = useState<ActionState>("idle");
   const [msg, setMsg]                     = useState("");
+  const [totp, setTotp]                   = useState("");
+  const totpRef                           = useRef<HTMLInputElement>(null);
+
+  // Clears + refocuses the 2FA field when a burned code fails, so the user
+  // never silently retries a dead code.
+  const fail = (r: StakeTradeFailure): Error => {
+    if (r.code_consumed) {
+      setTotp("");
+      window.setTimeout(() => totpRef.current?.focus(), 0);
+    }
+    return new Error(r.error);
+  };
 
   const run = async (fn: () => Promise<string>) => {
     setState("loading");
@@ -68,41 +82,57 @@ function DelegationRow({
 
   const handleAdd = () =>
     run(async () => {
-      const res = await rpc<{ tx_id: string }>("delegation_stake", {
-        account: 0,
-        delegation_id: delegation.delegation_id,
-        amount: { decimal: addAmount },
-        options: {},
-      });
-      return res.tx_id;
+      const r = await stakeTrade({
+        action: "delegation_stake",
+        params: {
+          account: 0,
+          delegation_id: delegation.delegation_id,
+          amount: { decimal: addAmount },
+          options: {},
+        },
+      }, totp);
+      if (!r.ok) throw fail(r);
+      setTotp("");
+      return r.results[0]?.tx_id as string ?? "submitted";
     });
 
   const handleWithdraw = () =>
     run(async () => {
       const addr = await freshAddress();
-      const res = await rpc<{ tx_id: string }>("delegation_withdraw", {
-        account: 0,
-        delegation_id: delegation.delegation_id,
-        amount: { decimal: withdrawAmount },
-        address: addr,
-        options: {},
-      });
-      return res.tx_id;
+      const r = await stakeTrade({
+        action: "delegation_withdraw",
+        params: {
+          account: 0,
+          delegation_id: delegation.delegation_id,
+          amount: { decimal: withdrawAmount },
+          address: addr,
+          options: {},
+        },
+      }, totp);
+      if (!r.ok) throw fail(r);
+      setTotp("");
+      return r.results[0]?.tx_id as string ?? "submitted";
     });
 
   const handleSweep = () =>
     run(async () => {
       const addr = await freshAddress();
-      const res = await rpc<{ tx_id: string }>("staking_sweep_delegation", {
-        account: 0,
-        delegation_id: delegation.delegation_id,
-        destination_address: addr,
-        options: {},
-      });
-      return res.tx_id;
+      const r = await stakeTrade({
+        action: "staking_sweep_delegation",
+        params: {
+          account: 0,
+          delegation_id: delegation.delegation_id,
+          destination_address: addr,
+          options: {},
+        },
+      }, totp);
+      if (!r.ok) throw fail(r);
+      setTotp("");
+      return r.results[0]?.tx_id as string ?? "submitted";
     });
 
   const loading = state === "loading";
+  const needsTotp = totp.length !== 6;
 
   return (
     <div className="rounded-lg bg-gray-800/50 border border-gray-700/50 p-4 space-y-3">
@@ -126,6 +156,9 @@ function DelegationRow({
         </div>
       </div>
 
+      {/* 2FA — one code per staking/withdrawal action on this delegation */}
+      <TotpField value={totp} onChange={setTotp} inputRef={totpRef} disabled={loading} />
+
       {/* Actions */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         {/* Add funds */}
@@ -139,7 +172,7 @@ function DelegationRow({
           />
           <button
             onClick={handleAdd}
-            disabled={loading || !addAmount}
+            disabled={loading || !addAmount || needsTotp}
             className="rounded-lg bg-mint-700 hover:bg-mint-600 px-3 py-1.5 text-xs font-medium text-white
                        transition-colors disabled:opacity-40 shrink-0"
           >
@@ -158,7 +191,7 @@ function DelegationRow({
           />
           <button
             onClick={handleWithdraw}
-            disabled={loading || !withdrawAmount}
+            disabled={loading || !withdrawAmount || needsTotp}
             className="rounded-lg bg-gray-700 hover:bg-gray-600 px-3 py-1.5 text-xs font-medium text-gray-200
                        transition-colors disabled:opacity-40 shrink-0"
           >
@@ -175,7 +208,7 @@ function DelegationRow({
             if (!confirm("Sweep all funds out of this delegation?")) return;
             handleSweep();
           }}
-          disabled={loading}
+          disabled={loading || needsTotp}
           className="rounded-lg bg-red-900/40 hover:bg-red-800/60 border border-red-800/60 px-3 py-1 text-xs
                      font-medium text-red-300 transition-colors disabled:opacity-40"
         >
@@ -185,7 +218,7 @@ function DelegationRow({
 
       {/* Error */}
       {state === "error" && msg && (
-        <p className="text-xs text-red-400 break-all">{msg}</p>
+        <p className="text-xs text-red-400 break-all" role="alert">{msg}</p>
       )}
     </div>
   );
@@ -195,9 +228,10 @@ function DelegationRow({
 
 export default function DelegationPanel({ poolId, initialDelegations, network }: Props) {
   const [delegations, setDelegations] = useState<Delegation[]>(initialDelegations);
-  const [newAmount, setNewAmount]     = useState("");
   const [newState, setNewState]       = useState<ActionState>("idle");
   const [newMsg, setNewMsg]           = useState("");
+  const [newTotp, setNewTotp]         = useState("");
+  const newTotpRef                    = useRef<HTMLInputElement>(null);
 
   const hasDelegation = delegations.length > 0;
 
@@ -206,32 +240,31 @@ export default function DelegationPanel({ poolId, initialDelegations, network }:
     setNewMsg("");
     try {
       const addr   = await freshAddress();
-      const result = await rpc<{ delegation_id: string; tx_id: string }>("delegation_create", {
-        account: 0,
-        pool_id: poolId,
-        address: addr,
-        options: {},
-      });
-      const delegId = result.delegation_id;
-
-      await submitWithToast(
-        async () => {
-          const res = await rpc<{ tx_id: string }>("delegation_stake", {
-            account: 0,
-            delegation_id: delegId,
-            amount: { decimal: newAmount },
-            options: {},
-          });
-          return res.tx_id;
+      // One burn, one intent: create the delegation. Funds are added afterwards
+      // via the delegation row's Add input (its own code) — the stake needs the
+      // delegation_id that only exists after this transaction.
+      const r = await stakeTrade({
+        action: "delegation_create",
+        params: {
+          account: 0,
+          pool_id: poolId,
+          address: addr,
+          options: {},
         },
-        watchTx,
-      );
+      }, newTotp);
+      if (!r.ok) {
+        if (r.code_consumed) {
+          setNewTotp("");
+          window.setTimeout(() => newTotpRef.current?.focus(), 0);
+        }
+        throw new Error(r.error);
+      }
 
       setNewState("success");
-      setNewMsg("");
-      setNewAmount("");
+      setNewMsg("Delegation created. It appears below once confirmed; use a fresh 2FA code to add funds to it.");
+      setNewTotp("");
 
-      // Refresh list
+      // Refresh list — the new delegation row appears with its own Add input.
       const list = await rpc<Delegation[]>("delegation_list_ids", { account: 0 });
       setDelegations(list.filter(d => d.pool_id === poolId));
     } catch (err) {
@@ -268,27 +301,20 @@ export default function DelegationPanel({ poolId, initialDelegations, network }:
       {!hasDelegation && (
         <div className="rounded-lg bg-gray-800/50 border border-gray-700/50 p-4 space-y-3">
           <p className="text-xs text-gray-400">
-            Delegate funds to this pool to earn staking rewards.
+            Delegate funds to this pool to earn staking rewards. Creating the delegation is confirmed with your
+            2FA code — you add the funds in the next step.
           </p>
-          <div className="flex gap-2">
-            <input
-              type="number" min="0" step="any" placeholder="Amount ML"
-              value={newAmount} onChange={e => setNewAmount(e.target.value)}
-              disabled={newState === "loading"}
-              className="flex-1 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600
-                         px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-mint-600 disabled:opacity-50"
-            />
-            <button
-              onClick={handleCreate}
-              disabled={newState === "loading" || !newAmount}
-              className="rounded-lg bg-mint-700 hover:bg-mint-600 px-4 py-2 text-sm font-medium text-white
-                         transition-colors disabled:opacity-40"
-            >
-              {newState === "loading" ? "…" : "Delegate"}
-            </button>
-          </div>
+          <TotpField value={newTotp} onChange={setNewTotp} inputRef={newTotpRef} disabled={newState === "loading"} />
+          <button
+            onClick={handleCreate}
+            disabled={newState === "loading" || newTotp.length !== 6}
+            className="w-full rounded-lg bg-mint-700 hover:bg-mint-600 px-4 py-2 text-sm font-medium text-white
+                       transition-colors disabled:opacity-40"
+          >
+            {newState === "loading" ? "Creating…" : "Create delegation"}
+          </button>
           {newMsg && (
-            <p className={`text-xs break-all ${newState === "error" ? "text-red-400" : "text-mint-400"}`}>
+            <p className={`text-xs break-all ${newState === "error" ? "text-red-400" : "text-mint-400"}`} role={newState === "error" ? "alert" : "status"}>
               {newMsg}
             </p>
           )}

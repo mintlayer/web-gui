@@ -14,7 +14,13 @@ export default defineConfig({
   // jsx-mode rendering audit confirms no layout regressions.)
   compressHTML: true,
   security: {
-    checkOrigin: true,
+    // Disabled here because the built-in check derives the request scheme
+    // from the socket, which breaks every form POST behind the TLS-
+    // terminating caddy gateway (the app sees http://, the browser sends
+    // Origin: https://). lib/csrf.ts + the top of src/middleware.ts provide
+    // a proxy-aware equivalent with identical semantics and pipeline
+    // coverage.
+    checkOrigin: false,
   },
   server: {
     host: process.env.HOST || '0.0.0.0',

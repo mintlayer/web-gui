@@ -5,6 +5,10 @@ import { getBalance, getTokensInfo, isWalletNotOpenError, type TokenInfo } from 
 import { hexToText } from '@/lib/token-utils';
 import { INDEXER_START_CMD } from '@/lib/indexer';
 
+// Mintlayer bech32 hrp (verified: testnet=tmt, mainnet=mtc). Null on other
+// networks - address correction then stays off and the daemon validates.
+const mlHrp = process.env.NETWORK === 'testnet' ? 'tmt' : process.env.NETWORK === 'mainnet' ? 'mtc' : null;
+
 let mlBalance: string | null = null;
 let mlLocked: string | null = null;
 let tokenBalances: Record<string, { atoms: string; decimal: string }> = {};
@@ -297,9 +301,15 @@ function nftIconUrl(info: TokenInfo | undefined): string | null {
           <label for="send-address" class="block text-sm font-medium text-gray-300 mb-1.5">
             Recipient address
           </label>
-          <input id="send-address" type="text" placeholder="mtc1…" autocomplete="off"
+          <input id="send-address" type="text" placeholder="mtc1…" autocomplete="off" data-hrp={mlHrp ?? ''}
             class="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600
                    px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-mint-600" />
+          <div id="addr-suggestion" class="hidden mt-2 rounded-lg border border-amber-800 bg-amber-900/20 px-3 py-2 text-xs text-amber-300">
+            <span>Checksum failed — did you mean</span>
+            <code id="addr-suggestion-text" class="font-mono text-mint-300 break-all"></code>
+            <span id="addr-suggestion-fixed"></span>?
+            <button id="addr-suggestion-use" type="button" class="ml-1 underline font-semibold hover:text-amber-200">Use suggested address</button>
+          </div>
         </div>
 
         <div id="send-amount-row">
@@ -352,6 +362,7 @@ function nftIconUrl(info: TokenInfo | undefined): string | null {
 <script>
 import { watchTx } from '@/lib/txWatcher';
 import { submitWithToast } from '@/lib/toastStore';
+import { suggestAddressCorrection } from '@/lib/bech32-correct';
 
 // ── Indexer status ────────────────────────────────────────────────────────────
 fetch('/api/indexer-status')
@@ -413,6 +424,7 @@ function openSendModal(assetType: 'ml' | 'token', assetId: string, ticker: strin
   // NFTs: hide amount field (amount is always 1)
   amtRow.style.display = isNft ? 'none' : '';
 
+  hideSuggestion();
   modal.classList.remove('hidden');
   modal.classList.add('flex');
   addrInput.focus();
@@ -445,6 +457,41 @@ document.getElementById('send-txid-copy')!.addEventListener('click', () => {
   navigator.clipboard.writeText(txidEl.textContent ?? '');
 });
 
+// ── Address typo correction ───────────────────────────────────────────────────
+const suggestionBox = document.getElementById('addr-suggestion')!;
+const suggestionText = document.getElementById('addr-suggestion-text')!;
+const suggestionFixed = document.getElementById('addr-suggestion-fixed')!;
+let pendingCorrection: string | null = null;
+
+function hideSuggestion() {
+  pendingCorrection = null;
+  suggestionBox.classList.add('hidden');
+}
+
+document.getElementById('addr-suggestion-use')!.addEventListener('click', () => {
+  if (pendingCorrection) {
+    addrInput.value = pendingCorrection;
+    hideSuggestion();
+    errBox.classList.add('hidden');
+    amtInput.focus();
+  }
+});
+
+function checkAddressTypo() {
+  hideSuggestion();
+  const address = addrInput.value.trim();
+  const hrp = addrInput.dataset.hrp;
+  if (!hrp || !address.startsWith(hrp + '1') || address.length < hrp.length + 7) return;
+  const res = suggestAddressCorrection(address, hrp, 'ml');
+  if (res.status === 'corrected' && res.corrected) {
+    pendingCorrection = res.corrected;
+    suggestionText.textContent = res.corrected;
+    suggestionFixed.textContent = ` (fixed ${res.fixedChars} character${res.fixedChars === 1 ? '' : 's'})`;
+    suggestionBox.classList.remove('hidden');
+  }
+}
+addrInput.addEventListener('blur', checkAddressTypo);
+
 // Submit
 submitBtn.addEventListener('click', async () => {
   const address = addrInput.value.trim();
@@ -452,6 +499,13 @@ submitBtn.addEventListener('click', async () => {
 
   if (!address || (!activeIsNft && !amount)) {
     errBox.textContent = 'Address and amount are required.';
+    errBox.classList.remove('hidden');
+    return;
+  }
+
+  checkAddressTypo();
+  if (pendingCorrection) {
+    errBox.textContent = 'Address checksum failed — review the suggested correction below.';
     errBox.classList.remove('hidden');
     return;
   }

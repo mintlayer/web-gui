@@ -73,8 +73,14 @@ export async function verifyPassword(plain: string, stored: string): Promise<boo
   const [, digest, iterStr, salt, expectedHex] = parts;
   const iterations = parseInt(iterStr, 10);
   if (!digest || !salt || !expectedHex || isNaN(iterations)) return false;
+  // Odd-length expectedHex gives a fractional keylen (RangeError inside
+  // pbkdf2) and absurd iteration counts pin CPU; both mean a corrupt stored
+  // hash, so fail closed instead of throwing on the login path.
+  const keylen = expectedHex.length / 2;
+  if (!Number.isInteger(keylen) || keylen < 1 || keylen > 512) return false;
+  if (iterations < 1 || iterations > 10_000_000) return false;
 
-  const key = await pbkdf2(plain, salt, iterations, expectedHex.length / 2, digest);
+  const key = await pbkdf2(plain, salt, iterations, keylen, digest);
   const expected = Buffer.from(expectedHex, 'hex');
   if (key.length !== expected.length) return false;
   return crypto.timingSafeEqual(key, expected);

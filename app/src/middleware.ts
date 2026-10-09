@@ -8,6 +8,7 @@ import {
   SESSION_COOKIE_NAME,
 } from '@/lib/auth';
 import { getPref } from '@/lib/prefs-db';
+import { isForbiddenCrossSiteRequest } from '@/lib/csrf';
 
 const PUBLIC_PATHS = new Set([
   '/login',
@@ -21,7 +22,12 @@ const PUBLIC_PREFIXES = ['/_astro/', '/favicon', '/_image'];
 const SECURITY_HEADERS: Record<string, string> = {
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'DENY',
-  'Referrer-Policy': 'no-referrer',
+  // strict-origin-when-cross-origin (the browser default) rather than
+  // no-referrer: Chrome 151+ elides the Origin header (sends `Origin: null`)
+  // on form POSTs when the referrer policy strips referrers entirely, which
+  // Astro's same-origin CSRF check then rejects with 403. Cross-origin
+  // requests still carry only the origin - no path or query.
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
 };
 
@@ -52,10 +58,38 @@ const CSP_ENABLED = process.env.CSP_ENABLED === 'true';
 export const onRequest = defineMiddleware(async (context, next) => {
   const { pathname } = new URL(context.request.url);
 
+  // Cross-site form protection, proxy-aware replacement for Astro's built-in
+  // security.checkOrigin (disabled in astro.config.mjs): that check derives
+  // the URL scheme from the socket, so behind the TLS-terminating caddy
+  // gateway every form POST 403'd. Same pipeline coverage as the built-in
+  // check (all routes, incl. /api/*). See lib/csrf.ts.
+  if (isForbiddenCrossSiteRequest(context.request)) {
+    const forbidden = new Response(
+      `Cross-site ${context.request.method} form submissions are forbidden`,
+      { status: 403 },
+    );
+    applySecurityHeaders(forbidden);
+    return forbidden;
+  }
+
   if (PUBLIC_PATHS.has(pathname) || PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) {
     const response = await next();
     applySecurityHeaders(response);
     return response;
+  }
+
+  // First-run bootstrap: /setup is the page that CREATES the login password
+  // and 2FA, so it must be reachable while authentication is still
+  // unconfigured. Once both exist, /setup is session-gated like every other
+  // page - otherwise anyone could re-run setup on an installed wallet.
+  if (pathname === '/setup') {
+    const authConfigured =
+      Boolean(getPref('auth.password_hash')) && Boolean(getPref('auth.totp_secret'));
+    if (!authConfigured) {
+      const response = await next();
+      applySecurityHeaders(response);
+      return response;
+    }
   }
 
   const cookieHeader = context.request.headers.get('cookie') ?? '';
@@ -82,7 +116,17 @@ export const onRequest = defineMiddleware(async (context, next) => {
   // out mid-session. The version is baked into the token we just verified;
   // a refreshed stale-version token only survives until the next request's
   // version check, so a version bump still invalidates the session cleanly.
-  if (!contentType.includes('text/event-stream') && !alreadySetsCookie) {
+  //
+  // Re-read the version AFTER the page ran: a bump mid-request (password
+  // change, logout-all) must not be rolled forward onto a stale token —
+  // that would hand back a cookie for a revoked session and make the next
+  // navigation fail after the page already said "Password updated".
+  const sessionVersionNow = getPref<number>('auth.session_version') ?? 0;
+  if (
+    sessionVersionNow === sessionVersion &&
+    !contentType.includes('text/event-stream') &&
+    !alreadySetsCookie
+  ) {
     const newToken = generateSessionToken(sessionVersion);
     response.headers.set('Set-Cookie', makeSessionCookieHeader(newToken));
   }

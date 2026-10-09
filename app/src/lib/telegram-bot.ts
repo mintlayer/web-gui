@@ -44,6 +44,7 @@ if (!_g.__telegramBotStarted) {
 
 async function runCommandLoop(): Promise<void> {
   let offset = 0;
+  let lastToken = '';
 
   while (true) {
     const botToken = getStringPref('telegram.bot_token');
@@ -52,6 +53,13 @@ async function runCommandLoop(): Promise<void> {
     if (!botToken || !chatId) {
       await sleep(15_000); // wait for config to appear
       continue;
+    }
+
+    // A rotated token belongs to a different bot whose update ids start near
+    // zero — reusing the old offset would filter out every command silently.
+    if (botToken !== lastToken) {
+      offset = 0;
+      lastToken = botToken;
     }
 
     try {

@@ -53,36 +53,46 @@ describe('saveCredentials', () => {
 
 describe('createChallenge / consumeChallenge', () => {
   it('stores a challenge and returns it on consume', () => {
-    const token = createChallenge('challenge-abc');
+    const token = createChallenge('challenge-abc', 'registration');
     expect(typeof token).toBe('string');
     expect(token.length).toBeGreaterThan(0);
-    const result = consumeChallenge(token);
+    const result = consumeChallenge(token, 'registration');
     expect(result).toBe('challenge-abc');
   });
 
   it('returns null for unknown token', () => {
-    expect(consumeChallenge('no-such-token')).toBeNull();
+    expect(consumeChallenge('no-such-token', 'registration')).toBeNull();
   });
 
   it('is single-use - second consume returns null', () => {
-    const token = createChallenge('one-time');
-    consumeChallenge(token);
-    expect(consumeChallenge(token)).toBeNull();
+    const token = createChallenge('one-time', 'registration');
+    consumeChallenge(token, 'registration');
+    expect(consumeChallenge(token, 'registration')).toBeNull();
   });
 
   it('returns null for expired challenge', () => {
     vi.useFakeTimers();
-    const token = createChallenge('expiring');
+    const token = createChallenge('expiring', 'registration');
     // Advance 6 minutes past the 5-minute TTL
     vi.advanceTimersByTime(6 * 60 * 1000);
-    expect(consumeChallenge(token)).toBeNull();
+    expect(consumeChallenge(token, 'registration')).toBeNull();
     vi.useRealTimers();
   });
 
   it('generates unique tokens for different challenges', () => {
-    const t1 = createChallenge('c1');
-    const t2 = createChallenge('c2');
+    const t1 = createChallenge('c1', 'registration');
+    const t2 = createChallenge('c2', 'registration');
     expect(t1).not.toBe(t2);
+  });
+
+  it('rejects a purpose mismatch - an authentication challenge cannot register', () => {
+    // Regression: auth-options (public, no TOTP) mints 'authentication'
+    // challenges; register-verify must never accept them.
+    const token = createChallenge('login-challenge', 'authentication');
+    expect(consumeChallenge(token, 'registration')).toBeNull();
+    // And the reverse direction is equally rejected (single-use either way).
+    const token2 = createChallenge('reg-challenge', 'registration');
+    expect(consumeChallenge(token2, 'authentication')).toBeNull();
   });
 });
 

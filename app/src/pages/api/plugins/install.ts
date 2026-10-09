@@ -1,10 +1,11 @@
 import type { APIRoute } from 'astro';
 import { installPlugin } from '@/lib/plugins';
-import { verifyTOTP } from '@/lib/auth';
+import { getClientAddress } from '@/lib/auth';
+import { verifyAndBurnTotpCode } from '@/lib/step-up';
 import { getStringPref } from '@/lib/prefs-db';
 import { json, readFormData } from '@/lib/api-utils';
 
-export const POST: APIRoute = async ({ request }) => {
+export const POST: APIRoute = async ({ request, clientAddress }) => {
   const formData = await readFormData(request);
   if (!formData) return json({ ok: false, error: 'Invalid multipart form data' }, 400);
 
@@ -16,8 +17,9 @@ export const POST: APIRoute = async ({ request }) => {
   if (!totpSecret) {
     return json({ ok: false, error: '2FA not configured' }, 400);
   }
-  if (!verifyTOTP(totpCode, totpSecret)) {
-    return json({ ok: false, error: 'Invalid authenticator code' }, 401);
+  const burn = verifyAndBurnTotpCode(totpCode, totpSecret, getClientAddress(request, clientAddress));
+  if (!burn.ok) {
+    return json({ ok: false, error: burn.error }, 401);
   }
 
   const file = formData.get('plugin') as File | null;

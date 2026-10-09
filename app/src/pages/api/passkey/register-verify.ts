@@ -20,13 +20,21 @@ export const POST: APIRoute = async ({ request }) => {
     return json({ error: 'Passkeys require a DNS hostname.' }, 400);
   }
 
-  const expectedChallenge = consumeChallengeFromRequest(request);
+  const expectedChallenge = consumeChallengeFromRequest(request, 'registration');
 
   if (!expectedChallenge) {
     return json({ error: 'Challenge expired or missing. Please try again.' }, 400, {
       'Set-Cookie': clearChallengeCookieHeader(),
     });
   }
+
+  // Authority note: this endpoint persists a login credential, but it can only
+  // run with a challenge tagged purpose='registration' — register-options
+  // mints those only AFTER a successful 2FA step-up burn, while the public
+  // auth-options route mints 'authentication' challenges that are rejected
+  // here (consumeChallenge deletes the entry either way). The challenge
+  // cookie is single-use and expires in minutes, so no separate TOTP check
+  // is needed here.
 
   let body: RegistrationResponseJSON & { name?: string };
   try {

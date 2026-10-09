@@ -3,8 +3,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('@/lib/plugins', () => ({
   installPlugin: vi.fn(),
 }));
-vi.mock('@/lib/auth', () => ({
-  verifyTOTP: vi.fn().mockReturnValue(true),
+vi.mock('@/lib/step-up', () => ({
+  verifyAndBurnTotpCode: vi.fn().mockReturnValue({ ok: true }),
 }));
 vi.mock('@/lib/prefs-db', () => ({
   getStringPref: vi.fn().mockReturnValue('totp-secret'),
@@ -12,11 +12,11 @@ vi.mock('@/lib/prefs-db', () => ({
 
 import { POST } from '@/pages/api/plugins/install';
 import { installPlugin } from '@/lib/plugins';
-import { verifyTOTP } from '@/lib/auth';
+import { verifyAndBurnTotpCode } from '@/lib/step-up';
 import { getStringPref } from '@/lib/prefs-db';
 
 const mockInstallPlugin = vi.mocked(installPlugin);
-const mockVerifyTOTP = vi.mocked(verifyTOTP);
+const mockVerifyTOTP = vi.mocked(verifyAndBurnTotpCode);
 const mockGetStringPref = vi.mocked(getStringPref);
 
 const MANIFEST = {
@@ -31,7 +31,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   // Restore per-test defaults (mockReturnValue overrides below would stick)
   mockGetStringPref.mockReturnValue('totp-secret');
-  mockVerifyTOTP.mockReturnValue(true);
+  mockVerifyTOTP.mockReturnValue({ ok: true });
 });
 
 function makeFile(size: number, name = 'plugin.tgz'): File {
@@ -57,21 +57,21 @@ describe('POST /api/plugins/install - TOTP step-up gate', () => {
   });
 
   it('returns 401 when the TOTP code is invalid', async () => {
-    mockVerifyTOTP.mockReturnValueOnce(false);
+    mockVerifyTOTP.mockReturnValueOnce({ ok: false, error: 'Invalid authenticator code.', reason: 'invalid' as const });
     const res = await POST({ request: makeRequest(makeFile(100)) } as Parameters<typeof POST>[0]);
     expect(res.status).toBe(401);
-    await expect(res.clone().json()).resolves.toMatchObject({ ok: false, error: 'Invalid authenticator code' });
+    await expect(res.clone().json()).resolves.toMatchObject({ ok: false, error: 'Invalid authenticator code.' });
   });
 
   it('returns 401 when the TOTP code is missing', async () => {
-    mockVerifyTOTP.mockReturnValue(false); // an empty code verifies as false
+    mockVerifyTOTP.mockReturnValue({ ok: false, error: 'Invalid authenticator code.', reason: 'invalid' as const }); // an empty code fails
     const res = await POST({ request: makeRequest(makeFile(100), null) } as Parameters<typeof POST>[0]);
     expect(res.status).toBe(401);
     expect(mockInstallPlugin).not.toHaveBeenCalled();
   });
 
   it('verifies the code BEFORE touching the uploaded archive', async () => {
-    mockVerifyTOTP.mockReturnValueOnce(false);
+    mockVerifyTOTP.mockReturnValueOnce({ ok: false, error: 'Invalid authenticator code.', reason: 'invalid' as const });
     await POST({ request: makeRequest(makeFile(100)) } as Parameters<typeof POST>[0]);
     expect(mockInstallPlugin).not.toHaveBeenCalled();
   });
