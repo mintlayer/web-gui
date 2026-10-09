@@ -67,6 +67,7 @@ function promptSecret() {
       return;
     }
     process.stderr.write('TOTP secret (input hidden): ');
+    stdin.setEncoding('utf8'); // raw-mode chunks arrive as Buffers otherwise
     stdin.setRawMode(true);
     stdin.resume();
     let buf = '';
@@ -77,11 +78,22 @@ function promptSecret() {
       process.stderr.write('\n');
       resolve(value);
     };
-    const onData = (ch) => {
-      if (ch === '\r' || ch === '\n') return finish(buf);
-      if (ch === '\u0003') return finish(''); // Ctrl-C → empty = abort
-      if (ch === '\u007f') buf = buf.slice(0, -1);
-      else if (ch >= ' ') buf += ch;
+    const onData = (chunk) => {
+      // A paste can arrive as ONE multi-char chunk — Enter included — so scan
+      // char by char instead of comparing the whole chunk. Terminals in raw
+      // mode also wrap pastes in bracketed-paste markers (ESC[200~ … ESC[201~);
+      // strip those and any other CSI escape sequences before scanning.
+      const clean = chunk.replace(/\x1b\[[0-9;?]*[~A-Za-z]/g, '');
+      for (const c of clean) {
+        if (c === '\r' || c === '\n') return finish(buf);
+        if (c === '\u0003') {
+          // Ctrl-C → abort (raw mode disables ISIG, so it arrives as data).
+          process.stderr.write('\n');
+          process.exit(130);
+        }
+        if (c === '\u007f') buf = buf.slice(0, -1); // backspace
+        else if (c >= ' ' && c !== '\u007f') buf += c;
+      }
     };
     stdin.on('data', onData);
   });
