@@ -14,15 +14,15 @@
     "typecheck": "astro sync && tsc --noEmit"
   },
   "dependencies": {
-    "@astrojs/node": "^11.1.0",
+    "@astrojs/node": "^11.1.3",
     "@astrojs/react": "^6.0.2",
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "@radix-ui/react-progress": "^1.1.8",
     "@simplewebauthn/browser": "^13.3.0",
-    "@simplewebauthn/server": "^13.3.0",
+    "@simplewebauthn/server": "^13.3.2",
     "@types/better-sqlite3": "^7.6.13",
     "@types/qrcode": "^1.5.6",
-    "astro": "^7.2.0",
+    "astro": "^7.2.8",
     "better-sqlite3": "^12.9.0",
     "clsx": "^2.1.1",
     "cookie": "^1.1.1",
@@ -45,11 +45,11 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@types/ws": "^8.18.1",
-    "@vitest/coverage-v8": "^3.2.0",
+    "@vitest/coverage-v8": "^4.1.11",
     "autoprefixer": "^10.5.0",
     "jsdom": "^26.1.0",
     "msw": "^2.7.3",
     "typescript": "^5.0.0",
-    "vitest": "^3.2.0"
+    "vitest": "^4.1.11"
   }
 }

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Tests for SyncStatus - real-time sync progress component.
  *

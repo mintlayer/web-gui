@@ -7,10 +7,6 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    environmentMatchGlobs: [
-      ['src/components/**/*.test.tsx', 'jsdom'],
-      ['src/lib/txWatcher.test.ts', 'jsdom'],
-    ],
     setupFiles: ['./src/test/setup.ts'],
     coverage: {
       provider: 'v8',
