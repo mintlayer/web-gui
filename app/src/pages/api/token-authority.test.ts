@@ -1,10 +1,24 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+vi.mock('@/lib/auth', () => ({
+  verifySessionToken: vi.fn(),
+  SESSION_COOKIE_NAME: 'ml_session',
+}));
+
+vi.mock('@/lib/prefs-db', () => ({
+  getPref: vi.fn(),
+}));
+
+import { verifySessionToken } from '@/lib/auth';
+import { getPref } from '@/lib/prefs-db';
+
 const mockFetch = vi.fn<typeof fetch>();
 
 beforeEach(() => {
   vi.stubGlobal('fetch', mockFetch);
   delete process.env.INDEXER_URL;
+  vi.mocked(verifySessionToken).mockReturnValue(true);
+  vi.mocked(getPref).mockReturnValue(1);
 });
 
 afterEach(() => {
@@ -27,6 +41,14 @@ function makeCtx(addresses?: string[]) {
 }
 
 describe('POST /api/token-authority', () => {
+  it('returns 401 without a valid session', async () => {
+    vi.mocked(verifySessionToken).mockReturnValue(false);
+    const { POST } = await import('@/pages/api/token-authority');
+    const res = await POST(makeCtx(['addr1']));
+    expect(res.status).toBe(401);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
   it('returns 400 when addresses is missing', async () => {
     const { POST } = await import('@/pages/api/token-authority');
     const res = await POST(makeCtx());

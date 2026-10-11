@@ -46,3 +46,23 @@ export function safeExternalUri(raw: string): string | null {
   // http: (insecure downgrade), javascript:, data:, vbscript:, anything else
   return null;
 }
+
+/**
+ * Resolve a chain-supplied URI to a safe <img src>, or null when it must not
+ * be rendered as an image.
+ *
+ * Unlike links, images cannot execute scripts — but they DO fetch the remote
+ * resource, so an unfiltered chain-controlled icon_uri/metadata_uri would let
+ * a token issuer turn every wallet that lists the token into a tracking
+ * beacon (IP + user-agent + view timing) for arbitrary schemes. Only https:
+ * (plus ipfs: mapped to the gateway) and self-contained data:image/ URIs are
+ * allowed; everything else degrades to the placeholder.
+ */
+export function safeImageUri(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  // data:image/... payloads never touch the network; scripts inside an <img>
+  // context do not execute. Anything but a strict image data URI is rejected.
+  if (/^data:image\/[a-z0-9.!#$&^+\-_.]+[;,]/i.test(trimmed)) return trimmed;
+  return safeExternalUri(trimmed);
+}

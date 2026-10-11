@@ -6,7 +6,13 @@
 export function json(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'Content-Type': 'application/json', ...headers },
+    headers: {
+      // Authenticated/money-path responses must never land in the browser
+      // cache (shared-machine risk). Deliberately NOT caller-overridable.
+      ...headers,
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-store',
+    },
   });
 }
 

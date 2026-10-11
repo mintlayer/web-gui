@@ -1,14 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('@/lib/auth', () => ({ verifyTOTP: vi.fn() }));
+vi.mock('@/lib/step-up', () => ({ verifyAndBurnTotpCode: vi.fn() }));
 vi.mock('@/lib/prefs-db', () => ({ getStringPref: vi.fn() }));
 
 import { resolveMcpSettings } from '@/lib/mcp-settings';
-import { verifyTOTP } from '@/lib/auth';
+import { verifyAndBurnTotpCode } from '@/lib/step-up';
 import { getStringPref } from '@/lib/prefs-db';
 
 beforeEach(() => {
-  vi.mocked(verifyTOTP).mockReset();
+  vi.mocked(verifyAndBurnTotpCode).mockReset();
   vi.mocked(getStringPref).mockReset();
 });
 
@@ -19,7 +19,7 @@ describe('resolveMcpSettings', () => {
       ok: true,
       prefs: { 'mcp.enabled': false, 'mcp.allow_actions': false, 'mcp.allow_spend': false },
     });
-    expect(verifyTOTP).not.toHaveBeenCalled();
+    expect(verifyAndBurnTotpCode).not.toHaveBeenCalled();
   });
 
   it('read-only (enabled, no write grants) requires no TOTP', () => {
@@ -28,7 +28,7 @@ describe('resolveMcpSettings', () => {
       ok: true,
       prefs: { 'mcp.enabled': true, 'mcp.allow_actions': false, 'mcp.allow_spend': false },
     });
-    expect(verifyTOTP).not.toHaveBeenCalled();
+    expect(verifyAndBurnTotpCode).not.toHaveBeenCalled();
   });
 
   it('rejects granting actions when no 2FA secret is configured', () => {
@@ -40,7 +40,7 @@ describe('resolveMcpSettings', () => {
 
   it('rejects granting spend with an invalid authenticator code', () => {
     vi.mocked(getStringPref).mockReturnValue('SECRET');
-    vi.mocked(verifyTOTP).mockReturnValue(false);
+    vi.mocked(verifyAndBurnTotpCode).mockReturnValue({ ok: false, error: 'Invalid authenticator code.', reason: 'invalid' as const });
     const d = resolveMcpSettings({ enabled: true, allowActions: false, allowSpend: true, totpCode: '000000' });
     expect(d.ok).toBe(false);
     if (!d.ok) expect(d.error).toMatch(/valid authenticator code/);
@@ -48,13 +48,13 @@ describe('resolveMcpSettings', () => {
 
   it('grants actions + spend with a valid authenticator code', () => {
     vi.mocked(getStringPref).mockReturnValue('SECRET');
-    vi.mocked(verifyTOTP).mockReturnValue(true);
+    vi.mocked(verifyAndBurnTotpCode).mockReturnValue({ ok: true });
     const d = resolveMcpSettings({ enabled: true, allowActions: true, allowSpend: true, totpCode: '654321' });
     expect(d).toEqual({
       ok: true,
       prefs: { 'mcp.enabled': true, 'mcp.allow_actions': true, 'mcp.allow_spend': true },
     });
-    expect(verifyTOTP).toHaveBeenCalledWith('654321', 'SECRET');
+    expect(verifyAndBurnTotpCode).toHaveBeenCalledWith('654321', 'SECRET', undefined);
   });
 
   it('never grants write access without enabled, even if the boxes are ticked', () => {

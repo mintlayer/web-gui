@@ -1,6 +1,7 @@
 ---
 import Layout from '@/layouts/Layout.astro';
 import { openWallet, createWallet, recoverWallet } from '@/lib/wallet-rpc';
+import { isBitcoinEnabled, createBitcoinWalletFromSeedWithRetry } from '@/lib/bitcoin-wallet';
 import SeedBackupStep from '@/components/SeedBackupStep';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
@@ -33,14 +34,51 @@ const WALLET_PATH = '/home/mintlayer/mintlayer.wallet';
 type SetupResult =
   | { action: 'none' }
   | { action: 'error'; message: string }
-  | { action: 'create_success'; mnemonic: string; walletPath: string }
-  | { action: 'import_success' }
+  | { action: 'create_success'; mnemonic: string; walletPath: string; btcNote?: string }
+  | { action: 'import_success'; btcNote?: string }
   | { action: 'upload_success' }
   | { action: 'upload_confirm_needed' };
 
 let result: SetupResult = { action: 'none' };
 
+// One seed for both chains: when the optional bitcoin profile is enabled,
+// initialize the BTC wallet from the same mnemonic the ML wallet was created
+// (or restored) with. Non-fatal - setup still succeeds when the sidecar is
+// unreachable; the Bitcoin page offers its own create/restore as a fallback.
+// Failures are logged server-side so silent misses are diagnosable.
+async function initBtcWalletFromSeed(mnemonic: string): Promise<string | undefined> {
+  if (!isBitcoinEnabled() || !mnemonic.trim()) return undefined;
+  try {
+    await createBitcoinWalletFromSeedWithRetry(mnemonic);
+    console.info('[setup] BTC wallet initialized from the setup seed');
+    return 'The same seed was configured for the BTC wallet (see the Bitcoin page).';
+  } catch (err) {
+    const msg = (err as Error).message;
+    if (/already exists/i.test(msg)) {
+      console.warn('[setup] BTC wallet already configured — skipping seed init');
+      return 'BTC wallet already configured.';
+    }
+    console.error(`[setup] BTC wallet init failed: ${msg}`);
+    return `BTC wallet setup failed: ${msg} — use "Restore from seed" on the Bitcoin page with this same seed phrase.`;
+  }
+}
+
 // ── POST handlers ─────────────────────────────────────────────────────────────
+
+// The wallet-rpc-daemon holds exactly one wallet slot: any wallet_create /
+// recover while one is open fails with "Wallet file already open" — which is
+// what a double-submitted create form produces (the first POST won, the
+// browser just rendered the loser). Say that instead of the raw daemon error.
+function friendlyWalletError(message: string): string {
+  if (/already open/i.test(message)) {
+    return (
+      'A wallet file is already open — this usually means the button was clicked twice and the wallet WAS created. ' +
+      'Its seed phrase was shown only once and is not recoverable from this screen. ' +
+      'If you did not save it, stop the stack and delete mintlayer-data/mintlayer.wallet* plus bitcoin-wallet-data/* on the host, then run setup again.'
+    );
+  }
+  return message;
+}
 
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
@@ -62,9 +100,10 @@ if (Astro.request.method === 'POST') {
         const res = await createWallet(WALLET_PATH, storeSeed, undefined, noPassword ? undefined : passphrase);
         const mnemonicStr =
           res.mnemonic.type === 'NewlyGenerated' ? res.mnemonic.content.mnemonic : '';
-        result = { action: 'create_success', mnemonic: mnemonicStr, walletPath: WALLET_PATH };
+        const btcNote = await initBtcWalletFromSeed(mnemonicStr);
+        result = { action: 'create_success', mnemonic: mnemonicStr, walletPath: WALLET_PATH, btcNote };
       } catch (err) {
-        result = { action: 'error', message: (err as Error).message };
+        result = { action: 'error', message: friendlyWalletError((err as Error).message) };
       }
     }
 
@@ -81,9 +120,10 @@ if (Astro.request.method === 'POST') {
     } else {
       try {
         await recoverWallet(WALLET_PATH, mnemonic, storeSeed, passphrase);
-        result = { action: 'import_success' };
+        const btcNote = await initBtcWalletFromSeed(mnemonic);
+        result = { action: 'import_success', btcNote };
       } catch (err) {
-        result = { action: 'error', message: (err as Error).message };
+        result = { action: 'error', message: friendlyWalletError((err as Error).message) };
       }
     }
 
@@ -114,7 +154,7 @@ if (Astro.request.method === 'POST') {
           result = { action: 'upload_success' };
         }
       } catch (err) {
-        result = { action: 'error', message: (err as Error).message };
+        result = { action: 'error', message: friendlyWalletError((err as Error).message) };
       }
     }
   }
@@ -128,7 +168,10 @@ Astro.response.headers.set('Cache-Control', 'no-store');
   {/* When create succeeds, show ONLY the seed backup wizard - nothing else */}
   {result.action === 'create_success' ? (
     <>
-      <h1 class="text-2xl font-bold text-gray-100 mb-6">New Wallet Created</h1>
+      <h1 class="text-2xl font-bold text-gray-100 mb-2">New Wallet Created</h1>
+      {result.btcNote && (
+        <p class="text-sm text-mint-300 mb-6">{result.btcNote}</p>
+      )}
       <SeedBackupStep
         client:load
         mnemonic={result.mnemonic}
@@ -164,6 +207,7 @@ Astro.response.headers.set('Cache-Control', 'no-store');
         <div class="rounded-lg border border-mint-700 bg-mint-900/30 p-4 mb-6 text-mint-300 text-sm max-w-5xl">
           <strong class="font-semibold">Wallet imported successfully.</strong>
           {' '}<a href="/" class="underline hover:text-mint-100">Go to dashboard →</a>
+          {result.btcNote && <p class="mt-2">{result.btcNote}</p>}
         </div>
       )}
 
@@ -188,7 +232,11 @@ Astro.response.headers.set('Cache-Control', 'no-store');
           </div>
           <p class="text-xs text-gray-400 mb-5">Generate a fresh seed phrase and wallet file.</p>
 
-          <form method="POST" class="space-y-4 flex flex-col flex-1">
+          <form
+            method="POST"
+            class="space-y-4 flex flex-col flex-1"
+            onsubmit="if (this.dataset.submitted === '1') { event.preventDefault(); return false; } this.dataset.submitted = '1'; const b = this.querySelector('button[type=submit]'); if (b) b.disabled = true;"
+          >
             <input type="hidden" name="action" value="create" />
 
             {/* Password - required by default */}
@@ -292,9 +340,13 @@ Astro.response.headers.set('Cache-Control', 'no-store');
         {/* ── Import from seed phrase ─────────────────────────────────────── */}
         <div class="rounded-xl bg-gray-900 border border-gray-800 p-6 flex flex-col">
           <h2 class="text-base font-semibold text-gray-200 mb-1">Import from seed phrase</h2>
-          <p class="text-xs text-gray-400 mb-5">Restore an existing wallet using your 24-word mnemonic.</p>
+          <p class="text-xs text-gray-400 mb-5">Restore an existing wallet using your 12 or 24-word seed phrase.</p>
 
-          <form method="POST" class="space-y-4 flex flex-col flex-1">
+          <form
+            method="POST"
+            class="space-y-4 flex flex-col flex-1"
+            onsubmit="if (this.dataset.submitted === '1') { event.preventDefault(); return false; } this.dataset.submitted = '1'; const b = this.querySelector('button[type=submit]'); if (b) b.disabled = true;"
+          >
             <input type="hidden" name="action" value="import" />
 
             <div>
@@ -304,7 +356,7 @@ Astro.response.headers.set('Cache-Control', 'no-store');
                 name="mnemonic"
                 rows="4"
                 required
-                placeholder="word1 word2 word3 … word24"
+                placeholder="word1 word2 word3 …"
                 class="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600
                        px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-mint-600 resize-none"
               />

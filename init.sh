@@ -396,27 +396,58 @@ while ! [[ "$WEB_GUI_PORT" =~ ^[0-9]+$ ]] || (( WEB_GUI_PORT < 1 || WEB_GUI_PORT
 done
 
 ask "Expose the web GUI to your network?"
-hint "By default the GUI binds to 127.0.0.1 and is reachable only from this machine (recommended)."
-hint "Only expose it if other devices on your LAN need to open the login page."
-hint "Note: LAN access is plain HTTP — browsers reject the Secure session cookie on"
-hint "non-localhost hostnames, so login will fail from other machines anyway."
-prompt WEB_GUI_BIND_ANSWER "Expose to network? [y/N]:" "n"
-case "$WEB_GUI_BIND_ANSWER" in
-  [yY]|[yY][eE][sS])
+hint "Three access modes:"
+hint "  localhost only — the GUI is reachable solely from this machine;"
+hint "    open it through an SSH tunnel. Most secure."
+hint "  LAN over HTTPS — other devices open it at https://<hostname>; Caddy"
+hint "    terminates TLS with a local Certificate Authority (works without a"
+hint "    public domain). Browsers warn once until you import the CA root,"
+hint "    downloadable from Settings -> HTTPS after setup."
+hint "  LAN plain HTTP — not recommended: traffic is unencrypted and the"
+hint "    session cookie is refused on non-localhost origins, so sign-in only"
+hint "    works from this machine anyway."
+hint "Running your own TLS proxy on a public domain? Pick 'localhost only'"
+hint "and set WEB_GUI_HOST + PASSKEY_* in .env manually (see .env.example)."
+ACCESS_CHOICE=""
+choose ACCESS_CHOICE "Access mode:" \
+  "localhost only (SSH tunnel)" \
+  "LAN over HTTPS (Caddy local CA)" \
+  "LAN plain HTTP (not recommended)"
+
+WEB_GUI_TLS="false"
+WEB_GUI_BIND="127.0.0.1"
+WEB_GUI_HOST="localhost"
+case "$ACCESS_CHOICE" in
+  *"LAN over HTTPS"*)
+    WEB_GUI_TLS="true"
+    ask "Hostname for the HTTPS certificate"
+    hint "Must resolve to this machine from your devices, e.g. ml1.local"
+    hint "(mDNS) or an entry in your router's DNS / your device's hosts file."
+    prompt WEB_GUI_HOST "Hostname:" "$(hostname -s 2>/dev/null || echo mintlayer-gui).local"
+    # Hostname flows into the Caddyfile (pre-parse textual substitution),
+    # docker-compose env interpolation, and the WebAuthn RP ID — so it must
+    # be a plain lowercase DNS name. Uppercase is normalized; everything
+    # else invalid is re-asked.
+    while ! [[ "${WEB_GUI_HOST,,}" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$ ]]; do
+      printf "${CYAN}│${RESET}  ${RED}Enter a valid hostname (letters, digits, dots, hyphens — no ports, spaces or underscores)${RESET}\n"
+      prompt WEB_GUI_HOST "Hostname:" "$(hostname -s 2>/dev/null || echo mintlayer-gui).local"
+    done
+    WEB_GUI_HOST="${WEB_GUI_HOST,,}"
+    warn "The GUI stays bound to 127.0.0.1 — only the HTTPS gateway (port 443) is exposed."
+    hint "Always open https://${WEB_GUI_HOST} — plain http:// (port 80) is not published."
+    ;;
+  *"LAN plain HTTP"*)
     WEB_GUI_BIND="0.0.0.0"
     warn "GUI will be reachable from other machines (plain HTTP)."
+    warn "Login requires a Secure session cookie, which browsers refuse on"
+    warn "plain HTTP for non-localhost origins — sign-in works only locally."
     ;;
   *)
-    WEB_GUI_BIND="127.0.0.1"
     ;;
 esac
 
-ask "Public hostname (optional — required for Passkeys)"
-hint "If you access this GUI via a DNS name (e.g. DuckDNS, your own domain), enter it here."
-hint "Passkeys (biometric / hardware-key login) require a proper hostname — they do not work"
-hint "with raw IP addresses. Leave blank to use localhost-only access."
-hint "Example: wallet.duckdns.org"
-prompt WEB_GUI_HOST "Hostname (leave blank for localhost):" ""
+# Passkeys (WebAuthn) need a proper DNS hostname — they never work from raw
+# IPs. The HTTPS mode implies one; localhost/plain-HTTP keep passkeys off.
 
 # Derive passkey config from hostname
 if [[ -z "$WEB_GUI_HOST" || "$WEB_GUI_HOST" == "localhost" ]]; then
@@ -462,6 +493,68 @@ if [[ "$ENABLE_INDEXER" == "yes" ]]; then
 
   ask "Port for the blockchain REST API"
   prompt API_WEB_SERVER_PORT "Port:" "3000"
+fi
+
+divider
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step — Bitcoin node + BTC wallet (optional)
+# ─────────────────────────────────────────────────────────────────────────────
+step "Bitcoin node + BTC wallet (optional)"
+hint "Adds a Bitcoin Core node and a built-in BTC wallet to the web UI"
+hint "(balance, receive, send). The wallet keys are held by a light-wallet"
+hint "sidecar; the node only provides chain data and broadcasts transactions."
+hint ""
+hint "Requirements: extra disk space (mainnet ~700 GB) and a full initial"
+hint "sync that can take days. The BTC wallet is a HOT wallet - keep only"
+hint "spending amounts there."
+hint ""
+
+ENABLE_BITCOIN="no"
+confirm ENABLE_BITCOIN "Enable the Bitcoin node + BTC wallet?" "N"
+
+BITCOIN_RPC_USERNAME="bitcoin_user"
+BITCOIN_RPC_PASSWORD=""
+BITCOIN_WALLET_HTTP_USERNAME="btcwallet_user"
+BITCOIN_WALLET_HTTP_PASSWORD=""
+BITCOIN_NETWORK=""
+if [[ "$ENABLE_BITCOIN" == "yes" ]]; then
+  if [[ "$USE_RANDOM_PASSWORDS" == "yes" ]]; then
+    BITCOIN_RPC_PASSWORD=$(rand_pass)
+    BITCOIN_WALLET_HTTP_PASSWORD=$(rand_pass)
+    ok "Generated random Bitcoin RPC passwords (saved to .env)"
+  else
+    ask "Bitcoin node RPC password"
+    prompt_secret BITCOIN_RPC_PASSWORD "Password:"
+    while [[ ${#BITCOIN_RPC_PASSWORD} -lt 8 ]]; do
+      printf "${CYAN}│${RESET}  ${RED}Password must be at least 8 characters${RESET}\n"
+      prompt_secret BITCOIN_RPC_PASSWORD "Password:"
+    done
+    ask "BTC wallet API password"
+    prompt_secret BITCOIN_WALLET_HTTP_PASSWORD "Password:"
+    while [[ ${#BITCOIN_WALLET_HTTP_PASSWORD} -lt 8 ]]; do
+      printf "${CYAN}│${RESET}  ${RED}Password must be at least 8 characters${RESET}\n"
+      prompt_secret BITCOIN_WALLET_HTTP_PASSWORD "Password:"
+    done
+  fi
+
+  ask "Bitcoin network"
+  hint "Leave default to follow the Mintlayer network (${NETWORK})."
+  prompt BITCOIN_NETWORK "Network (mainnet/testnet/regtest/signet):" ""
+  case "$BITCOIN_NETWORK" in
+    ""|"mainnet"|"testnet"|"regtest"|"signet") ;;
+    *) hint "Unknown network '${BITCOIN_NETWORK}' - following Mintlayer network instead."; BITCOIN_NETWORK="" ;;
+  esac
+
+  ask "Blockchain storage mode"
+  hint "FULL mode keeps the whole chain plus a transaction index: complete"
+  hint "wallet history and rescans of any restored seed."
+  hint "  mainnet ~700 GB of disk - testnet ~50 GB"
+  hint "PRUNED mode keeps only recent blocks (~15-25 GB on mainnet). The BTC"
+  hint "wallet you create in the GUI works normally, but restoring an old"
+  hint "seed cannot rescan ancient history."
+  BTC_PRUNED="yes"
+  confirm BTC_PRUNED "Run the Bitcoin node in pruned mode?" "Y"
 fi
 
 divider
@@ -590,8 +683,10 @@ printf "${CYAN}│${RESET}  %-22s %s\n" "Network:"           "${BOLD}${NETWORK}$
 printf "${CYAN}│${RESET}  %-22s %s\n" "Passwords:"  "${BOLD}$([ "$USE_RANDOM_PASSWORDS" == "yes" ] && echo "randomly generated" || echo "custom")${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Web UI auth:"  "${BOLD}password + TOTP 2FA${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Web GUI:"    "${BOLD}${PASSKEY_ORIGIN}${RESET}"
+printf "${CYAN}│${RESET}  %-22s %s\n" "LAN HTTPS:"   "${BOLD}$([ "$WEB_GUI_TLS" == "true" ] && echo "enabled (${WEB_GUI_HOST}, local CA)" || echo "disabled")${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Passkeys:"   "${BOLD}$([ "$WEB_GUI_HOST" != "localhost" ] && echo "enabled (${WEB_GUI_HOST})" || echo "localhost only")${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Indexer:"      "${BOLD}$([ "$ENABLE_INDEXER" == "yes" ] && echo "enabled (port ${API_WEB_SERVER_PORT}) — Token Management + Trading active" || echo "disabled — Token Management + Trading hidden")${RESET}"
+printf "${CYAN}│${RESET}  %-22s %s\n" "Bitcoin:"     "${BOLD}$([ "$ENABLE_BITCOIN" == "yes" ] && echo "enabled (node + BTC wallet)" || echo "disabled")${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "IPFS storage:" "${BOLD}$([ -n "$IPFS_PROVIDER" ] && echo "$IPFS_PROVIDER" || echo "disabled — configure later in Settings")${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Telegram:"     "${BOLD}$([ -n "$TELEGRAM_BOT_TOKEN" ] && echo "configured" || echo "disabled — configure later in Settings")${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Auto-update:"  "${BOLD}$([ "$ENABLE_WATCHTOWER" == "yes" ] && echo "enabled (daily at 04:00)" || echo "disabled")${RESET}"
@@ -628,6 +723,33 @@ fi
 
 # Derive boolean flags
 INDEXER_ENABLED=$([ "$ENABLE_INDEXER" == "yes" ] && echo "true" || echo "false")
+BITCOIN_ENABLED=$([ "$ENABLE_BITCOIN" == "yes" ] && echo "true" || echo "false")
+
+# ── Image tag selection ──────────────────────────────────────────────────────
+# Compose defaults to :latest, which CI publishes only from main. On a
+# feature branch, pin the CI-built branch tags instead (docker.yml publishes
+# :br-<branch-slug>); outside a git checkout, fall back to latest.
+IMAGE_TAG="latest"
+if BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" && [[ -n "$BRANCH" && "$BRANCH" != "HEAD" && "$BRANCH" != "main" ]]; then
+  IMAGE_TAG="br-${BRANCH//\//-}"
+  ok "Pinning prebuilt images to branch tag: $IMAGE_TAG"
+fi
+# Pruned mode: no txindex, keep a small recent-block window. Incompatible
+# with each other by design (Bitcoin Core refuses txindex + prune).
+if [[ "$ENABLE_BITCOIN" == "yes" && "$BTC_PRUNED" == "yes" ]]; then
+  BITCOIN_TXINDEX=0
+  BITCOIN_PRUNE=550
+else
+  BITCOIN_TXINDEX=1
+  BITCOIN_PRUNE=0
+fi
+
+# Bitcoin Core's -chain flag wants "main" for mainnet ("mainnet" is
+# rejected with CreateBaseChainParams). Other network names pass through.
+BITCOIN_CORE_CHAIN="main"
+if [[ -n "$BITCOIN_NETWORK" && "$BITCOIN_NETWORK" != "mainnet" ]]; then
+  BITCOIN_CORE_CHAIN="$BITCOIN_NETWORK"
+fi
 
 # Build the full wallet-rpc-daemon command (avoids shell expansion tricks in docker-compose)
 WALLET_RPC_CMD="wallet-rpc-daemon ${NETWORK}"
@@ -660,6 +782,9 @@ WEB_GUI_HOST=${WEB_GUI_HOST}
 # Bind address for the GUI port: 127.0.0.1 (default) or 0.0.0.0 (opted in above)
 WEB_GUI_BIND=${WEB_GUI_BIND}
 
+# LAN HTTPS gateway (Caddy local CA, profile: web)
+WEB_GUI_TLS=${WEB_GUI_TLS}
+
 # Passkeys (WebAuthn) — derived from WEB_GUI_HOST above
 # Override these if running behind a reverse proxy that changes the visible hostname.
 PASSKEY_RP_ID=${PASSKEY_RP_ID}
@@ -683,12 +808,34 @@ POSTGRES_USER=mintlayer
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 POSTGRES_DB=mintlayer
 API_WEB_SERVER_PORT=${API_WEB_SERVER_PORT}
+
+# Bitcoin node + BTC wallet (only used with --profile bitcoin)
+BITCOIN_ENABLED=${BITCOIN_ENABLED}
+BITCOIN_NETWORK=${BITCOIN_NETWORK}
+BITCOIN_CORE_CHAIN=${BITCOIN_CORE_CHAIN}
+BITCOIN_RPC_USERNAME=${BITCOIN_RPC_USERNAME}
+BITCOIN_RPC_PASSWORD=${BITCOIN_RPC_PASSWORD}
+BITCOIN_WALLET_HTTP_USERNAME=${BITCOIN_WALLET_HTTP_USERNAME}
+BITCOIN_WALLET_HTTP_PASSWORD=${BITCOIN_WALLET_HTTP_PASSWORD}
+BITCOIN_TXINDEX=${BITCOIN_TXINDEX}
+BITCOIN_PRUNE=${BITCOIN_PRUNE}
+
+# Prebuilt image refs (branch deploys pin CI-built tags; :latest = main only)
+ML_NODE_DAEMON_IMAGE=ghcr.io/mintlayer/web-gui/node-daemon:${IMAGE_TAG}
+ML_WALLET_RPC_DAEMON_IMAGE=ghcr.io/mintlayer/web-gui/wallet-rpc-daemon:${IMAGE_TAG}
+WEB_GUI_IMAGE=ghcr.io/mintlayer/web-gui/web-gui:${IMAGE_TAG}
+BDK_WALLET_IMAGE=ghcr.io/mintlayer/web-gui/bdk-wallet:${IMAGE_TAG}
+BTC_EXPLORER_IMAGE=ghcr.io/mintlayer/web-gui/btc-explorer:${IMAGE_TAG}
+ML_API_SCANNER_IMAGE=ghcr.io/mintlayer/web-gui/api-blockchain-scanner-daemon:${IMAGE_TAG}
+ML_API_WEB_SERVER_IMAGE=ghcr.io/mintlayer/web-gui/api-web-server:${IMAGE_TAG}
 EOF
 
 ok ".env written"
 
 # ── Write credentials to SQLite via temporary alpine container ───────────────
-mkdir -p mintlayer-data/prefs mintlayer-data/plugins
+# uploads/ is bind-mounted into web-gui; pre-create it here so it is owned by
+# this user (docker creates missing bind-mount dirs as root).
+mkdir -p mintlayer-data/prefs mintlayer-data/plugins mintlayer-data/uploads
 {
   echo "CREATE TABLE IF NOT EXISTS prefs (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
   echo "INSERT OR REPLACE INTO prefs VALUES ('auth.password_hash', '\"${UI_PASSWORD_HASH}\"');"
@@ -704,9 +851,16 @@ mkdir -p mintlayer-data/prefs mintlayer-data/plugins
     sh -c 'apk add -q --no-progress sqlite >/dev/null 2>&1 && sqlite3 /prefs/mintlayer_prefs.sqlite'
 ok "Credentials written to mintlayer-data/prefs/mintlayer_prefs.sqlite"
 
-# ── Create data directory ─────────────────────────────────────────────────────
+# ── Create data directories ──────────────────────────────────────────────────
+# Pre-created by the host user so bind mounts are not root-owned when the
+# containers mount them (Docker creates missing dirs as root).
 mkdir -p mintlayer-data
 ok "mintlayer-data/ directory ready"
+
+if [[ "$ENABLE_BITCOIN" == "yes" ]]; then
+  mkdir -p bitcoin-data bitcoin-wallet-data
+  ok "bitcoin-data/ and bitcoin-wallet-data/ ready"
+fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Start services?
@@ -726,12 +880,24 @@ if [[ "$START" == "yes" ]]; then
   if [[ "$ENABLE_INDEXER" == "yes" ]]; then
     PROFILES="$PROFILES --profile indexer"
   fi
+  if [[ "$ENABLE_BITCOIN" == "yes" ]]; then
+    PROFILES="$PROFILES --profile bitcoin"
+  fi
   if [[ "$ENABLE_WATCHTOWER" == "yes" ]]; then
     PROFILES="$PROFILES --profile watchtower"
   fi
+  if [[ "$WEB_GUI_TLS" == "true" ]]; then
+    PROFILES="$PROFILES --profile web"
+  fi
 
-  $COMPOSE pull --quiet
-  $COMPOSE $PROFILES up -d --build
+  # Pull the CI-built multi-arch images (amd64+arm64) from ghcr.io and start.
+  # Local rebuilds stay available: docker compose build (see README).
+  $COMPOSE $PROFILES pull --quiet || {
+    hint "Prebuilt image pull failed. On a fresh branch, CI must have published"
+    hint "ghcr.io/mintlayer/web-gui/*:${IMAGE_TAG} first — falling back to a local build."
+    $COMPOSE $PROFILES build
+  }
+  $COMPOSE $PROFILES up -d
 
   ok "Services started"
 fi
@@ -757,6 +923,19 @@ printf "  ${GRAY}${COMPOSE} down                        # stop everything${RESET
 printf "\n"
 printf "  ${DIM}Note: mainnet sync takes hours on first run.${RESET}\n"
 printf "  ${DIM}Balance and history appear once the node is fully synced.${RESET}\n"
+if [[ "$ENABLE_BITCOIN" == "yes" ]]; then
+  printf "\n"
+  printf "  ${DIM}Bitcoin: the BTC node syncs independently (days on mainnet).${RESET}\n"
+  printf "  ${DIM}Open the Bitcoin page in the web UI to create your BTC wallet${RESET}\n"
+  printf "  ${DIM}and back up its seed phrase when prompted.${RESET}\n"
+fi
+if [[ "$WEB_GUI_TLS" == "true" ]]; then
+  printf "\n"
+  printf "  ${DIM}HTTPS: Caddy generates the local CA on first start (may take a few seconds).${RESET}\n"
+  printf "  ${DIM}Open https://${WEB_GUI_HOST} once, accept the warning, then download the CA${RESET}\n"
+  printf "  ${DIM}root from Settings -> HTTPS to silence it permanently on your devices.${RESET}\n"
+  printf "  ${DIM}Passkeys are available automatically since you have a proper hostname.${RESET}\n"
+fi
 printf "\n"
 
 # ── Open browser ──────────────────────────────────────────────────────────────

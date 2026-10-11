@@ -7,42 +7,42 @@ export const ALLOWED_RPC_METHODS = new Set([
   // Addresses
   'address_new',
   'address_show',
-  'address_send',
+  // NOTE: address_send and token_send are intentionally absent — sends are
+  // money movement and require TOTP step-up via POST /api/send. They must not
+  // be callable through the browser proxy or the plugin context.
   // Staking
   'staking_status',
+  // staking_start / staking_stop are local wallet toggles (no transaction,
+  // no fund movement) — a hijacker can only pause rewards, not steal them.
   'staking_start',
   'staking_stop',
   'staking_list_pools',
   'staking_list_created_block_ids',
-  'staking_decommission_pool',
-  'staking_create_pool',
   'delegation_list_ids',
-  'delegation_create',
-  'delegation_stake',
-  'delegation_withdraw',
-  'staking_sweep_delegation',
+  // Pool creation/decommission and delegation create/stake/withdraw all sign
+  // fee-bearing transactions that move funds (pool creation ~1000 ML,
+  // stake/withdraw move coins). They are only reachable through POST
+  // /api/stake-trade, which requires a fresh TOTP code (step-up) like
+  // /api/send. The plugin context inherits this exclusion.
   // Wallet — open/create are handled server-side only (setup.astro, wallet.astro)
   // and must not be callable through the browser proxy or plugin context.
   'wallet_info',
   'wallet_best_block',
   // Tokens
   'node_get_tokens_info',
-  'token_send',
-  'token_issue_new',
-  'token_nft_issue_new',
-  'token_mint',
-  'token_unmint',
-  'token_lock_supply',
-  'token_freeze',
-  'token_unfreeze',
-  'token_change_authority',
-  'token_change_metadata_uri',
+  // Token AUTHORITY methods (issue/mint/unmint/lock/freeze/change) are
+  // intentionally absent — they mutate on-chain token state, several
+  // irreversibly (lock_supply, is_unfreezable freeze, change_authority), and
+  // burn fees. They are only reachable through POST /api/token-manage, which
+  // requires a fresh TOTP code (step-up) like /api/send. The plugin context
+  // inherits this exclusion: plugins can never mint/freeze/reassign tokens.
   // Orders / Trading
   'order_list_own',
   'order_list_all_active',
-  'order_create',
-  'order_fill',
-  'order_conclude',
+  // order_create / order_fill / order_conclude sign fund-moving transactions
+  // (placing an order locks coins/tokens; filling pays the ask). Only
+  // reachable through POST /api/stake-trade (TOTP step-up) — shared by the
+  // order book and the NFT marketplace.
   'order_freeze',
   // Wallet settings — non-sensitive only
   // NOTE: wallet_show_seed_phrase and wallet_unlock_private_keys are intentionally
@@ -55,5 +55,10 @@ export const ALLOWED_RPC_METHODS = new Set([
   'transaction_abandon',
   // UTXOs
   'account_utxos',
-  'address_sweep_spendable',
+  // address_sweep_spendable removed: with `all: true` (or empty from_addresses)
+  // it moves every spendable UTXO to a client-chosen destination in one call —
+  // a full wallet drain reachable with a bare session cookie, which defeats
+  // the address_send/token_send removal. If the UI ever needs sweep, expose it
+  // through a dedicated step-up-protected endpoint (requireStepUp) that fixes
+  // the account server-side.
 ]);

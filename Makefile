@@ -1,14 +1,15 @@
-.PHONY: up down restart nuke restart-gui build logs dev dev-build dev-local wallet-cli nft-images-public pending-transactions list-utxos
+.PHONY: up down restart nuke restart-gui build logs dev dev-build dev-local dev-env wallet-cli bitcoin bitcoin-cli nft-images-public pending-transactions list-utxos
 
 ACCOUNT ?= 0
 
 ## Start all services
 up:
+	@test -f .env || { echo "ERROR: no .env found - run ./init.sh to configure a real deployment (or 'make dev' for a loopback dev stack)."; exit 1; }
 	docker compose up -d
 
 ## Stop and remove all containers (including optional profiles and orphaned run containers)
 down:
-	docker compose --profile indexer --profile wallet_cli down --remove-orphans
+	docker compose --profile indexer --profile wallet_cli --profile bitcoin down --remove-orphans
 
 ## Full clean restart: tear down everything, fix stuck networks, then bring up fresh
 ## Fixes "Network still in use" / "network not found" errors from dangling containers.
@@ -27,7 +28,7 @@ restart: down
 ## Nuclear option: remove ALL stopped containers and unused networks project-wide,
 ## then restart. Use when restart still fails.
 nuke:
-	docker compose --profile indexer --profile wallet_cli down --remove-orphans --volumes 2>/dev/null || true
+	docker compose --profile indexer --profile wallet_cli --profile bitcoin down --remove-orphans --volumes 2>/dev/null || true
 	docker container prune -f
 	docker network prune -f
 	docker compose up -d
@@ -46,21 +47,43 @@ logs:
 
 ## Start all services in dev mode with HMR (rebuilds web-gui image, includes indexer stack)
 ## Tears down existing containers first so you always start clean.
-dev:
-	docker compose --profile indexer -f docker-compose.yml -f docker-compose.dev.yml down --remove-orphans 2>/dev/null || true
-	docker compose --profile indexer -f docker-compose.yml -f docker-compose.dev.yml up --build
+dev: dev-env
+	docker compose --profile indexer --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml down --remove-orphans 2>/dev/null || true
+	docker compose --profile indexer --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml up --build
 
 ## Like dev, but uses locally-built core images (run ./build-core-images.sh first)
-dev-local:
-	docker compose --profile indexer -f docker-compose.yml -f docker-compose.dev.yml up
+dev-local: dev-env
+	docker compose --profile indexer --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml up
 
 ## Rebuild dev image only (run after adding npm packages, then re-run make dev)
-dev-build:
-	docker compose --profile indexer -f docker-compose.yml -f docker-compose.dev.yml build web-gui
+dev-build: dev-env
+	docker compose --profile indexer --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml build web-gui
+
+## Generate .env.dev (fixed dev credentials + fresh random SESSION_SECRET) on first use.
+## Dev-only: loopback-bound, never valid for a real deployment (use ./init.sh for that).
+dev-env:
+	@if [ ! -f .env.dev ]; then \
+		cp env.dev.example .env.dev; \
+		secret=$$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'); \
+		printf 'SESSION_SECRET=%s\n' "$$secret" >> .env.dev; \
+		printf 'ML_USER_ID=%s\nML_GROUP_ID=%s\n' "$$(id -u)" "$$(id -g)" >> .env.dev; \
+		echo "Generated .env.dev with dev credentials and a fresh SESSION_SECRET."; \
+	fi
 
 ## Open an interactive wallet-cli session connected to the running wallet-rpc-daemon
 wallet-cli:
 	docker compose --profile wallet_cli run --rm wallet-cli
+
+## Start the optional Bitcoin stack (bitcoind + BTC wallet sidecar) alongside core services
+bitcoin:
+	docker compose --profile bitcoin up -d
+	@echo "Bitcoin node + BTC wallet started. First sync can take a long time on mainnet."
+	@echo "Open the Bitcoin page in the web UI to create your BTC wallet."
+
+## bitcoin-cli shell inside the Bitcoin node container
+## Usage: make bitcoin-cli CMD='getblockchaininfo'
+bitcoin-cli:
+	docker compose --profile bitcoin exec bitcoind bitcoin-cli -rpcport=8332 -rpcuser=$$(grep '^BITCOIN_RPC_USERNAME=' .env | cut -d= -f2) -rpcpassword=$$(grep '^BITCOIN_RPC_PASSWORD=' .env | cut -d= -f2) $(CMD)
 
 ## List pending transactions for account ACCOUNT (default 0) via wallet RPC.
 ## Usage: make pending-transactions  or  make pending-transactions ACCOUNT=1

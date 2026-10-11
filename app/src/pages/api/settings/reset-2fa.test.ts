@@ -1,8 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@/lib/auth', () => ({
-  verifyTOTP: vi.fn(),
   generateTotpSecret: vi.fn(),
+  getClientAddress: vi.fn(() => '127.0.0.1'),
+}));
+
+vi.mock('@/lib/step-up', () => ({
+  verifyAndBurnTotpCode: vi.fn(),
 }));
 
 vi.mock('@/lib/prefs-db', () => ({
@@ -11,7 +15,8 @@ vi.mock('@/lib/prefs-db', () => ({
 }));
 
 import { POST } from '@/pages/api/settings/reset-2fa';
-import { verifyTOTP, generateTotpSecret } from '@/lib/auth';
+import { generateTotpSecret } from '@/lib/auth';
+import { verifyAndBurnTotpCode } from '@/lib/step-up';
 import { getStringPref, setPref } from '@/lib/prefs-db';
 
 function makeForm(fields: Record<string, string>) {
@@ -28,7 +33,7 @@ function makeCtx(req: Request) {
 }
 
 beforeEach(() => {
-  vi.mocked(verifyTOTP).mockReset();
+  vi.mocked(verifyAndBurnTotpCode).mockReset();
   vi.mocked(generateTotpSecret).mockReset();
   vi.mocked(getStringPref).mockReset();
   vi.mocked(setPref).mockReset();
@@ -46,7 +51,7 @@ describe('POST /api/settings/reset-2fa', () => {
 
   it('returns 401 when TOTP code is invalid', async () => {
     vi.mocked(getStringPref).mockReturnValue('SECRETSECRET');
-    vi.mocked(verifyTOTP).mockReturnValue(false);
+    vi.mocked(verifyAndBurnTotpCode).mockReturnValue({ ok: false, error: 'Invalid authenticator code.', reason: 'invalid' as const });
     const res = await POST(makeCtx(makeForm({ totp_code: '000000' })));
     expect(res.status).toBe(401);
     const body = await res.json();
@@ -55,7 +60,7 @@ describe('POST /api/settings/reset-2fa', () => {
 
   it('generates a new secret and returns the otpauth URI on success', async () => {
     vi.mocked(getStringPref).mockReturnValue('OLDSECRET');
-    vi.mocked(verifyTOTP).mockReturnValue(true);
+    vi.mocked(verifyAndBurnTotpCode).mockReturnValue({ ok: true });
     vi.mocked(generateTotpSecret).mockReturnValue('NEWSECRET');
     const res = await POST(makeCtx(makeForm({ totp_code: '123456' })));
     expect(res.status).toBe(200);

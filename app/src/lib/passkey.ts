@@ -41,14 +41,17 @@ export function saveCredentials(creds: StoredCredential[]): void {
 export const PASSKEY_CHALLENGE_COOKIE = 'pk_chal';
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 
+type ChallengePurpose = 'registration' | 'authentication';
+
 interface ChallengeEntry {
   challenge: string; // base64url
   expiresAt: number;
+  purpose: ChallengePurpose;
 }
 
 const pendingChallenges = new Map<string, ChallengeEntry>();
 
-export function createChallenge(challenge: string): string {
+export function createChallenge(challenge: string, purpose: ChallengePurpose): string {
   // Prune expired entries
   const now = Date.now();
   for (const [key, entry] of pendingChallenges) {
@@ -56,15 +59,20 @@ export function createChallenge(challenge: string): string {
   }
 
   const token = crypto.randomBytes(16).toString('hex');
-  pendingChallenges.set(token, { challenge, expiresAt: now + CHALLENGE_TTL_MS });
+  pendingChallenges.set(token, { challenge, expiresAt: now + CHALLENGE_TTL_MS, purpose });
   return token;
 }
 
-export function consumeChallenge(token: string): string | null {
+export function consumeChallenge(token: string, expectedPurpose: ChallengePurpose): string | null {
   const entry = pendingChallenges.get(token);
   if (!entry) return null;
   pendingChallenges.delete(token);
   if (Date.now() >= entry.expiresAt) return null;
+  // A login challenge must never be redeemable as a registration challenge:
+  // authentication challenges are minted on the public auth-options route
+  // (no 2FA step-up), while registration challenges only exist behind a
+  // burned TOTP code in register-options. Delete the entry either way.
+  if (entry.purpose !== expectedPurpose) return null;
   return entry.challenge;
 }
 
@@ -104,12 +112,17 @@ export function clearChallengeCookieHeader(): string {
 }
 
 /**
- * Extract the challenge token from the request's challenge cookie and consume it.
- * Returns the pending challenge, or null when the cookie is missing/expired.
+ * Extract the challenge token from the request's challenge cookie and consume
+ * it, expecting the given purpose. Returns the pending challenge, or null when
+ * the cookie is missing/expired or the challenge was minted for another
+ * purpose (e.g. an authentication challenge used for registration).
  */
-export function consumeChallengeFromRequest(request: Request): string | null {
+export function consumeChallengeFromRequest(
+  request: Request,
+  expectedPurpose: ChallengePurpose,
+): string | null {
   const cookieHeader = request.headers.get('cookie') ?? '';
   const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${PASSKEY_CHALLENGE_COOKIE}=([^;]+)`));
   const token = match?.[1] ?? '';
-  return token ? consumeChallenge(token) : null;
+  return token ? consumeChallenge(token, expectedPurpose) : null;
 }

@@ -116,7 +116,7 @@ export async function pollNotifications(
     if (state.rpcFailures === OFFLINE_THRESHOLD) {
       const msg = err instanceof WalletRpcError ? err.message : String(err);
       await maybeNotify(botToken, chatId, 'offline',
-        `🔴 <b>Node appears offline</b>\n\n${msg}`, true);
+        `🔴 <b>Node appears offline</b>\n\n${escapeHtml(msg)}`, true);
       state.nodeOnline = false;
     }
     // Don't update state further - we have no fresh data
@@ -138,27 +138,37 @@ export async function pollNotifications(
   // ── Staking: new blocks created → reward earned ────────────────────────────
   if (createdBlockCount > state.lastCreatedBlockCount && notifEnabled('staking', true)) {
     const newBlocks = createdBlockCount - state.lastCreatedBlockCount;
+    // Balance movement in the same tick can be block rewards, an incoming
+    // deposit, or both — attribute honestly instead of claiming "reward".
+    const balanceDiff = balanceAtoms - state.lastBalanceAtoms;
+    const balanceNote = balanceDiff > 0n
+      ? `\nBalance: <code>+${formatAtoms(balanceDiff)} ML</code> (block rewards and/or incoming deposits).`
+      : '';
     await maybeNotify(botToken, chatId, 'staking',
-      `🏆 <b>Staking reward${newBlocks > 1 ? 's' : ''} earned!</b>\n\n` +
-      `${newBlocks} new block${newBlocks > 1 ? 's' : ''} created by your pool.\n` +
-      `Total blocks: ${createdBlockCount}`, true);
+      `🏆 <b>Your pool created ${newBlocks} new block${newBlocks > 1 ? 's' : ''}.</b>\n\n` +
+      `Total blocks: ${createdBlockCount}` + balanceNote, true);
   }
 
   // ── Balance changes ────────────────────────────────────────────────────────
   const balanceDiff = balanceAtoms - state.lastBalanceAtoms;
 
+  let receivedAnnouncedThisTick = false;
   if (balanceDiff > 0n) {
     // Balance increased
     const newBlocks = createdBlockCount - state.lastCreatedBlockCount;
     if (newBlocks === 0) {
       // Not from staking - likely an incoming payment
       const diffDecimal = formatAtoms(balanceDiff);
+      // getBalance counts confirmed coins only, so "received" fires on the
+      // same tick the transaction confirms — suppress the generic confirmed
+      // ping below or every deposit notifies twice.
+      receivedAnnouncedThisTick = notifEnabled('received', true);
       await maybeNotify(botToken, chatId, 'received',
         `📨 <b>Incoming transaction</b>\n\n` +
         `Received: <code>+${diffDecimal} ML</code>\n` +
         `New balance: <code>${formatAtoms(balanceAtoms)} ML</code>`, true);
     }
-    // (Staking reward already handled above)
+    // (Staking block news handled above, incl. same-tick deposits)
   } else if (balanceDiff < 0n) {
     // Balance decreased - outgoing transaction
     const diffDecimal = formatAtoms(-balanceDiff);
@@ -176,8 +186,9 @@ export async function pollNotifications(
 
   // ── New confirmed transactions ─────────────────────────────────────────────
   const newTxIds = txIds.filter(id => !state.lastTxIds.has(id));
-  if (newTxIds.length > 0 && state.lastTxIds.size > 0) {
-    // Only notify if we had a previous snapshot (avoids spam on first real run)
+  if (newTxIds.length > 0 && state.lastTxIds.size > 0 && !receivedAnnouncedThisTick) {
+    // Only notify if we had a previous snapshot (avoids spam on first real run);
+    // skip when the incoming-payment message already covered these confirms.
     await maybeNotify(botToken, chatId, 'confirmed',
       `✅ <b>${newTxIds.length} transaction${newTxIds.length > 1 ? 's' : ''} confirmed</b>`, true);
   }
@@ -205,6 +216,11 @@ export async function pollNotifications(
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
+
+/** Escape text for Telegram HTML parse_mode (raw daemon errors can contain <>&). */
+export function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 
 async function maybeNotify(
   botToken: string,

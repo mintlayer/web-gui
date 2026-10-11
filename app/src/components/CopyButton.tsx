@@ -6,10 +6,15 @@ export function CopyButton({ value, title = 'Copy' }: { value: string; title?: s
     <button
       type="button"
       title={title}
+      aria-label={title}
       onClick={() => {
         navigator.clipboard.writeText(value).then(() => {
           setCopied(true);
           setTimeout(() => setCopied(false), 1500);
+        }).catch((err: unknown) => {
+          // Clipboard can be denied (permissions/insecure context) — don't
+          // leave an unhandled rejection; the icon simply stays idle.
+          console.warn('clipboard write failed', err);
         });
       }}
       className={`ml-1.5 inline-flex items-center align-middle transition-colors

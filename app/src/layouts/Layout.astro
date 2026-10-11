@@ -5,6 +5,8 @@ import CommandPalette from '@/components/CommandPalette';
 import type { NavItem } from '@/components/CommandPalette';
 import { getEnabledPlugins } from '@/lib/plugins';
 import type { PluginManifest } from '@/lib/plugins';
+import { isBitcoinEnabled } from '@/lib/bitcoin-wallet';
+import { getPref } from '@/lib/prefs-db';
 
 export interface Props {
   title?: string;
@@ -14,6 +16,13 @@ export interface Props {
 const { title = 'Home', activeNav } = Astro.props;
 const network = (process.env.NETWORK ?? 'mainnet').toLowerCase();
 const indexerEnabled = process.env.INDEXER_ENABLED === 'true';
+const bitcoinEnabled = isBitcoinEnabled() && getBitcoinShowUi();
+// The bridge agents run on Mintlayer mainnet only — hide the section elsewhere.
+const bridgeEnabled = process.env.NETWORK === 'mainnet';
+
+function getBitcoinShowUi(): boolean {
+  try { return getPref<boolean>('bitcoin.show_ui') !== false; } catch { return true; }
+}
 
 import pkg from '../../package.json';
 const version = pkg.version;
@@ -39,6 +48,12 @@ const navItems: NavItem[] = [
   ...(indexerEnabled ? [
     { key: 'token-management', label: 'Token Management', href: '/token-management', section: 'ASSETS'   },
     { key: 'trading',          label: 'Trading',          href: '/trading',          section: 'TRADE'    },
+  ] : []),
+  ...(bitcoinEnabled ? [
+    { key: 'bitcoin',          label: 'Bitcoin',          href: '/bitcoin',          section: 'WALLET'   },
+  ] : []),
+  ...(bridgeEnabled ? [
+    { key: 'bridge',           label: 'Bridge',           href: '/bridge',           section: 'WALLET'   },
   ] : []),
   { key: 'management',       label: 'Settings',         href: '/management',        section: 'SETTINGS'  },
   ...enabledPlugins.map(p => ({
@@ -126,6 +141,22 @@ const PLUGIN_ICON_DEFAULT = 'M11.42 15.17L17.25 21A2.652 2.652 0 0021 17.25l-5.8
               </svg>
               <span class="nav-label">Staking</span>
             </a>
+            {bridgeEnabled && (
+              <a href="/bridge" data-tooltip="Bridge" class:list={['nav-item flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors', activeNav === 'bridge' ? navActive : navInactive]}>
+                <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v-6a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 10.5v6m-18 0v2.25A2.25 2.25 0 007.5 21h9a2.25 2.25 0 002.25-2.25V16.5M12 3.75v9m0 0l-3-3m3 3l3-3" />
+                </svg>
+                <span class="nav-label">Bridge</span>
+              </a>
+            )}
+            {bitcoinEnabled && (
+              <a href="/bitcoin" data-tooltip="Bitcoin" class:list={['nav-item flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors', activeNav === 'bitcoin' ? navActive : navInactive]}>
+                <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M9.75 3.75v16.5m0-16.5h4.5a3.75 3.75 0 013.75 3.75v.75m-8.25-4.5H6m3.75 8.25h5.25a3.75 3.75 0 013.75 3.75v.75m-9-4.5H6m3.75 8.25H6m3.75 0h4.5a3.75 3.75 0 003.75-3.75v-.75" />
+                </svg>
+                <span class="nav-label">Bitcoin</span>
+              </a>
+            )}
             {pluginsBySection.wallet.map(({ id, navLabel, navIcon }) => (
               <a href={`/plugins/${id}/`} data-tooltip={navLabel} class:list={['nav-item flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors', activeNav === id ? navActive : navInactive]}>
                 <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">

@@ -18,6 +18,8 @@ vi.mock('@/lib/passkey', () => ({
 vi.mock('@/lib/auth', () => ({
   generateSessionToken: vi.fn(),
   makeSessionCookieHeader: vi.fn(),
+  checkRpcRateLimit: vi.fn(() => true),
+  getClientAddress: vi.fn(() => '127.0.0.1'),
 }));
 
 vi.mock('@/lib/prefs-db', () => ({

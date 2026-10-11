@@ -9,12 +9,14 @@ function TxToastItem({ toast }: { toast: TxToast }) {
   const isPending   = toast.status === "pending";
   const isConfirmed = toast.status === "confirmed";
   const isFailed    = toast.status === "failed";
+  const isUntracked = toast.status === "untracked";
 
   return (
     <div
       className={`flex items-start gap-3 rounded-xl border p-4 shadow-2xl backdrop-blur-sm min-w-72 max-w-sm transition-all ${
         isPending   ? "bg-gray-900/95 border-gray-700"        :
         isConfirmed ? "bg-gray-900/95 border-mint-700"        :
+        isUntracked ? "bg-gray-900/95 border-gray-700"        :
                       "bg-gray-900/95 border-red-800"
       }`}
     >
@@ -40,10 +42,13 @@ function TxToastItem({ toast }: { toast: TxToast }) {
 
       {/* Content */}
       <div className="flex-1 min-w-0">
-        <p className={`text-xs font-semibold mb-1 ${isConfirmed ? "text-mint-400" : isFailed ? "text-red-400" : "text-gray-300"}`}>
-          {isPending   && "Transaction pending…"}
-          {isConfirmed && `Confirmed at block #${toast.blockHeight?.toLocaleString() ?? "?"}`}
+        <p className={`text-xs font-semibold mb-1 ${isConfirmed ? "text-mint-400" : isFailed ? "text-red-400" : isUntracked ? "text-gray-400" : "text-gray-300"}`}>
+          {isPending   && (toast.stale ? "Still pending — check the explorer for status." : "Transaction pending…")}
+          {isConfirmed && (toast.blockHeight != null
+            ? `Confirmed at block #${toast.blockHeight.toLocaleString()}`
+            : "Confirmed")}
           {isFailed    && `Failed: ${toast.errorMessage ?? "unknown error"}`}
+          {isUntracked && (toast.errorMessage ?? "Confirmation not tracked — check the explorer.")}
         </p>
         <a
           href={toast.explorerUrl}
@@ -75,7 +80,11 @@ export default function ToastContainer() {
   if (toasts.length === 0) return null;
 
   return (
-    <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none">
+    <div
+      className="fixed top-4 right-4 z-[60] flex flex-col gap-2 pointer-events-none"
+      role={toasts.some(t => t.status === 'failed') ? 'alert' : 'status'}
+      aria-live={toasts.some(t => t.status === 'failed') ? 'assertive' : 'polite'}
+    >
       {toasts.map(t => (
         <div key={t.id} className="pointer-events-auto">
           <TxToastItem toast={t} />

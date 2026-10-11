@@ -1,11 +1,14 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { watchTx } from "@/lib/txWatcher";
 import { submitWithToast } from "@/lib/toastStore";
 import { hexToText } from "@/lib/token-utils";
+import { safeImageUri } from "@/lib/safe-uri";
 import type { TokenCurrency, OrderInfo } from "@/lib/wallet-rpc";
 import { rpc } from '@/lib/client-rpc';
+import { stakeTrade } from '@/lib/stake-trade-client';
+import { TotpField } from '@/components/ui/TotpField';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -40,8 +43,10 @@ interface NFTListing {
 
 function resolveUri(raw: string | null): string | null {
   if (!raw) return null;
-  if (raw.startsWith("ipfs://")) return "https://ipfs.io/ipfs/" + raw.slice(7);
-  return raw;
+  // Chain-controlled URIs are whitelist-filtered (https/ipfs/data:image) —
+  // never rendered raw into <img src>.
+  const mapped = raw.startsWith("ipfs://") ? "https://ipfs.io/ipfs/" + raw.slice(7) : raw;
+  return safeImageUri(mapped);
 }
 
 function friendlyError(err: unknown): string {
@@ -82,11 +87,13 @@ function SellNFTModal({
   const [listPrice, setListPrice] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [totp, setTotp] = useState("");
+  const totpRef = useRef<HTMLInputElement>(null);
 
   const resolvedIcon = resolveUri(nft.iconUri);
   const [iconErrored, setIconErrored] = useState(false);
 
-  const canSubmit = !loading && !!listPrice && parseFloat(listPrice) > 0;
+  const canSubmit = !loading && !!listPrice && parseFloat(listPrice) > 0 && totp.length === 6;
 
   async function handleList(e: React.FormEvent) {
     e.preventDefault();
@@ -95,15 +102,26 @@ function SellNFTModal({
     try {
       await submitWithToast(async () => {
         const addrRes = await rpc<{ address: string }>("address_new", { account: 0 });
-        const res = await rpc<{ tx_id: string }>("order_create", {
-          account: 0,
-          give: { type: "Token", content: { id: nft.tokenId, amount: { atoms: "1" } } },
-          ask:  { type: "Coin",  content: { amount: { decimal: listPrice } } },
-          conclude_address: addrRes.address,
-          options: {},
-        });
-        return res.tx_id;
+        const r = await stakeTrade({
+          action: "order_create",
+          params: {
+            account: 0,
+            give: { type: "Token", content: { id: nft.tokenId, amount: { atoms: "1" } } },
+            ask:  { type: "Coin",  content: { amount: { decimal: listPrice } } },
+            conclude_address: addrRes.address,
+            options: {},
+          },
+        }, totp);
+        if (!r.ok) {
+          if (r.code_consumed) {
+            setTotp("");
+            setTimeout(() => totpRef.current?.focus(), 0);
+          }
+          throw new Error(r.error);
+        }
+        return r.results[0]?.tx_id as string ?? "submitted";
       }, watchTx);
+      setTotp("");
       onDone();
     } catch (err) {
       setError(friendlyError(err));
@@ -179,10 +197,12 @@ function SellNFTModal({
           </div>
 
           {error && (
-            <div className="rounded-lg border border-red-700 bg-red-900/30 p-3 text-red-300 text-sm">
+            <div className="rounded-lg border border-red-700 bg-red-900/30 p-3 text-red-300 text-sm" role="alert">
               {error}
             </div>
           )}
+
+          <TotpField value={totp} onChange={setTotp} inputRef={totpRef} disabled={loading} />
 
           <div className="flex gap-3">
             <button
@@ -228,23 +248,37 @@ function NFTImage({ uri, name }: { uri: string | null; name: string }) {
   );
 }
 
-function BuyButton({ listing, onDone }: { listing: NFTListing; onDone: () => void }) {
+function BuyButton({ listing, onDone, totp, onTotpConsumed }: {
+  listing: NFTListing;
+  onDone: () => void;
+  totp: string;               // shared marketplace-level 2FA code
+  onTotpConsumed: () => void; // clear + refocus after burn
+}) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const needsTotp = totp.length !== 6;
 
   const handleBuy = async () => {
     setLoading(true);
     setError(null);
     try {
       await submitWithToast(async () => {
-        const res = await rpc<{ tx_id: string }>("order_fill", {
-          account: 0,
-          order_id: listing.orderId,
-          fill_amount_in_ask_currency: { decimal: listing.priceML },
-          output_address: null,
-          options: {},
-        });
-        return res.tx_id;
+        const r = await stakeTrade({
+          action: "order_fill",
+          params: {
+            account: 0,
+            order_id: listing.orderId,
+            fill_amount_in_ask_currency: { decimal: listing.priceML },
+            output_address: null,
+            options: {},
+          },
+        }, totp);
+        if (!r.ok) {
+          if (r.code_consumed) onTotpConsumed();
+          throw new Error(r.error);
+        }
+        onTotpConsumed(); // burned - clear the field
+        return r.results[0]?.tx_id as string ?? "submitted";
       }, watchTx);
       onDone();
     } catch (err) {
@@ -258,31 +292,42 @@ function BuyButton({ listing, onDone }: { listing: NFTListing; onDone: () => voi
     <div>
       <button
         onClick={handleBuy}
-        disabled={loading}
+        disabled={loading || needsTotp}
+        title={needsTotp ? "Enter your 2FA code above to buy" : undefined}
         className="w-full rounded-lg bg-mint-700 hover:bg-mint-600 px-4 py-2 text-sm font-semibold text-white transition-colors disabled:opacity-50"
       >
         {loading ? "Buying…" : `Buy for ${listing.priceML} ML`}
       </button>
-      {error && <p className="mt-1.5 text-xs text-red-400">{error}</p>}
+      {error && <p className="mt-1.5 text-xs text-red-400" role="alert">{error}</p>}
     </div>
   );
 }
 
-function CancelButton({ orderId, onDone }: { orderId: string; onDone: () => void }) {
+function CancelButton({ orderId, onDone, totp, onTotpConsumed }: {
+  orderId: string;
+  onDone: () => void;
+  totp: string;
+  onTotpConsumed: () => void;
+}) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const needsTotp = totp.length !== 6;
 
   const handleCancel = async () => {
     setLoading(true);
     setError(null);
     try {
       await submitWithToast(async () => {
-        const res = await rpc<{ tx_id: string }>("order_conclude", {
-          account: 0,
-          order_id: orderId,
-          options: {},
-        });
-        return res.tx_id;
+        const r = await stakeTrade(
+          { action: "order_conclude", params: { account: 0, order_id: orderId } },
+          totp,
+        );
+        if (!r.ok) {
+          if (r.code_consumed) onTotpConsumed();
+          throw new Error(r.error);
+        }
+        onTotpConsumed(); // burned - clear the field
+        return r.results[0]?.tx_id as string ?? "submitted";
       }, watchTx);
       onDone();
     } catch (err) {
@@ -296,12 +341,13 @@ function CancelButton({ orderId, onDone }: { orderId: string; onDone: () => void
     <div>
       <button
         onClick={handleCancel}
-        disabled={loading}
+        disabled={loading || needsTotp}
+        title={needsTotp ? "Enter your 2FA code above to cancel" : undefined}
         className="w-full rounded-lg bg-red-900/40 hover:bg-red-800/60 border border-red-800 px-3 py-1.5 text-xs font-medium text-red-300 transition-colors disabled:opacity-40"
       >
         {loading ? "Cancelling…" : "Cancel listing"}
       </button>
-      {error && <p className="mt-1.5 text-xs text-red-400">{error}</p>}
+      {error && <p className="mt-1.5 text-xs text-red-400" role="alert">{error}</p>}
     </div>
   );
 }
@@ -311,11 +357,15 @@ function NFTCard({
   showBuy,
   showCancel,
   onAction,
+  totp,
+  onTotpConsumed,
 }: {
   listing: NFTListing;
   showBuy: boolean;
   showCancel: boolean;
   onAction: () => void;
+  totp: string;
+  onTotpConsumed: () => void;
 }) {
   return (
     <div className="rounded-xl bg-gray-900 border border-gray-800 p-4 flex flex-col gap-3">
@@ -332,8 +382,8 @@ function NFTCard({
         <p className="text-xs text-gray-500 font-mono truncate">{listing.nftId.slice(0, 16)}…</p>
       </div>
       <div className="text-sm font-semibold text-mint-400">{listing.priceML} ML</div>
-      {showBuy && <BuyButton listing={listing} onDone={onAction} />}
-      {showCancel && <CancelButton orderId={listing.orderId} onDone={onAction} />}
+      {showBuy && <BuyButton listing={listing} onDone={onAction} totp={totp} onTotpConsumed={onTotpConsumed} />}
+      {showCancel && <CancelButton orderId={listing.orderId} onDone={onAction} totp={totp} onTotpConsumed={onTotpConsumed} />}
     </div>
   );
 }
@@ -360,6 +410,12 @@ export default function NFTMarketplace({
   // My listings state
   const [myListings, setMyListings] = useState<NFTListing[]>([]);
   const [myListingsLoading, setMyListingsLoading] = useState(false);
+
+  // Shared 2FA code for buying (browse tab) and cancelling (sell tab) - both
+  // move funds and burn a code server-side via /api/stake-trade.
+  const [tradeTotp, setTradeTotp] = useState("");
+  const tradeTotpRef = useRef<HTMLInputElement>(null);
+  const consumeTradeTotp = () => { setTradeTotp(""); setTimeout(() => tradeTotpRef.current?.focus(), 0); };
 
   useEffect(() => { loadListings(); }, []);
   useEffect(() => { if (tab === "sell") loadMyListings(); }, [tab]);
@@ -585,16 +641,24 @@ export default function NFTMarketplace({
           )}
 
           {listings.length > 0 && (
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-              {listings.map(listing => (
-                <NFTCard
-                  key={listing.orderId}
-                  listing={listing}
-                  showBuy={!listing.isOwn}
-                  showCancel={false}
-                  onAction={loadListings}
-                />
-              ))}
+            <div className="space-y-3">
+              <TotpField value={tradeTotp} onChange={setTradeTotp} inputRef={tradeTotpRef} />
+              <p className="text-xs text-gray-500 -mt-1">
+                Buying an NFT moves funds and needs your 2FA code.
+              </p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                {listings.map(listing => (
+                  <NFTCard
+                    key={listing.orderId}
+                    listing={listing}
+                    showBuy={!listing.isOwn}
+                    showCancel={false}
+                    onAction={loadListings}
+                    totp={tradeTotp}
+                    onTotpConsumed={consumeTradeTotp}
+                  />
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -673,16 +737,24 @@ export default function NFTMarketplace({
             )}
 
             {myListings.length > 0 && (
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-                {myListings.map(listing => (
-                  <NFTCard
-                    key={listing.orderId}
-                    listing={listing}
-                    showBuy={false}
-                    showCancel={true}
-                    onAction={loadMyListings}
-                  />
-                ))}
+              <div className="space-y-3">
+                <TotpField value={tradeTotp} onChange={setTradeTotp} inputRef={tradeTotpRef} />
+                <p className="text-xs text-gray-500 -mt-1">
+                  Cancelling a listing settles the NFT back to your wallet and needs your 2FA code.
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                  {myListings.map(listing => (
+                    <NFTCard
+                      key={listing.orderId}
+                      listing={listing}
+                      showBuy={false}
+                      showCancel={true}
+                      onAction={loadMyListings}
+                      totp={tradeTotp}
+                      onTotpConsumed={consumeTradeTotp}
+                    />
+                  ))}
+                </div>
               </div>
             )}
           </div>

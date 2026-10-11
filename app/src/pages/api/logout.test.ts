@@ -1,5 +1,12 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+vi.mock('@/lib/prefs-db', () => ({
+  getPref: vi.fn().mockReturnValue(0),
+  setPref: vi.fn(),
+}));
+
 import { POST } from '@/pages/api/logout';
+import { setPref } from '@/lib/prefs-db';
 
 describe('POST /api/logout', () => {
   it('returns 302 redirect to /login', async () => {
@@ -7,6 +14,8 @@ describe('POST /api/logout', () => {
     const res = await POST({ request: req } as Parameters<typeof POST>[0]);
     expect(res.status).toBe(302);
     expect(res.headers.get('Location')).toBe('/login');
+    // Logout must invalidate outstanding tokens, not just clear the cookie.
+    expect(setPref).toHaveBeenCalledWith('auth.session_version', 1);
   });
 
   it('clears the session cookie with Max-Age=0', async () => {

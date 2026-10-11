@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { TokenInfo } from '@/lib/wallet-rpc';
 import { hexToText } from '@/lib/token-utils';
+import { safeImageUri } from '@/lib/safe-uri';
 import { CopyButton } from '@/components/CopyButton';
 import { TokenIdTooltip } from '@/components/TokenIdTooltip';
 import { rpc } from '@/lib/client-rpc';
@@ -60,9 +61,12 @@ function TokenCard({ tokenId, info, explorerBase, isFavourite, onToggleFavourite
     (hexToText(info.content.token_ticker) ?? '???');
   const frozen = !isNFT && info?.type === 'FungibleToken' && info.content.frozen?.type === 'Frozen';
   const locked = !isNFT && info?.type === 'FungibleToken' && info.content.is_locked;
-  const iconUrl = isNFT && info?.type === 'NonFungibleToken'
+  const rawIconUrl = isNFT && info?.type === 'NonFungibleToken'
     ? (info.content.metadata.icon_uri?.text ?? null)
     : (info?.type === 'FungibleToken' ? (info.content.metadata_uri.text ?? null) : null);
+  // Chain-controlled icon URLs must pass the image URI whitelist (https/ipfs/
+  // data:image) — a raw https tracking pixel would leak every viewer's IP.
+  const iconUrl = rawIconUrl ? safeImageUri(rawIconUrl) : null;
   const supplyType = info ? getSupplyType(info) : null;
   const circulatingDisplay = info ? getCirculatingDisplay(info, ticker) : null;
 

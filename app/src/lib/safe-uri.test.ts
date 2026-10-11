@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { safeExternalUri, getIpfsGateway } from '@/lib/safe-uri';
+import { safeExternalUri, safeImageUri, getIpfsGateway } from '@/lib/safe-uri';
 
 describe('safeExternalUri (javascript: URI sink)', () => {
   it('allows https: URLs through unchanged', () => {
@@ -49,4 +49,33 @@ describe('safeExternalUri (javascript: URI sink)', () => {
 
   beforeEach(() => delete process.env.PUBLIC_IPFS_GATEWAY);
   afterEach(() => delete process.env.PUBLIC_IPFS_GATEWAY);
+});
+
+describe('safeImageUri (<img src> sink)', () => {
+  it('allows https: image URLs', () => {
+    expect(safeImageUri('https://cdn.example/icon.png')).toBe('https://cdn.example/icon.png');
+  });
+
+  it('maps ipfs:// URIs through the gateway', () => {
+    expect(safeImageUri('ipfs://QmTest/icon.png')).toBe('https://ipfs.io/ipfs/QmTest/icon.png');
+  });
+
+  it('allows strict data:image/ URIs (self-contained, no network fetch)', () => {
+    expect(safeImageUri('data:image/png;base64,iVBORw0KGgo=')).toBe('data:image/png;base64,iVBORw0KGgo=');
+    expect(safeImageUri('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg"/>')).toBeTruthy();
+  });
+
+  it('blocks non-image data: URIs and data: lookalikes', () => {
+    expect(safeImageUri('data:text/html;base64,PHNjcmlwdD4=')).toBeNull();
+    expect(safeImageUri('data:image')).toBeNull();
+    expect(safeImageUri('dataimage/png')).toBeNull();
+  });
+
+  it('blocks http:, javascript:, vbscript: and garbage (no mixed content, no scheme tricks)', () => {
+    expect(safeImageUri('http://tracker.example/pixel?t=1')).toBeNull();
+    expect(safeImageUri('javascript:alert(1)')).toBeNull();
+    expect(safeImageUri('vbscript:x')).toBeNull();
+    expect(safeImageUri('   ')).toBeNull();
+    expect(safeImageUri('not a url')).toBeNull();
+  });
 });
