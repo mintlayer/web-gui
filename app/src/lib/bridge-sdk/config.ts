@@ -31,3 +31,7 @@ export const getServerBridgeApiUrl = (): string =>
   process.env.BRIDGE_API_URL?.trim() ||
   env.PUBLIC_BRIDGE_API_URL ||
   DEFAULT_BRIDGE_API_URL;
+
+/** Optional CoinGecko demo key for USD price lookups (display only). */
+export const getCoingeckoApiKey = (): string =>
+  env.PUBLIC_COINGECKO_API_KEY ?? '';

@@ -46,3 +46,33 @@ export {
 export type { AddressValidation, BridgeChain } from './addresses';
 export { bech32mDecode, bech32mEncode, toWords, BECH32M_CONST } from './bech32m';
 export type { Bech32mDecoded } from './bech32m';
+export { toGatewayUrl, resolveTokenIcon } from './icons';
+export {
+  resolveTokenMetadata,
+  sanitizeTokenMetadata,
+} from './tokenMetadata';
+export type { TokenMetadata, TokenMetadataLinks } from './tokenMetadata';
+export {
+  fetchUsdPrices,
+  tickerToPriceId,
+  PRICE_ID_BY_TICKER,
+} from './prices';
+export type { UsdPrices } from './prices';
+export {
+  IN_FLIGHT_KEY,
+  IN_FLIGHT_EVENT,
+  DEPOSIT_CONFIRMATIONS,
+  PROGRESS_POLL_MS,
+  saveInFlight,
+  loadInFlight,
+  clearInFlight,
+  getSubscribeUrl,
+  deriveProgress,
+  isTxHashLike,
+  isEthTxHash,
+} from './progress';
+export type {
+  InFlightBridge,
+  BridgeProgress,
+  BridgeProgressKind,
+} from './progress';
