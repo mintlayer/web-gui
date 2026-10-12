@@ -28,6 +28,21 @@ Optional (--profile indexer):
 
 - [Docker](https://docs.docker.com/get-docker/) with the Compose plugin (v2) or `docker-compose` (v1)
 
+### Browser support
+
+The UI is built with Tailwind CSS 4 and modern CSS (cascade layers, `color-mix()`),
+which sets the minimum supported browsers:
+
+| Browser | Minimum version |
+| --- | --- |
+| Chrome / Edge | 111+ |
+| Firefox | 128+ |
+| Safari (macOS) | 16.4+ |
+| Safari (iOS) | 16.4+ |
+
+Older releases — in particular Safari 16.3 and earlier — may render, but are untested
+and unsupported.
+
 ---
 
 ## Running
