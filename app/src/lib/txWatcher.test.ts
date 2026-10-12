@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Tests for txWatcher.ts - client-side EventSource-based TX confirmation.
  * Environment: jsdom (EventSource is a browser API).

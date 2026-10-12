@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Tests for StakingControl - start/stop staking toggle component.
  * Uses MSW to intercept /api/rpc fetch calls.
