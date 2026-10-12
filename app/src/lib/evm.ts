@@ -14,6 +14,7 @@ import { BrowserProvider, Contract, formatUnits, parseUnits } from 'ethers';
 export const ERC20_ABI = [
   'function balanceOf(address owner) view returns (uint256)',
   'function approve(address spender, uint256 amount) returns (bool)',
+  'function allowance(address owner, address spender) view returns (uint256)',
   'function decimals() view returns (uint8)',
 ];
 
@@ -162,14 +163,44 @@ export async function depositToBridge(
   mintlayerAddress: string,
   onProgress?: (phase: 'approve' | 'deposit') => void,
 ): Promise<string> {
+  if (!bridgeContractAddress) {
+    throw new Error('Bridge contract address is not configured.');
+  }
   const p = provider();
   const signer = await p.getSigner();
-  const amountWei = parseUnits(amount, decimals);
 
   const token = new Contract(tokenAddress, ERC20_ABI, signer);
-  onProgress?.('approve');
-  const approveTx = await token.approve(bridgeContractAddress, amountWei);
-  await approveTx.wait();
+  // The chain is the source of truth for decimals — many bridgeable
+  // tokens (USDC et al.) are not 18, and the config carries no value.
+  let resolvedDecimals = decimals;
+  try {
+    const onChain = await token.decimals();
+    if (Number.isInteger(onChain) && onChain >= 0 && onChain <= 36) {
+      resolvedDecimals = onChain;
+    }
+  } catch {
+    /* keep the caller-provided fallback */
+  }
+  const amountWei = parseUnits(amount, resolvedDecimals);
+
+  // Skip the approve round-trip when the bridge already has enough
+  // allowance for this deposit (reads can fail on some providers —
+  // fall through to a fresh approve, the previous behaviour).
+  let needsApproval = true;
+  try {
+    const bridge = new Contract(bridgeContractAddress, BRIDGE_DEPOSIT_ABI, signer);
+    const owner = await signer.getAddress();
+    const spender = await bridge.getAddress();
+    const allowance = (await token.allowance(owner, spender)) as bigint;
+    needsApproval = allowance < amountWei;
+  } catch {
+    needsApproval = true;
+  }
+  if (needsApproval) {
+    onProgress?.('approve');
+    const approveTx = await token.approve(bridgeContractAddress, amountWei);
+    await approveTx.wait();
+  }
 
   const bridge = new Contract(bridgeContractAddress, BRIDGE_DEPOSIT_ABI, signer);
   onProgress?.('deposit');
