@@ -73,7 +73,7 @@ describe('bitcoin-wallet client', () => {
     const res = await createBitcoinWallet('a b c');
     expect(res.mnemonic).toBe('a b c');
     const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
-    expect((init.body as string)).toBe(JSON.stringify({ seed: 'a b c' }));
+    expect((init.body as string)).toBe(JSON.stringify({ seed: 'a b c', scan_from: null }));
   });
 
   it('createBitcoinWalletFromSeedWithRetry retries transient 503s and succeeds', async () => {
@@ -86,7 +86,7 @@ describe('bitcoin-wallet client', () => {
     const res = await createBitcoinWalletFromSeedWithRetry('same seed', { delayMs: 1 });
     expect(res.created).toBe(true);
     expect(mockFetch).toHaveBeenCalledTimes(2);
-    expect(JSON.parse(mockFetch.mock.calls[1][1]!.body as string)).toEqual({ seed: 'same seed' });
+    expect(JSON.parse(mockFetch.mock.calls[1][1]!.body as string)).toEqual({ seed: 'same seed', scan_from: null });
   });
 
   it('createBitcoinWalletFromSeedWithRetry never retries deterministic 4xx errors', async () => {

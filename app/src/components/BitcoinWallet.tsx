@@ -60,8 +60,6 @@ const input = 'w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-10
 const primaryBtn = 'rounded-lg bg-mint-700 hover:bg-mint-600 px-4 py-2 text-sm font-semibold text-white transition-colors disabled:opacity-50';
 
 const totpInput = `${input} max-w-[8rem] tracking-[0.3em] text-center`;
-const totpLabel = 'Web login is protected by 2FA — moving funds requires a fresh authenticator code.';
-
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | null }) {
@@ -78,6 +76,11 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
   const [restoreOpen, setRestoreOpen] = useState(false);
   const [restoreSeed, setRestoreSeed] = useState('');
   const [setupError, setSetupError] = useState<string | null>(null);
+
+  // Link to the Mintlayer seed (server-side reveal — words never transit the browser)
+  const [linkPassword, setLinkPassword] = useState('');
+  const [linkTotp, setLinkTotp] = useState('');
+  const [linkError, setLinkError] = useState<string | null>(null);
 
   // Send form
   const [sendTo, setSendTo] = useState('');
@@ -145,6 +148,29 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
       // six digits in the field for the user to blindly resubmit.
       setSetupTotp('');
       setSetupError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Derive the BTC wallet from the Mintlayer wallet's own seed. The
+   *  mnemonic is read server-side (wallet-rpc → sidecar) and never sent
+   *  to the browser; this call only carries the password + 2FA code. */
+  async function linkSeed() {
+    setBusy(true);
+    setLinkError(null);
+    try {
+      await api<Record<string, unknown>>('/api/bitcoin/link-seed', {
+        method: 'POST',
+        body: JSON.stringify({ password: linkPassword, totp_code: linkTotp.trim() }),
+      });
+      setLinkPassword('');
+      setLinkTotp('');
+      showNotice('BTC wallet linked to your Mintlayer seed. It is now scanning for funds.');
+      await refresh();
+    } catch (err) {
+      setLinkTotp('');
+      setLinkError((err as Error).message);
     } finally {
       setBusy(false);
     }
@@ -364,26 +390,61 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
 
       {/* ── No wallet yet ─────────────────────────────────────────────────────── */}
       {overview.status && !walletExists && !newMnemonic && (
+        <div className="space-y-4">
         <div className={card}>
-          <h2 className="text-base font-semibold text-gray-100 mb-2">Set up your BTC wallet</h2>
+          <h2 className="text-base font-semibold text-gray-100 mb-2">Use my Mintlayer seed</h2>
           <p className="text-sm text-gray-400 mb-4">
-            Recommended: restore with the <span className="text-gray-200 font-medium">same seed phrase as your Mintlayer wallet</span> —
+            Recommended: derive the BTC wallet from the <span className="text-gray-200 font-medium">same seed phrase as your Mintlayer wallet</span> —
             one seed, both chains (Bitcoin keys derive via BIP84 from the same words).
-            <span className="text-yellow-400"> The words are then stored by the BTC sidecar on this machine.</span>
+            Your password and 2FA code are verified on the server; the words themselves never leave it.
           </p>
-          <p className="mt-4 text-xs text-gray-500">{totpLabel}</p>
-          <div className="mt-2 mb-4">
-            <label htmlFor="btc-setup-totp" className="block text-xs text-gray-400 mb-1">2FA code</label>
-            <input
-              id="btc-setup-totp"
-              value={setupTotp}
-              onChange={(e) => setSetupTotp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-              placeholder="123456"
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              className={totpInput}
-            />
-          </div>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void linkSeed();
+            }}
+            className="space-y-3"
+          >
+            <div>
+              <label htmlFor="btc-link-password" className="block text-xs text-gray-400 mb-1">Mintlayer wallet password</label>
+              <input
+                id="btc-link-password"
+                type="password"
+                value={linkPassword}
+                onChange={(e) => setLinkPassword(e.target.value)}
+                autoComplete="current-password"
+                className={`${input} max-w-md`}
+              />
+            </div>
+            <div>
+              <label htmlFor="btc-link-totp" className="block text-xs text-gray-400 mb-1">2FA code</label>
+              <input
+                id="btc-link-totp"
+                value={linkTotp}
+                onChange={(e) => setLinkTotp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                placeholder="123456"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                className={totpInput}
+              />
+              <p className="mt-1 text-xs text-gray-500">Moving key material requires a fresh authenticator code.</p>
+            </div>
+            {linkError && <p className="text-sm text-red-400">{linkError}</p>}
+            <button type="submit" disabled={busy || linkTotp.length !== 6 || linkPassword === ''} className={primaryBtn}>
+              {busy ? 'Linking…' : 'Link BTC wallet to my Mintlayer seed'}
+            </button>
+          </form>
+          <p className="mt-3 text-xs text-gray-500">
+            The BTC wallet scans the full chain so coins received before today are found too.
+          </p>
+        </div>
+
+        <div className={card}>
+          <h2 className="text-base font-semibold text-gray-100 mb-2">Or restore from a different seed</h2>
+          <p className="text-sm text-gray-400 mb-4">
+            Use a <span className="text-gray-200 font-medium">different 12 or 24-word seed phrase</span> for the BTC wallet.
+            The words are then stored by the BTC sidecar on this machine.
+          </p>
           <button onClick={() => { setRestoreOpen(true); setSetupError(null); }} disabled={busy} className={`${primaryBtn} mb-4`}>
             Restore from seed
           </button>
@@ -398,6 +459,7 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
             </button>
           </div>
           {setupError && <p className="mt-2 text-sm text-red-400">{setupError}</p>}
+        </div>
         </div>
       )}
 

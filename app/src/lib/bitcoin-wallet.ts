@@ -146,11 +146,16 @@ async function sidecarRequest<T>(
 // ── Wallet lifecycle ──────────────────────────────────────────────────────────
 
 /** Create the BTC wallet (generated seed, or restore from the given mnemonic). */
-export function createBitcoinWallet(seed?: string): Promise<BitcoinCreateResult> {
+export function createBitcoinWallet(
+  seed?: string,
+  scanFrom?: number,
+): Promise<BitcoinCreateResult> {
   return sidecarRequest('/wallet', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ seed: seed ?? null }),
+    // scan_from narrows the sync horizon for brand-new seeds; absent →
+    // the sidecar defaults restores to a full scan from block 0.
+    body: JSON.stringify({ seed: seed ?? null, scan_from: scanFrom ?? null }),
   });
 }
 
@@ -164,14 +169,14 @@ export function createBitcoinWallet(seed?: string): Promise<BitcoinCreateResult>
  */
 export async function createBitcoinWalletFromSeedWithRetry(
   seed: string,
-  opts: { attempts?: number; delayMs?: number } = {},
+  opts: { attempts?: number; delayMs?: number; scanFrom?: number } = {},
 ): Promise<BitcoinCreateResult> {
   const attempts = Math.max(1, opts.attempts ?? 3);
   const delayMs = opts.delayMs ?? 3_000;
   let lastErr: unknown;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
-      return await createBitcoinWallet(seed);
+      return await createBitcoinWallet(seed, opts.scanFrom);
     } catch (err) {
       lastErr = err;
       const retryable =

@@ -134,11 +134,11 @@ fn now_unix() -> u64 {
         .as_secs()
 }
 
-fn save_seed(path: &PathBuf, mnemonic: &str, network: Network) -> Result<()> {
+fn save_seed(path: &PathBuf, mnemonic: &str, network: Network, created_at: u64) -> Result<()> {
     let file = SeedFile {
         mnemonic: mnemonic.to_string(),
         network: network_name(network).to_string(),
-        created_at: now_unix(),
+        created_at,
     };
     // create_new + 0600 from the start: no window where the mnemonic sits on
     // disk with default (world-readable) permissions before the chmod lands.
@@ -407,6 +407,11 @@ async fn open_wallet(state: &Arc<AppState>, mnemonic: &str, created_at: u64) -> 
 struct CreateWalletReq {
     /// Optional BIP39 mnemonic to restore. Generated when absent.
     seed: Option<String>,
+    /// Sync horizon override (unix secs). Restores default to 0 - a full
+    /// scan - because addresses derived from an existing seed may hold
+    /// UTXOs from before the wallet was created. Freshly generated seeds
+    /// use "now" and callers may narrow a restore with an explicit value.
+    scan_from: Option<u64>,
 }
 
 /// POST /wallet - create the wallet from an optional seed.
@@ -441,11 +446,21 @@ async fn create_wallet(
         },
     };
 
-    if let Err(e) = save_seed(&state.seed_path(), &mnemonic, state.config.network) {
+    // Freshly generated seeds have no history - sync from now. Restores
+    // (including linking an existing Mintlayer seed) must see every block:
+    // addresses derived from the same words may hold old UTXOs, so the
+    // horizon defaults to 0 (full scan) unless the caller narrows it.
+    let created_at = if req.seed.is_none() {
+        now_unix()
+    } else {
+        req.scan_from.unwrap_or(0)
+    };
+
+    if let Err(e) = save_seed(&state.seed_path(), &mnemonic, state.config.network, created_at) {
         return internal_error(e.context("persisting seed"));
     }
 
-    match open_wallet(&state, &mnemonic, now_unix()).await {
+    match open_wallet(&state, &mnemonic, created_at).await {
         Ok(()) => {
             // Echo the mnemonic ONLY when we generated it. For restores the
             // user already knows their seed - never serve it back.
