@@ -56,6 +56,17 @@ describe('safeImageUri (<img src> sink)', () => {
     expect(safeImageUri('https://cdn.example/icon.png')).toBe('https://cdn.example/icon.png');
   });
 
+  it('allows same-origin gateway paths (bridge-sdk metadata pipeline)', () => {
+    expect(safeImageUri('/ipfs/QmTest')).toBe('/ipfs/QmTest');
+    expect(safeImageUri('  /ipfs/bafyabc/icon.png  ')).toBe('/ipfs/bafyabc/icon.png');
+  });
+
+  it('rejects protocol-relative and backslash path forms', () => {
+    // '//' would be a cross-origin URL; backslashes can smuggle a host.
+    expect(safeImageUri('//evil.example/icon.png')).toBeNull();
+    expect(safeImageUri('/\\evil.example')).toBeNull();
+  });
+
   it('maps ipfs:// URIs through the gateway', () => {
     expect(safeImageUri('ipfs://QmTest/icon.png')).toBe('https://ipfs.io/ipfs/QmTest/icon.png');
   });
