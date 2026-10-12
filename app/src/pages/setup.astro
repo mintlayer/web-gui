@@ -46,10 +46,16 @@ let result: SetupResult = { action: 'none' };
 // (or restored) with. Non-fatal - setup still succeeds when the sidecar is
 // unreachable; the Bitcoin page offers its own create/restore as a fallback.
 // Failures are logged server-side so silent misses are diagnosable.
-async function initBtcWalletFromSeed(mnemonic: string): Promise<string | undefined> {
+// scanFrom narrows the BTC sync horizon: a freshly generated seed has no
+// BTC history (start at now); an imported mnemonic may hold old UTXOs
+// (undefined → the sidecar scans from block 0).
+async function initBtcWalletFromSeed(
+  mnemonic: string,
+  scanFrom?: number,
+): Promise<string | undefined> {
   if (!isBitcoinEnabled() || !mnemonic.trim()) return undefined;
   try {
-    await createBitcoinWalletFromSeedWithRetry(mnemonic);
+    await createBitcoinWalletFromSeedWithRetry(mnemonic, { scanFrom });
     console.info('[setup] BTC wallet initialized from the setup seed');
     return 'The same seed was configured for the BTC wallet (see the Bitcoin page).';
   } catch (err) {
@@ -100,7 +106,10 @@ if (Astro.request.method === 'POST') {
         const res = await createWallet(WALLET_PATH, storeSeed, undefined, noPassword ? undefined : passphrase);
         const mnemonicStr =
           res.mnemonic.type === 'NewlyGenerated' ? res.mnemonic.content.mnemonic : '';
-        const btcNote = await initBtcWalletFromSeed(mnemonicStr);
+        const btcNote = await initBtcWalletFromSeed(
+          mnemonicStr,
+          Math.floor(Date.now() / 1000),
+        );
         result = { action: 'create_success', mnemonic: mnemonicStr, walletPath: WALLET_PATH, btcNote };
       } catch (err) {
         result = { action: 'error', message: friendlyWalletError((err as Error).message) };
