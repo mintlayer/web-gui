@@ -34,15 +34,12 @@ const MAX_BYTES = 2 * 1024 * 1024;
 const GATEWAY_TIMEOUT_MS = 12_000;
 
 const DEFAULT_GATEWAYS = [
-  'https://ipfs.io/ipfs',
-  'https://gateway.pinata.cloud/ipfs',
-  'https://dweb.link/ipfs',
-  'https://4everland.io/ipfs',
-  // Last resort: the project's own production proxy (R2-backed, same
-  // content-addressed paths). Public gateways now 429 "service worker
-  // only" from many residential networks, so dev environments would
-  // otherwise never see token icons. Same org — no new third party
-  // sees anything, and cached CIDs are immutable.
+  // The project's own production proxy only (R2-backed, same
+  // content-addressed paths, measured 200 in <1s). Public IPFS gateways
+  // are unreliable from residential networks (429 "service worker only",
+  // multi-second hangs) and we don't fall back to them by default. The
+  // list stays env-overridable (IPFS_GATEWAY_URLS) and the failover loop
+  // stays in place for operator-added mirrors.
   'https://bridge.mintlayer.org/ipfs',
 ];
 
