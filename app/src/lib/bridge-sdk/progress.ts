@@ -211,7 +211,10 @@ export const deriveProgress = (
   request: BridgeRequestDetail,
 ): BridgeProgress => {
   const raw = request as unknown as Record<string, unknown>;
-  const rawStatus = String(raw.status ?? '').toLowerCase();
+  // Capped — rawStatus is persisted and rendered as a chip label.
+  const rawStatus = String(raw.status ?? '')
+    .toLowerCase()
+    .slice(0, 64);
   const confirmed = depositConfirmed(request);
   const mlTxHash = findHash(raw, [
     'withdrawal_transaction_hash',

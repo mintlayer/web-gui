@@ -168,9 +168,18 @@ export async function resolveTokenMetadata(
   const metadataUri = info.metadata_uri?.string ?? info.icon_uri?.string;
   if (!metadataUri) return null;
 
+  // Scheme allowlist before any fetch: the metadata document is chosen
+  // by the token issuer, and fetching it from every viewer's browser
+  // would otherwise double as a tracking beacon. Only IPFS (via the
+  // same-origin gateway) and https are fetchable.
+  const trimmed = metadataUri.trim();
+  if (!trimmed.startsWith('ipfs:') && !trimmed.startsWith('https:')) {
+    return null;
+  }
+
   try {
     const raw = await apiRequest<unknown>(
-      toGatewayUrl(metadataUri),
+      toGatewayUrl(trimmed),
       {},
       fetchImpl,
     );

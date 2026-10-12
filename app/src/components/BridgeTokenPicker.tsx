@@ -36,8 +36,11 @@ function TokenIcon({ metadata, ticker }: { metadata: TokenMetadata | null; ticke
       </span>
     );
   }
+  // Key by src: when one token's icon 404s, a different token rendered
+  // by the same instance (picker switch) must retry the image.
   return (
     <img
+      key={src}
       src={src}
       alt=""
       width={24}

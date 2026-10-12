@@ -159,7 +159,6 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
   const [trackedRequest, setTrackedRequest] = useState<BridgeRequestDetail | null>(null);
   const [historyToken, setHistoryToken] = useState(0);
   const wsThrottleRef = useRef(0);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // Synchronous double-submit guard: between the confirm dialog and the first
   // setPhase the async submits leave `busy` false, so the button alone can't
   // stop a double click from creating two deposits.
@@ -276,7 +275,11 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
   const directionFees = direction === 'e2m' ? assetFees?.to_ml : assetFees?.to_eth;
 
   // ── Display metadata + USD prices (strictly display-only) ────────────────
-  const [metaMap, setMetaMap] = useState<Record<string, TokenMetadata | null>>({});
+  // Null prototype: a hostile config ticker must not be able to touch
+  // Object.prototype ('__proto__', 'constructor', …).
+  const [metaMap, setMetaMap] = useState<Record<string, TokenMetadata | null>>(
+    () => Object.create(null),
+  );
   const [usdPrice, setUsdPrice] = useState<number | null>(null);
 
   useEffect(() => {
@@ -288,7 +291,8 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
     ).then((entries) => {
       if (cancelled) return;
       setMetaMap((prev) => {
-        const next = { ...prev };
+        const next: Record<string, TokenMetadata | null> = Object.create(null);
+        Object.assign(next, prev);
         for (const [ticker, meta] of entries) next[ticker] = meta;
         return next;
       });
@@ -374,37 +378,13 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
       if (max !== undefined && /^\d+(\.\d+)?$/.test(max)) {
         target = Math.min(target, parseFloat(max));
       }
-      // Trim float noise without dragging in a decimal library.
-      setAmount(target.toFixed(8).replace(/\.?0+$/, ''));
+      // Truncate toward zero at 8 dp — rounding could exceed the real
+      // balance by dust and guarantee a MetaMask revert on Max.
+      const scaled = Math.floor(target * 1e8) / 1e8;
+      setAmount(scaled.toFixed(8).replace(/\.?0+$/, ''));
     },
     [ethBalance, asset?.maxAmountPerRequest],
   );
-
-  function stopPolling() {
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-  }
-
-  function pollRequest(uuid: string) {
-    stopPolling();
-    setPhase('polling');
-    pollRef.current = setInterval(async () => {
-      try {
-        const detail: BridgeRequestDetail = await sdk.getBridgeRequest(uuid);
-        const status = String(detail.status ?? 'pending');
-        if (status === 'completed' || status === 'failed' || status === 'manual') {
-          stopPolling();
-          setPhase(status === 'completed' ? 'done' : status === 'manual' ? 'manual' : 'failed');
-        }
-      } catch {
-        /* transient poll errors are retried on the next tick */
-      }
-    }, 10_000);
-  }
-
-  useEffect(() => stopPolling, []);
 
   /** Persist a freshly broadcast bridge so the card survives refreshes. */
   function trackRequest(uuid: string, txHash: string) {
@@ -518,6 +498,7 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
     setTracked(null);
     setTrackedProgress(null);
     setTrackedRequest(null);
+    setPhase('idle');
   }
 
   function resetForm() {
@@ -600,6 +581,10 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
         return;
       }
     }
+    const bridgeContract =
+      config?.eth_flavor_specific_config?.[flavor]?.bridge_contract_address ??
+      config?.eth_flavor_specific_config?.['']?.bridge_contract_address ??
+      '';
     const feeSummary = directionFees
       ? (() => {
           const total = totalFee(directionFees.fixed_fee, amount.trim(), directionFees.percentage_fee ?? '');
@@ -608,7 +593,7 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
       : '';
     if (
       !window.confirm(
-        `Bridge ${amount.trim()} ${assetTicker}\n${sourceChain} → ${destinationChain}\nReceiver: ${receiver.trim()}${feeSummary}\n\nThis cannot be undone. Continue?`,
+        `Bridge ${amount.trim()} ${assetTicker}\n${sourceChain} → ${destinationChain}\nReceiver: ${receiver.trim()}${feeSummary}${direction === 'e2m' ? `\nBridge contract: ${bridgeContract}` : ''}\n\nThis cannot be undone. Continue?`,
       )
     ) {
       return;
@@ -622,10 +607,11 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
         if (!ethAccount) throw new Error('Connect MetaMask first.');
         if (!asset.ethAddress) throw new Error('No Ethereum token configured for this asset.');
         await switchChainIfNeeded();
+        if (!bridgeContract) {
+          throw new Error('Bridge contract address is not configured.');
+        }
         const txHash = await depositToBridge(
-          config?.eth_flavor_specific_config?.[flavor]?.bridge_contract_address ??
-            config?.eth_flavor_specific_config?.['']?.bridge_contract_address ??
-            '',
+          bridgeContract,
           asset.ethAddress,
           amount.trim(),
           18,

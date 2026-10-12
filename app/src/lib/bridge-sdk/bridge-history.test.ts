@@ -75,16 +75,21 @@ describe('bridge history', () => {
 
   it('drops type-confused entries instead of crashing', () => {
     store[HISTORY_KEY] = JSON.stringify([
-      { uuid: 'ok', direction: 'm2e', asset: 'ml', amount: '1', receiver: '0xabc', startedAt: 'now' },
+      { uuid: 'ok', direction: 'm2e', asset: 'ml', amount: '1', receiver: '0xabc', startedAt: '2026-01-01T00:00:00Z' },
       { uuid: 42, direction: 'e2m' },
       'garbage',
       { direction: 'e2m' },
-      { uuid: 'bad-dir', direction: 'sideways', asset: 'ml', amount: '1', receiver: 'x', startedAt: 'now' },
+      { uuid: 'bad-dir', direction: 'sideways', asset: 'ml', amount: '1', receiver: 'x', startedAt: '2026-01-01T00:00:00Z' },
     ]);
     const all = listHistory();
-    // Only the fully valid entry survives; unknown directions are rejected.
+    // Only the fully valid entry survives; unknown directions and junk
+    // dates are rejected.
     expect(all).toHaveLength(1);
     expect(all[0]?.uuid).toBe('ok');
+    store[HISTORY_KEY] = JSON.stringify([
+      { uuid: 'junk-date', direction: 'e2m', asset: 'ml', amount: '1', receiver: 'x', startedAt: 'not-a-date' },
+    ]);
+    expect(listHistory()).toHaveLength(0);
   });
 
   it('survives corrupt JSON and a missing store', () => {

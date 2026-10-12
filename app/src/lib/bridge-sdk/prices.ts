@@ -131,7 +131,8 @@ export async function fetchUsdPrices(
     );
     if (typeof raw !== 'object' || raw === null) return prices;
 
-    const nextCache = { ...cache };
+    const nextCache: PriceCache = Object.create(null);
+    Object.assign(nextCache, cache);
     Object.entries(raw as Record<string, unknown>).forEach(([id, entry]) => {
       const usd =
         missing.includes(id) && typeof entry === 'object' && entry !== null

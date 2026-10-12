@@ -32,7 +32,13 @@ function asEntry(raw: unknown): BridgeHistoryEntry | null {
   if (typeof e.asset !== 'string' || e.asset.length === 0) return null;
   if (typeof e.amount !== 'string') return null;
   if (typeof e.receiver !== 'string') return null;
-  if (typeof e.startedAt !== 'string') return null;
+  // startedAt renders via toLocaleDateString — reject junk up front.
+  if (
+    typeof e.startedAt !== 'string' ||
+    Number.isNaN(Date.parse(e.startedAt))
+  ) {
+    return null;
+  }
   const entry: BridgeHistoryEntry = {
     uuid: e.uuid,
     direction: e.direction,
@@ -71,11 +77,14 @@ export function appendHistory(entry: BridgeHistoryEntry): void {
 }
 
 /** Updates the cached status of one entry, if present. */
+/** Cached last-known status, capped so a hostile API can't bloat rows. */
+const MAX_STATUS_LENGTH = 40;
+
 export function updateHistoryStatus(uuid: string, status: string): void {
   const all = listHistory();
   const hit = all.find((e) => e.uuid === uuid);
   if (!hit) return;
-  hit.status = status;
+  hit.status = status.slice(0, MAX_STATUS_LENGTH);
   try {
     localStorage.setItem(HISTORY_KEY, JSON.stringify(all));
   } catch {
