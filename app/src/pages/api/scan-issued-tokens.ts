@@ -18,6 +18,7 @@ import { createHash } from 'node:crypto';
 import { rpcCall } from '@/lib/wallet-rpc';
 import { hexToText } from '@/lib/token-utils';
 import { json } from '@/lib/api-utils';
+import { encodeWords, toWords } from '@/lib/bech32';
 
 // ── Network HRP ───────────────────────────────────────────────────────────────
 
@@ -30,60 +31,6 @@ const TOKEN_ID_HRP: Record<string, string> = {
 };
 const hrp = TOKEN_ID_HRP[NETWORK] ?? 'mmltk';
 
-// ── Bech32m encoding ──────────────────────────────────────────────────────────
-
-const BECH32_CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
-const BECH32M_CONST = 0x2bc830a3;
-
-function bech32Polymod(values: number[]): number {
-  const GEN = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
-  let chk = 1;
-  for (const v of values) {
-    const b = chk >> 25;
-    chk = ((chk & 0x1ffffff) << 5) ^ v;
-    for (let i = 0; i < 5; i++) {
-      chk ^= (b >> i) & 1 ? GEN[i] : 0;
-    }
-  }
-  return chk;
-}
-
-function bech32HrpExpand(hrpStr: string): number[] {
-  const result: number[] = [];
-  for (let i = 0; i < hrpStr.length; i++) result.push(hrpStr.charCodeAt(i) >> 5);
-  result.push(0);
-  for (let i = 0; i < hrpStr.length; i++) result.push(hrpStr.charCodeAt(i) & 31);
-  return result;
-}
-
-function bech32mCreateChecksum(hrpStr: string, data: number[]): number[] {
-  const values = bech32HrpExpand(hrpStr).concat(data).concat([0, 0, 0, 0, 0, 0]);
-  const polymod = bech32Polymod(values) ^ BECH32M_CONST;
-  return [5, 4, 3, 2, 1, 0].map(i => (polymod >> (5 * i)) & 31);
-}
-
-function convertbits(data: number[], frombits: number, tobits: number, pad: boolean): number[] {
-  let acc = 0, bits = 0;
-  const result: number[] = [];
-  const maxv = (1 << tobits) - 1;
-  for (const value of data) {
-    acc = ((acc << frombits) | value) & 0xfffff;
-    bits += frombits;
-    while (bits >= tobits) {
-      bits -= tobits;
-      result.push((acc >> bits) & maxv);
-    }
-  }
-  if (pad && bits > 0) result.push((acc << (tobits - bits)) & maxv);
-  return result;
-}
-
-function bech32mEncode(hrpStr: string, bytes: Uint8Array): string {
-  const data5 = convertbits(Array.from(bytes), 8, 5, true);
-  const checksum = bech32mCreateChecksum(hrpStr, data5);
-  return hrpStr + '1' + [...data5, ...checksum].map(d => BECH32_CHARSET[d]).join('');
-}
-
 // ── Token ID computation ──────────────────────────────────────────────────────
 
 function computeTokenId(prevTxIdHex: string, prevOutputIndex: number): string | null {
@@ -95,7 +42,7 @@ function computeTokenId(prevTxIdHex: string, prevOutputIndex: number): string | 
     // SCALE encode: [TxInput::Utxo=0x00][OutPointSourceId::Transaction=0x00][32 bytes][4 bytes LE]
     const encoded = Buffer.concat([Buffer.from([0x00, 0x00]), txIdBytes, indexBytes]);
     const hash64 = createHash('blake2b512').update(encoded).digest();
-    return bech32mEncode(hrp, hash64.subarray(0, 32));
+    return encodeWords(hrp, toWords(hash64.subarray(0, 32)));
   } catch {
     return null;
   }

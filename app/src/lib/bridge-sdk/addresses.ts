@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import { bech32mDecode } from './bech32m';
+import { decode as bech32mDecode, hrpForNetwork } from '../bech32';
 
 export type BridgeChain = 'ML' | 'ETH';
 
@@ -10,13 +10,10 @@ export interface AddressValidation {
 }
 
 export const ML_MAINNET_HRP = 'mtc';
-export const ML_TESTNET_HRP = 'tmtc';
+export const ML_TESTNET_HRP = 'tmt';
 
-const hrpForNetwork = (network?: 'mainnet' | 'testnet'): string | null => {
-  if (network === 'mainnet') return ML_MAINNET_HRP;
-  if (network === 'testnet') return ML_TESTNET_HRP;
-  return null;
-};
+const mlHrpForNetwork = (network?: 'mainnet' | 'testnet'): string | null =>
+  hrpForNetwork('ml', network ?? '');
 
 /**
  * Validates an EVM address (format + EIP-55 checksum when mixed case).
@@ -39,7 +36,7 @@ export function validateMintlayerAddress(
   network?: 'mainnet' | 'testnet',
 ): AddressValidation {
   const value = address.trim();
-  const expectedHrp = hrpForNetwork(network);
+  const expectedHrp = mlHrpForNetwork(network);
 
   let decoded: { prefix: string; words: number[] };
   try {

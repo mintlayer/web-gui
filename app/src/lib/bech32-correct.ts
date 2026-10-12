@@ -11,9 +11,16 @@
  * addresses.
  */
 
-const CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
-const GEN = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
-const CONSTS = { bech32: 1, bech32m: 0x2bc830a3 } as const;
+import {
+  BECH32_CONST,
+  BECH32M_CONST,
+  CHARSET,
+  hrpExpand,
+  polymod,
+  encodeWords,
+  hrpForNetwork as sharedHrpForNetwork,
+  type Bech32Encoding,
+} from './bech32';
 
 export type Chain = "btc" | "ml";
 
@@ -29,33 +36,11 @@ export interface CorrectionResult {
   reason?: string;
 }
 
-function polymod(values: number[]): number {
-  let chk = 1;
-  for (const v of values) {
-    const top = chk >> 25;
-    chk = ((chk & 0x1ffffff) << 5) ^ v;
-    for (let i = 0; i < 5; i++) if ((top >> i) & 1) chk ^= GEN[i];
-  }
-  return chk;
+function reencode(hrp: string, payload: number[], encoding: Bech32Encoding): string {
+  return encodeWords(hrp, payload, encoding);
 }
 
-function hrpExpand(hrp: string): number[] {
-  const ret: number[] = [];
-  for (const c of hrp) ret.push(c.charCodeAt(0) >> 5);
-  ret.push(0);
-  for (const c of hrp) ret.push(c.charCodeAt(0) & 31);
-  return ret;
-}
-
-function reencode(hrp: string, payload: number[], encoding: "bech32" | "bech32m"): string {
-  const values = hrpExpand(hrp).concat(payload);
-  const chk = polymod(values.concat([0, 0, 0, 0, 0, 0])) ^ CONSTS[encoding];
-  const cs: number[] = [];
-  for (let i = 0; i < 6; i++) cs.push((chk >> (5 * (5 - i))) & 31);
-  return hrp + "1" + payload.concat(cs).map((d) => CHARSET[d]).join("");
-}
-
-function isValidChainPayload(hrp: string, data: number[], encoding: "bech32" | "bech32m", chain: Chain): boolean {
+function isValidChainPayload(_hrp: string, data: number[], encoding: Bech32Encoding, chain: Chain): boolean {
   // `data` includes the 6-symbol checksum: [version, ...program, checksum]
   const version = data[0];
   if (version === undefined || version > 16) return false;
@@ -78,22 +63,9 @@ function isValidChainPayload(hrp: string, data: number[], encoding: "bech32" | "
   return true;
 }
 
-/** Per-network HRPs. */
+/** Per-network HRPs (canonical table lives in @/lib/bech32). */
 export function hrpForNetwork(chain: Chain, network: string): string | null {
-  if (chain === "btc") {
-    switch (network) {
-      case "mainnet": return "bc";
-      case "testnet": return "tb";
-      case "regtest": return "bcrt";
-      case "signet": return "sb";
-      default: return null;
-    }
-  }
-  switch (network) {
-    case "mainnet": return "mtc";
-    case "testnet": return "tmt";
-    default: return null; // ML regtest/signet hrps unverified - daemon validates
-  }
+  return sharedHrpForNetwork(chain, network);
 }
 
 /**
@@ -114,14 +86,12 @@ export function suggestAddressCorrection(
     return { status: "invalid", reason: "invalid characters" };
   }
 
-  // separator = last '1' such that the prefix equals the expected hrp
-  let sep = -1;
-  let idx = lower.indexOf(expectedHrp + "1");
-  while (idx !== -1) {
-    sep = idx + expectedHrp.length;
-    idx = lower.indexOf(expectedHrp + "1", idx + 1);
-  }
-  if (sep < 1 || sep + 7 > lower.length) {
+  // separator = the LAST '1'; the hrp region must equal the expected hrp
+  // exactly (hrp symbols are never correction candidates, so a fuzzy scan
+  // could only ever lock onto a "tmt1"-shaped coincidence inside the data
+  // part of ML addresses and rebuild a garbage hrp).
+  const sep = lower.lastIndexOf("1");
+  if (sep !== expectedHrp.length || lower.slice(0, sep) !== expectedHrp || sep + 7 > lower.length) {
     return { status: "invalid", reason: "bad separator or hrp" };
   }
   const hrp = lower.slice(0, sep);
@@ -136,7 +106,7 @@ export function suggestAddressCorrection(
   const dataStart = hrpExp.length;
 
   for (const encoding of ["bech32", "bech32m"] as const) {
-    const target = CONSTS[encoding];
+    const target = encoding === "bech32" ? BECH32_CONST : BECH32M_CONST;
     const chk = polymod(values) ^ target;
 
     if (chk === 0 && isValidChainPayload(hrp, data, encoding, chain)) {
