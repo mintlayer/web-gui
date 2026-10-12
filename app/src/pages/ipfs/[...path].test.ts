@@ -36,11 +36,18 @@ describe('upstreamForPath', () => {
     ]);
   });
 
-  it('builds one candidate per configured gateway', () => {
-    expect(gatewaysForPath(CID_V0)[0]).toBe(`https://bridge.mintlayer.org/ipfs/${CID_V0}`);
-    expect(gatewaysForPath(CID_V0).length).toBeGreaterThanOrEqual(3);
+  it('defaults to the production proxy only', () => {
+    expect(gatewaysForPath(CID_V0)).toEqual([`https://bridge.mintlayer.org/ipfs/${CID_V0}`]);
   });
 });
+
+/** Two-gateway env for the failover/redirect behaviour tests. */
+function stubTwoGateways() {
+  vi.stubEnv(
+    'IPFS_GATEWAY_URLS',
+    'https://bridge.mintlayer.org/ipfs, https://ipfs.io/ipfs',
+  );
+}
 
 describe('GET /ipfs/[...path]', () => {
   it('404s without a valid CID', async () => {
@@ -76,6 +83,7 @@ describe('GET /ipfs/[...path]', () => {
   });
 
   it('fails over to the next gateway when the first one rejects', async () => {
+    stubTwoGateways();
     const calls: string[] = [];
     vi.stubGlobal(
       'fetch',
@@ -97,7 +105,18 @@ describe('GET /ipfs/[...path]', () => {
     expect(res.headers.get('x-ipfs-gateway')).toBe('ipfs.io');
   });
 
+  it('gives up honestly when the only configured proxy fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('down', { status: 503 })) as unknown as typeof fetch,
+    );
+    const res = await GET(ctx(CID_V0));
+    expect(res.status).toBe(502);
+    expect(res.headers.get('cache-control')).toBe('no-store');
+  });
+
   it('follows same-site redirects but never foreign ones', async () => {
+    stubTwoGateways();
     const subdomain = `https://${CID_V0.toLowerCase()}.ipfs.ipfs.io/ipfs/${CID_V0}`;
     const calls: string[] = [];
     vi.stubGlobal(
