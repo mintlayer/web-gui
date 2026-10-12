@@ -32,6 +32,13 @@ import { suggestAddressCorrection, hrpForNetwork } from '@/lib/bech32-correct';
 import { rpc } from '@/lib/client-rpc';
 import { isPositiveDecimal } from '@/lib/validation';
 import { validateEvmAddress } from '@/lib/bridge-sdk/addresses';
+import {
+  fetchUsdPrices,
+  resolveTokenMetadata,
+  tickerToPriceId,
+  type TokenMetadata,
+} from '@/lib/bridge-sdk';
+import BridgeTokenPicker, { type PickerAsset } from '@/components/BridgeTokenPicker';
 import AddressSuggestion from '@/components/AddressSuggestion';
 
 const sdk = createBridgeSdk();
@@ -275,6 +282,53 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
   const asset = assets.find((a) => a.ticker === assetTicker) ?? null;
   const assetFees = fees?.[assetTicker];
   const directionFees = direction === 'e2m' ? assetFees?.to_ml : assetFees?.to_eth;
+
+  // ── Display metadata + USD prices (strictly display-only) ────────────────
+  const [metaMap, setMetaMap] = useState<Record<string, TokenMetadata | null>>({});
+  const [usdPrice, setUsdPrice] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const missing = assets.filter((a) => a.mlTokenId && !(a.ticker in metaMap));
+    if (missing.length === 0) return;
+    void Promise.all(
+      missing.map(async (a) => [a.ticker, await resolveTokenMetadata(a.mlTokenId!)] as const),
+    ).then((entries) => {
+      if (cancelled) return;
+      setMetaMap((prev) => {
+        const next = { ...prev };
+        for (const [ticker, meta] of entries) next[ticker] = meta;
+        return next;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assets]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setUsdPrice(null);
+    const priceId = tickerToPriceId(assetTicker);
+    if (!priceId) return;
+    void fetchUsdPrices([priceId]).then((prices) => {
+      if (!cancelled && typeof prices[priceId] === 'number') setUsdPrice(prices[priceId]);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [assetTicker]);
+
+  const pickerAssets: PickerAsset[] = useMemo(
+    () =>
+      assets.map((a) => ({
+        ticker: a.ticker,
+        name: metaMap[a.ticker]?.name ?? a.ticker,
+        tags: metaMap[a.ticker]?.tags ?? [],
+      })),
+    [assets, metaMap],
+  );
 
   async function connectWallet() {
     setConnecting(true);
@@ -746,7 +800,20 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
       )}
 
       {/* ── Direction toggle ── */}
-      <div className="grid grid-cols-2 gap-3">
+      <div
+        role="radiogroup"
+        aria-label="Bridge direction"
+        className="grid grid-cols-2 gap-3"
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowLeft' || e.key === 'ArrowUp' || e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+            e.preventDefault();
+            const next: Direction = direction === 'e2m' ? 'm2e' : 'e2m';
+            setDirection(next);
+            setError(null);
+            setInfo(null);
+          }
+        }}
+      >
         {(
           [
             { key: 'e2m', label: 'Ethereum → Mintlayer', sub: 'Deposit ERC20, receive ML tokens' },
@@ -756,6 +823,9 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
           <button
             key={key}
             type="button"
+            role="radio"
+            aria-checked={direction === key}
+            tabIndex={direction === key ? 0 : -1}
             onClick={() => { setDirection(key); setError(null); setInfo(null); }}
             className={`rounded-xl border px-4 py-3 text-left transition-colors ${
               direction === key
@@ -806,13 +876,13 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
       <div className={card + ' space-y-4'}>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label htmlFor="bridge-asset" className="block text-xs text-gray-400 mb-1">Asset</label>
-            <select id="bridge-asset" value={assetTicker} onChange={(e) => setAssetTicker(e.target.value)} className={input}>
-              {assets.map((a) => (
-                <option key={a.ticker} value={a.ticker}>{a.ticker}</option>
-              ))}
-              {assets.length === 0 && <option value="">—</option>}
-            </select>
+            <label id="bridge-asset-label" className="block text-xs text-gray-400 mb-1">Asset</label>
+            <BridgeTokenPicker
+              assets={pickerAssets}
+              value={assetTicker}
+              onChange={(t) => setAssetTicker(t)}
+              metadata={metaMap}
+            />
           </div>
           <div>
             <label htmlFor="bridge-amount" className="block text-xs text-gray-400 mb-1">Amount</label>
@@ -825,6 +895,11 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
               autoComplete="off"
               className={input}
             />
+            {usdPrice !== null && /^\d+(\.\d+)?$/.test(amount.trim()) && parseFloat(amount.trim()) > 0 && (
+              <p className="text-xs text-gray-500 mt-1">
+                ≈ ${(parseFloat(amount.trim()) * usdPrice).toLocaleString(undefined, { maximumFractionDigits: 2 })} USD
+              </p>
+            )}
             {asset?.maxAmountPerRequest && (
               <p className="text-xs text-gray-500 mt-1">
                 Max {asset.maxAmountPerRequest} {assetTicker} per request
@@ -850,6 +925,26 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
             )}
           </div>
         </div>
+
+        {asset && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-gray-800 bg-gray-900/60 px-3 py-2 text-xs text-gray-400">
+            {metaMap[assetTicker]?.description && (
+              <p className="w-full line-clamp-2 text-gray-400">{metaMap[assetTicker]?.description}</p>
+            )}
+            <span className="font-medium text-gray-300">
+              {metaMap[assetTicker]?.name && metaMap[assetTicker]?.name !== assetTicker
+                ? `${metaMap[assetTicker]?.name} (${assetTicker})`
+                : assetTicker}
+            </span>
+            {usdPrice !== null && <span>· ${usdPrice.toLocaleString(undefined, { maximumFractionDigits: 6 })}</span>}
+            {asset.maxAmountPerRequest && <span>· max {asset.maxAmountPerRequest} per request</span>}
+            {(metaMap[assetTicker]?.tags ?? []).slice(0, 4).map((tag) => (
+              <span key={tag} className="rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-300">
+                {tag}
+              </span>
+            ))}
+          </div>
+        )}
 
         <div>
           <label htmlFor="bridge-receiver" className="block text-xs text-gray-400 mb-1">{receiverLabel}</label>
