@@ -60,7 +60,8 @@ type Phase =
 
 interface Asset {
   ticker: string;
-  mlTokenId: string;
+  /** Undefined for native ML (no ML-side token id — e2m only for now). */
+  mlTokenId?: string;
   ethAddress?: string;
   maxAmountPerRequest?: string;
 }
@@ -143,7 +144,7 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
   const bridgeTotpRef = useRef<HTMLInputElement>(null);
 
   const [ethAccount, setEthAccount] = useState<string | null>(null);
-  const [ethBalance, setEthBalance] = useState<string | null>(null);
+  // ethBalances map lives with the other display maps (below the assets memo).
   const [connecting, setConnecting] = useState(false);
   const [mlAddress, setMlAddress] = useState<string | null>(null);
   const [addressLoading, setAddressLoading] = useState(false);
@@ -258,7 +259,13 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
     const flavors = config.eth_flavor_specific_config ?? {};
     const flavorCfg = flavors[network] ?? flavors[''] ?? null;
     const tokenConfig = flavorCfg?.token_config ?? {};
-    return Object.keys(config.ml_tokens ?? {}).map((ticker) => ({
+    // Union of the ML-side token list and the ETH-side per-token config:
+    // native ML appears only in the ETH-side config (wrapped on Ethereum),
+    // so keying off ml_tokens alone hides it.
+    const tickers = Array.from(
+      new Set([...Object.keys(config.ml_tokens ?? {}), ...Object.keys(tokenConfig)]),
+    ).filter((t) => config.ml_tokens[t] || tokenConfig[t]?.address);
+    return tickers.map((ticker) => ({
       ticker,
       mlTokenId: config.ml_tokens[ticker],
       ethAddress: tokenConfig[ticker]?.address,
@@ -280,7 +287,12 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
   const [metaMap, setMetaMap] = useState<Record<string, TokenMetadata | null>>(
     () => Object.create(null),
   );
-  const [usdPrice, setUsdPrice] = useState<number | null>(null);
+  const [usdPrices, setUsdPrices] = useState<Record<string, number | null>>(
+    () => Object.create(null),
+  );
+  const [ethBalances, setEthBalances] = useState<Record<string, string | null>>(
+    () => Object.create(null),
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -305,22 +317,57 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
 
   useEffect(() => {
     let cancelled = false;
-    setUsdPrice(null);
-    const priceId = tickerToPriceId(assetTicker);
-    if (!priceId) return;
-    void fetchUsdPrices([priceId]).then((prices) => {
-      if (!cancelled && typeof prices[priceId] === 'number') setUsdPrice(prices[priceId]);
+    const wanted = assets
+      .map((a) => ({ ticker: a.ticker, id: tickerToPriceId(a.ticker) }))
+      .filter((e): e is { ticker: string; id: string } => e.id !== null);
+    if (wanted.length === 0) return;
+    void fetchUsdPrices(wanted.map((e) => e.id)).then((prices) => {
+      if (cancelled) return;
+      const next: Record<string, number | null> = Object.create(null);
+      for (const { ticker, id } of wanted) {
+        next[ticker] = typeof prices[id] === 'number' ? prices[id] : null;
+      }
+      setUsdPrices(next);
     });
     return () => {
       cancelled = true;
     };
-  }, [assetTicker]);
+  }, [assets]);
+
+  // Connected-wallet balances for every asset (ETH side) — drives the
+  // holdings-first token ordering and the per-row balance display.
+  useEffect(() => {
+    if (!ethAccount) {
+      setEthBalances(Object.create(null));
+      return;
+    }
+    let cancelled = false;
+    void Promise.all(
+      assets.map(async (a) => {
+        if (!a.ethAddress) return [a.ticker, null] as const;
+        const b = await getTokenBalance(a.ethAddress, ethAccount).catch(() => null);
+        return [a.ticker, b] as const;
+      }),
+    ).then((entries) => {
+      if (cancelled) return;
+      const next: Record<string, string | null> = Object.create(null);
+      for (const [ticker, balance] of entries) next[ticker] = balance;
+      setEthBalances(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [ethAccount, assets]);
+
+  const usdPrice = usdPrices[assetTicker] ?? null;
+  const ethBalance = ethBalances[assetTicker] ?? null;
 
   const pickerAssets: PickerAsset[] = useMemo(
     () =>
       assets.map((a) => ({
         ticker: a.ticker,
-        name: metaMap[a.ticker]?.name ?? a.ticker,
+        name:
+          a.ticker === 'ml' ? 'Mintlayer' : (metaMap[a.ticker]?.name ?? a.ticker),
         tags: metaMap[a.ticker]?.tags ?? [],
       })),
     [assets, metaMap],
@@ -334,10 +381,7 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
       await switchChainIfNeeded();
       const address = await connectMetaMask();
       setEthAccount(address);
-      // Show the bridged-token balance for the selected asset
-      if (asset?.ethAddress) {
-        setEthBalance(await getTokenBalance(asset.ethAddress, address).catch(() => null));
-      }
+      // The per-asset balance map effect below refetches on ethAccount change.
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -350,23 +394,6 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
     if (!chain) return;
     await switchChain(chain.id, chain.params);
   }
-
-  // Keep the ETH-side balance current for the selected asset so the
-  // percentage chips stay meaningful (wallet may also change accounts).
-  useEffect(() => {
-    if (direction !== 'e2m' || !ethAccount || !asset?.ethAddress) return;
-    let cancelled = false;
-    getTokenBalance(asset.ethAddress, ethAccount)
-      .then((b) => {
-        if (!cancelled) setEthBalance(b);
-      })
-      .catch(() => {
-        /* leave the previous value — chips disable on absence */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [ethAccount, asset?.ethAddress, direction]);
 
   // 25% / 50% / Max of the wallet balance, capped by the per-request max.
   const applyFraction = useCallback(
@@ -515,6 +542,10 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
     setReceiverSuggestion(null);
     if (!asset) {
       setError('No bridged asset selected.');
+      return;
+    }
+    if (direction === 'm2e' && !asset.mlTokenId) {
+      setError('Native ML → ETH bridging is not supported from this wallet yet.');
       return;
     }
     if (!amount.trim() || !receiver.trim()) {
@@ -895,6 +926,8 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
               value={assetTicker}
               onChange={(t) => setAssetTicker(t)}
               metadata={metaMap}
+              balances={ethBalances}
+              usdPrices={usdPrices}
             />
           </div>
           <div>
@@ -1022,6 +1055,11 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
         {direction === 'm2e' && (
           <div>
             <label htmlFor="bridge-totp" className="block text-xs text-gray-400 mb-1">2FA code</label>
+            {asset && !asset.mlTokenId && (
+              <p className="mb-1 text-xs text-amber-300">
+                {assetTicker} cannot be bridged ML → ETH from this wallet yet — pick a bridged token.
+              </p>
+            )}
             <input
               id="bridge-totp"
               ref={bridgeTotpRef}
