@@ -4,7 +4,13 @@ vi.mock('./prefs-db', () => ({
   getStringPref: vi.fn(),
 }));
 
-import { sendTelegramMessage, sendTelegramPhoto, getUpdates, notifyTelegram } from './telegram';
+import {
+  sendTelegramMessage,
+  sendTelegramPhoto,
+  getUpdates,
+  notifyTelegram,
+  deleteTelegramMessage,
+} from './telegram';
 import { getStringPref } from './prefs-db';
 
 function mockFetch(ok: boolean, body: unknown) {
@@ -79,6 +85,26 @@ describe('getUpdates', () => {
   it('throws when the API returns a non-ok status', async () => {
     vi.stubGlobal('fetch', mockFetch(false, 'Unauthorized'));
     await expect(getUpdates('TOKEN', 0)).rejects.toThrow('getUpdates');
+  });
+});
+
+// ── deleteTelegramMessage ─────────────────────────────────────────────────────
+
+describe('deleteTelegramMessage', () => {
+  it('calls the Telegram deleteMessage API with chat_id and message_id', async () => {
+    const fetchMock = mockFetch(true, {});
+    vi.stubGlobal('fetch', fetchMock);
+    await deleteTelegramMessage('TOKEN', '123', 42);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://api.telegram.org/botTOKEN/deleteMessage');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({ chat_id: '123', message_id: 42 });
+  });
+
+  it('swallows fetch failures instead of throwing', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')));
+    await expect(deleteTelegramMessage('TOKEN', '123', 42)).resolves.toBeUndefined();
   });
 });
 

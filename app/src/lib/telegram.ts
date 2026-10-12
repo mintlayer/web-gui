@@ -40,6 +40,23 @@ export async function sendTelegramMessage(botToken: string, chatId: string, text
   }
 }
 
+/**
+ * Delete a message (best-effort). Used to remove command messages that
+ * contained a TOTP code, so the code does not sit in the chat history.
+ */
+export async function deleteTelegramMessage(botToken: string, chatId: string, messageId: number): Promise<void> {
+  try {
+    await fetch(`https://api.telegram.org/bot${botToken}/deleteMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, message_id: messageId }),
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch {
+    /* best-effort only */
+  }
+}
+
 /** Send a PNG image buffer as a photo. Caption supports HTML formatting. */
 export async function sendTelegramPhoto(
   botToken: string,

@@ -2,9 +2,10 @@
  * telegram-commands.ts - Bot command handlers.
  *
  * Read-only commands run freely. Write commands (/staking on|off) require an
- * inline TOTP code: e.g. `/staking on 123456`. The code is verified against
- * the same TOTP secret used for the web UI login, so no extra setup is needed.
- * TOTP codes are time-based (30 s window) which limits replay attacks.
+ * inline TOTP code: e.g. `/staking on 123456`. Codes share the single-use
+ * replay cache with the web step-up gate (verifyAndBurnTotpCode), and the
+ * command message is deleted after processing so the code does not remain in
+ * the chat history.
  *
  * Security: every incoming update is validated against the configured chat ID
  * before any handler is invoked. Unknown senders receive no reply.
@@ -12,9 +13,10 @@
 
 import QRCode from 'qrcode';
 import type { TelegramUpdate } from './telegram';
-import { sendTelegramMessage, sendTelegramPhoto } from './telegram';
+import { sendTelegramMessage, sendTelegramPhoto, deleteTelegramMessage } from './telegram';
 import { getPref, getStringPref } from './prefs-db';
-import { verifyTOTP } from './auth';
+import { verifyAndBurnTotpCode, TOTP_ERRORS } from './step-up';
+import { escapeHtml } from './telegram-notifications';
 import {
   getBalance,
   walletBestBlock,
@@ -60,7 +62,7 @@ export async function handleUpdate(
       case '/sync':    await cmdSync(botToken, allowedChatId); break;
       case '/address': await cmdAddress(botToken, allowedChatId); break;
       case '/status':  await cmdStatus(botToken, allowedChatId); break;
-      case '/staking': await cmdStaking(botToken, allowedChatId, args); break;
+      case '/staking': await cmdStaking(botToken, allowedChatId, args, msg.message_id); break;
       case '/start':
       case '/help':    await cmdHelp(botToken, allowedChatId); break;
       default:
@@ -70,7 +72,10 @@ export async function handleUpdate(
         );
     }
   } catch (err) {
-    const msg = err instanceof WalletRpcError ? err.message : String(err);
+    // Escape before HTML parse_mode — raw daemon errors can contain <, >, &
+    // which would make Telegram reject the message (400) and lose the alert.
+    const raw = err instanceof WalletRpcError ? err.message : String(err);
+    const msg = raw.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     await sendTelegramMessage(botToken, allowedChatId, `⚠️ Error: ${msg}`).catch(() => {});
   }
 }
@@ -108,7 +113,7 @@ async function cmdBalance(botToken: string, chatId: string): Promise<void> {
     lines.push('');
     lines.push('<i>Tokens:</i>');
     for (const [tokenId, amount] of tokens) {
-      lines.push(`• <code>${tokenId.slice(0, 16)}…</code>: ${amount.decimal}`);
+      lines.push(`• <code>${escapeHtml(tokenId.slice(0, 16))}…</code>: ${amount.decimal}`);
     }
   }
 
@@ -194,7 +199,7 @@ async function cmdStatus(botToken: string, chatId: string): Promise<void> {
   await sendTelegramMessage(botToken, chatId, [
     '📊 <b>Node &amp; Wallet Status</b>',
     '',
-    `🌐 Network:  <code>${network}</code>`,
+    `🌐 Network:  <code>${escapeHtml(network)}</code>`,
     `📦 Node:     <code>${nodeHeight.toLocaleString()}</code> blocks${ibd ? ' (syncing)' : ''}`,
     `💼 Wallet:   <code>${walletBlock.height.toLocaleString()}</code> blocks${synced ? ' ✅' : ` (${behind} behind)`}`,
     `🆔 Wallet ID: <code>${info.wallet_id.slice(0, 20)}…</code>`,
@@ -205,7 +210,7 @@ async function cmdStatus(botToken: string, chatId: string): Promise<void> {
 
 // ── /staking [on|off <totp>] ──────────────────────────────────────────────────
 
-async function cmdStaking(botToken: string, chatId: string, args: string[]): Promise<void> {
+async function cmdStaking(botToken: string, chatId: string, args: string[], messageId?: number): Promise<void> {
   const subCmd = args[0]?.toLowerCase();
 
   // ── Write: /staking on <totp> / /staking off <totp> ───────────────────────
@@ -231,17 +236,43 @@ async function cmdStaking(botToken: string, chatId: string, args: string[]): Pro
       return;
     }
 
-    if (!verifyTOTP(totpCode, secret)) {
+    const check = verifyAndBurnTotpCode(totpCode, secret, `telegram:${chatId}`);
+    if (!check.ok) {
+      // Best-effort delete of the attempt too — don't leave code material in
+      // chat history even when the check failed.
+      if (messageId) {
+        await deleteTelegramMessage(botToken, chatId, messageId);
+      }
       await sendTelegramMessage(botToken, chatId,
-        '❌ Invalid authenticator code. Staking not changed.');
+        `❌ ${check.reason === 'used' ? `${TOTP_ERRORS.used} Staking not changed.` : check.reason === 'locked' ? check.error : `${TOTP_ERRORS.invalid} Staking not changed.`}`);
       return;
     }
 
+    // Delete the command message so the (now used) code doesn't sit in the
+    // Telegram chat history.
+    if (messageId) {
+      await deleteTelegramMessage(botToken, chatId, messageId);
+    }
+
     if (subCmd === 'on') {
-      await startStaking(0);
+      try {
+        await startStaking(0);
+      } catch (err) {
+        // The code was already burned — tell the user the retry needs a fresh
+        // one instead of a bare daemon error.
+        await sendTelegramMessage(botToken, chatId,
+          `⚠️ Error: ${escapeHtml((err as Error).message)}\n\nYour authenticator code was consumed — wait up to a minute for a fresh one before retrying.`);
+        return;
+      }
       await sendTelegramMessage(botToken, chatId, '⛏ <b>Staking started.</b>');
     } else {
-      await stopStaking(0);
+      try {
+        await stopStaking(0);
+      } catch (err) {
+        await sendTelegramMessage(botToken, chatId,
+          `⚠️ Error: ${escapeHtml((err as Error).message)}\n\nYour authenticator code was consumed — wait up to a minute for a fresh one before retrying.`);
+        return;
+      }
       await sendTelegramMessage(botToken, chatId, '💤 <b>Staking stopped.</b>');
     }
     return;
@@ -275,7 +306,7 @@ async function cmdStaking(botToken: string, chatId: string, args: string[]): Pro
   if (pools.length > 0) {
     lines.push(`<b>Pools (${pools.length}):</b>`);
     for (const p of pools) {
-      lines.push(`• <code>${p.pool_id.slice(0, 16)}…</code>`);
+      lines.push(`• <code>${escapeHtml(p.pool_id.slice(0, 16))}…</code>`);
       lines.push(`  Balance: ${p.balance.decimal} ML`);
       lines.push(`  Pledge:  ${p.pledge.decimal} ML`);
     }
@@ -289,7 +320,7 @@ async function cmdStaking(botToken: string, chatId: string, args: string[]): Pro
     let totalDel = 0n;
     for (const d of delegations) {
       totalDel += BigInt(d.balance.atoms);
-      lines.push(`• Pool <code>${d.pool_id.slice(0, 16)}…</code>: ${d.balance.decimal} ML`);
+      lines.push(`• Pool <code>${escapeHtml(d.pool_id.slice(0, 16))}…</code>: ${d.balance.decimal} ML`);
     }
     const totalDecimal = (Number(totalDel) / 1e11).toFixed(4);
     lines.push(`Total delegated: <b>${totalDecimal} ML</b>`);
