@@ -5,6 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readPerms, rpcCall, tolerant, guarded, toolHandlers } from './mcp-server.mjs';
 
+// CI runners have been observed to exceed the 5s default on the sqlite-backed
+// readPerms tests under load; give the whole file a generous ceiling instead of
+// relying on wall-clock luck.
+vi.setConfig({ testTimeout: 30_000 });
+
 let tmp;
 
 /** Write a prefs SQLite with the given key→value (JSON) rows and return its path. */
