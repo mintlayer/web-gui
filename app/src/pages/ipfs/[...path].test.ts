@@ -15,9 +15,9 @@ afterEach(() => {
 
 describe('upstreamForPath', () => {
   it('accepts a CID with an optional subpath', () => {
-    expect(upstreamForPath(CID_V0)).toBe(`${'https://ipfs.io/ipfs'}/${CID_V0}`);
+    expect(upstreamForPath(CID_V0)).toBe(`${'https://bridge.mintlayer.org/ipfs'}/${CID_V0}`);
     expect(upstreamForPath(`${CID_V1}/metadata.json`)).toBe(
-      `https://ipfs.io/ipfs/${CID_V1}/metadata.json`,
+      `https://bridge.mintlayer.org/ipfs/${CID_V1}/metadata.json`,
     );
   });
 
@@ -37,7 +37,7 @@ describe('upstreamForPath', () => {
   });
 
   it('builds one candidate per configured gateway', () => {
-    expect(gatewaysForPath(CID_V0)[0]).toBe(`https://ipfs.io/ipfs/${CID_V0}`);
+    expect(gatewaysForPath(CID_V0)[0]).toBe(`https://bridge.mintlayer.org/ipfs/${CID_V0}`);
     expect(gatewaysForPath(CID_V0).length).toBeGreaterThanOrEqual(3);
   });
 });
@@ -65,7 +65,7 @@ describe('GET /ipfs/[...path]', () => {
     expect(res.headers.get('content-security-policy')).toContain("sandbox");
     expect(await res.text()).toBe('{"name":"mlPEPE"}');
     expect(vi.mocked(fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).toBe(
-      `https://ipfs.io/ipfs/${CID_V0}`,
+      `https://bridge.mintlayer.org/ipfs/${CID_V0}`,
     );
     // Hop 1 is manual — same-site redirects (CIDv1 → subdomain
     // gateway) are followed, foreign ones are not.
@@ -92,13 +92,13 @@ describe('GET /ipfs/[...path]', () => {
     );
     const res = await GET(ctx(CID_V0));
     expect(res.status).toBe(200);
-    expect(calls[0]).toBe(`https://ipfs.io/ipfs/${CID_V0}`);
-    expect(calls[1]).toBe(`https://gateway.pinata.cloud/ipfs/${CID_V0}`);
-    expect(res.headers.get('x-ipfs-gateway')).toBe('gateway.pinata.cloud');
+    expect(calls[0]).toBe(`https://bridge.mintlayer.org/ipfs/${CID_V0}`);
+    expect(calls[1]).toBe(`https://ipfs.io/ipfs/${CID_V0}`);
+    expect(res.headers.get('x-ipfs-gateway')).toBe('ipfs.io');
   });
 
   it('follows same-site redirects but never foreign ones', async () => {
-    const subdomain = `https://${CID_V0.toLowerCase()}.ipfs.gateway.pinata.cloud/ipfs/${CID_V0}`;
+    const subdomain = `https://${CID_V0.toLowerCase()}.ipfs.ipfs.io/ipfs/${CID_V0}`;
     const calls: string[] = [];
     vi.stubGlobal(
       'fetch',
@@ -106,7 +106,7 @@ describe('GET /ipfs/[...path]', () => {
         calls.push(String(url));
         if (calls.length === 1) {
           // First gateway bounces to a FOREIGN host — must not be followed.
-          expect(String(url)).toBe(`https://ipfs.io/ipfs/${CID_V0}`);
+          expect(String(url)).toBe(`https://bridge.mintlayer.org/ipfs/${CID_V0}`);
           expect(init?.redirect).toBe('manual');
           return new Response(null, {
             status: 302,
@@ -115,7 +115,7 @@ describe('GET /ipfs/[...path]', () => {
         }
         if (calls.length === 2) {
           // Second gateway bounces to its OWN subdomain — followed.
-          expect(String(url)).toBe(`https://gateway.pinata.cloud/ipfs/${CID_V0}`);
+          expect(String(url)).toBe(`https://ipfs.io/ipfs/${CID_V0}`);
           expect(init?.redirect).toBe('manual');
           return new Response(null, {
             status: 302,
