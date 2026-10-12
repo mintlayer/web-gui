@@ -64,6 +64,9 @@ describe('sanitizeTokenMetadata', () => {
 
   it('accepts gateway and same-origin icon URLs, rejects cross-origin protocol-relative', () => {
     expect(sanitizeTokenMetadata({ icon: 'ipfs://QmHash' })?.icon).toBe('/ipfs/QmHash');
+    expect(sanitizeTokenMetadata({ logo_uri: 'ipfs://bafyLogo' })?.icon).toBe(
+      '/ipfs/bafyLogo',
+    );
     expect(sanitizeTokenMetadata({ icon: 'https://cdn.example/i.png' })?.icon).toBe(
       'https://cdn.example/i.png',
     );
