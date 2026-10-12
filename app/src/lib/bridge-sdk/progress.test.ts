@@ -101,6 +101,12 @@ describe('getSubscribeUrl', () => {
       'ws://localhost:12345/api/v1/subscribe',
     );
   });
+
+  it('tolerates a base without the trailing slash', () => {
+    expect(getSubscribeUrl('https://api.example.com/api/v1')).toBe(
+      'wss://api.example.com/api/v1/subscribe',
+    );
+  });
 });
 
 describe('hash validators', () => {

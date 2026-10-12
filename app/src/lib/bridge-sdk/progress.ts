@@ -107,8 +107,13 @@ export const clearInFlight = (): void => {
 };
 
 /** GET /api/v1/subscribe as a WebSocket URL (http→ws upgrade). */
-export const getSubscribeUrl = (bridgeApiUrl?: string): string =>
-  (bridgeApiUrl ?? getBridgeApiUrl()).replace(/^http/, 'ws') + 'subscribe';
+export const getSubscribeUrl = (bridgeApiUrl?: string): string => {
+  const base = bridgeApiUrl ?? getBridgeApiUrl();
+  // Config tolerance: a base without the trailing slash must not
+  // silently produce "…/api/v1subscribe".
+  const withSlash = base.endsWith('/') ? base : `${base}/`;
+  return withSlash.replace(/^http/, 'ws') + 'subscribe';
+};
 
 export type BridgeProgressKind =
   | 'in-progress'
