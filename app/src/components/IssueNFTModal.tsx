@@ -238,7 +238,7 @@ export default function IssueNFTModal({ ipfsEnabled, onClose, onIssued }: Props)
               placeholder={mode === 'easy' ? 'Describe your NFT…' : 'DescribeYourNFT'}
               required
               rows={3}
-              className="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-mint-600 resize-none"
+              className="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder:text-gray-600 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-mint-600 resize-none"
             />
             {mode === 'easy'
               ? <p className="text-xs text-gray-600 mt-1">Free text. The full description is stored on IPFS; on-chain only letters &amp; numbers are kept (chain limit).</p>
@@ -452,6 +452,6 @@ function ModeToggle({ mode, onChange }: { mode: Mode; onChange: (m: Mode) => voi
   );
 }
 
-const inp = 'w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-mint-600';
+const inp = 'w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder:text-gray-600 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-mint-600';
 const cancelBtn = 'flex-1 rounded-lg border border-gray-700 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 transition-colors';
 const submitBtn = 'flex-1 rounded-lg bg-mint-700 hover:bg-mint-600 px-4 py-2 text-sm font-semibold text-white transition-colors disabled:opacity-50';

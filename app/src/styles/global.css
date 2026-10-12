@@ -1,6 +1,28 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+
+/*
+ * Theme tokens (Tailwind 4 CSS-first config, replaces tailwind.config.mjs).
+ * The bare channels (--background, --primary, ...) are the runtime palette;
+ * utilities like bg-primary pick them up through the --color-* mappings below.
+ */
+@theme {
+  --color-background: hsl(var(--background));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+
+  --color-mint-50: #f0fdf6;
+  --color-mint-100: #dcfceb;
+  --color-mint-200: #bbf7d6;
+  --color-mint-300: #86efb8;
+  --color-mint-400: #4ade8c;
+  --color-mint-500: #22c567;
+  --color-mint-600: #16a34a;
+  --color-mint-700: #15803d;
+  --color-mint-800: #166534;
+  --color-mint-900: #14532d;
+
+  --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+}
 
 @layer base {
   :root {

@@ -1,6 +1,7 @@
 import { defineConfig } from 'astro/config';
 import node from '@astrojs/node';
 import react from '@astrojs/react';
+import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
   output: 'server',
@@ -27,6 +28,7 @@ export default defineConfig({
     port: parseInt(process.env.PORT || '4321'),
   },
   vite: {
+    plugins: [tailwindcss()],
     server: {
       hmr: {
         // When running inside Docker, the HMR WebSocket must use the

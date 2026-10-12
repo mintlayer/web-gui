@@ -13,7 +13,7 @@ function TxToastItem({ toast }: { toast: TxToast }) {
 
   return (
     <div
-      className={`flex items-start gap-3 rounded-xl border p-4 shadow-2xl backdrop-blur-sm min-w-72 max-w-sm transition-all ${
+      className={`flex items-start gap-3 rounded-xl border p-4 shadow-2xl backdrop-blur-xs min-w-72 max-w-sm transition-all ${
         isPending   ? "bg-gray-900/95 border-gray-700"        :
         isConfirmed ? "bg-gray-900/95 border-mint-700"        :
         isUntracked ? "bg-gray-900/95 border-gray-700"        :

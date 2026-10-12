@@ -167,7 +167,7 @@ function DelegationRow({
             type="number" min="0" step="any" placeholder="Amount ML"
             value={addAmount} onChange={e => setAddAmount(e.target.value)}
             disabled={loading}
-            className="flex-1 min-w-0 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600
+            className="flex-1 min-w-0 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder:text-gray-600
                        px-2.5 py-1.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-mint-600 disabled:opacity-50"
           />
           <button
@@ -186,7 +186,7 @@ function DelegationRow({
             type="number" min="0" step="any" placeholder="Amount ML"
             value={withdrawAmount} onChange={e => setWithdrawAmount(e.target.value)}
             disabled={loading}
-            className="flex-1 min-w-0 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600
+            className="flex-1 min-w-0 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder:text-gray-600
                        px-2.5 py-1.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-mint-600 disabled:opacity-50"
           />
           <button

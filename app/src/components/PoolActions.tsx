@@ -101,7 +101,7 @@ export function CreatePoolForm({ initialDecommissionAddress, onSuccess }: Create
           <input
             type="number" min="40000" step="any" required placeholder="40000"
             value={amount} onChange={e => setAmount(e.target.value)} disabled={loading}
-            className="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600
+            className="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder:text-gray-600
                        px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-mint-600 disabled:opacity-50"
           />
         </div>
@@ -112,7 +112,7 @@ export function CreatePoolForm({ initialDecommissionAddress, onSuccess }: Create
           <input
             type="number" min="0" step="any" placeholder="0"
             value={costPerBlock} onChange={e => setCostPerBlock(e.target.value)} disabled={loading}
-            className="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600
+            className="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder:text-gray-600
                        px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-mint-600 disabled:opacity-50"
           />
         </div>
@@ -123,7 +123,7 @@ export function CreatePoolForm({ initialDecommissionAddress, onSuccess }: Create
         <input
           type="number" min="0.1" max="100" step="0.1" placeholder="5" required
           value={marginPct} onChange={e => setMarginPct(e.target.value)} disabled={loading}
-          className="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600
+          className="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder:text-gray-600
                      px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-mint-600 disabled:opacity-50"
         />
         <p className="text-xs text-gray-600 mt-1">0.1%–100%. Your cut of block rewards before distribution to delegators.</p>
@@ -134,7 +134,7 @@ export function CreatePoolForm({ initialDecommissionAddress, onSuccess }: Create
         <input
           type="text" required
           value={decommAddr} onChange={e => setDecommAddr(e.target.value)} disabled={loading}
-          className="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-300 placeholder-gray-600
+          className="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-300 placeholder:text-gray-600
                      px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-mint-600 disabled:opacity-50"
         />
         <p className="text-xs text-yellow-600 mt-1">
@@ -186,7 +186,7 @@ export function CreatePoolModal({ initialDecommissionAddress }: CreatePoolModalP
 
       {open && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs"
           onClick={e => { if (e.target === e.currentTarget) setOpen(false); }}
         >
           <div className="relative bg-gray-900 border border-gray-800 rounded-2xl p-6 w-full max-w-lg mx-4 shadow-2xl">

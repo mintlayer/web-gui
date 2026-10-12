@@ -200,7 +200,7 @@ export default function IssueTokenModal({ ipfsEnabled, onClose, onIssued }: Prop
                   onChange={e => setDescription(e.target.value)}
                   placeholder="Describe your token…"
                   rows={2}
-                  className="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-mint-600 resize-none"
+                  className="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder:text-gray-600 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-mint-600 resize-none"
                 />
               </div>
             </>
@@ -390,6 +390,6 @@ function ModeToggle({ mode, onChange }: { mode: Mode; onChange: (m: Mode) => voi
   );
 }
 
-const input = 'w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-mint-600';
+const input = 'w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder:text-gray-600 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-mint-600';
 const cancelBtn = 'flex-1 rounded-lg border border-gray-700 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 transition-colors';
 const submitBtn = 'flex-1 rounded-lg bg-mint-700 hover:bg-mint-600 px-4 py-2 text-sm font-semibold text-white transition-colors disabled:opacity-50';

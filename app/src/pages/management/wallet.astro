@@ -243,7 +243,7 @@ Astro.response.headers.set('Cache-Control', 'no-store');
 
   <!-- Seed phrase modal -->
   {seedPhrase && (
-    <div id="seed-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+    <div id="seed-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs">
       <div class="relative w-full max-w-lg rounded-2xl border border-yellow-700 bg-gray-950 shadow-2xl p-6">
         <!-- Header -->
         <div class="flex items-center justify-between mb-4">
@@ -311,7 +311,7 @@ Astro.response.headers.set('Cache-Control', 'no-store');
             pattern="[0-9]{6}"
             placeholder="000000"
             class="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-gray-200
-                   placeholder-gray-600 font-mono tracking-widest text-center focus:outline-none
+                   placeholder:text-gray-600 font-mono tracking-widest text-center focus:outline-none
                    focus:border-yellow-600"
           />
         </div>
@@ -393,7 +393,7 @@ Astro.response.headers.set('Cache-Control', 'no-store');
             name="password"
             placeholder="Password"
             autofocus
-            class="rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-mint-600 w-36"
+            class="rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-gray-200 placeholder:text-gray-600 focus:outline-none focus:border-mint-600 w-36"
           />
           <button
             type="submit"
@@ -413,7 +413,7 @@ Astro.response.headers.set('Cache-Control', 'no-store');
             type="password"
             name="password"
             placeholder="Password"
-            class="rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-mint-600 w-36"
+            class="rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-gray-200 placeholder:text-gray-600 focus:outline-none focus:border-mint-600 w-36"
           />
           <button
             type="submit"
@@ -497,7 +497,7 @@ Astro.response.headers.set('Cache-Control', 'no-store');
           required
           placeholder="Enter your 12 or 24 word seed phrase…"
           class="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-gray-200
-                 placeholder-gray-600 font-mono focus:outline-none focus:border-red-600 resize-none"
+                 placeholder:text-gray-600 font-mono focus:outline-none focus:border-red-600 resize-none"
         ></textarea>
       </div>
 
@@ -518,7 +518,7 @@ Astro.response.headers.set('Cache-Control', 'no-store');
           required
           placeholder="123456"
           class="rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-gray-200
-                 placeholder-gray-600 font-mono tracking-widest focus:outline-none focus:border-red-600 w-36"
+                 placeholder:text-gray-600 font-mono tracking-widest focus:outline-none focus:border-red-600 w-36"
         />
       </div>
 
@@ -534,7 +534,7 @@ Astro.response.headers.set('Cache-Control', 'no-store');
           autocomplete="off"
           placeholder="I CONFIRM"
           class="rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-gray-200
-                 placeholder-gray-600 font-mono focus:outline-none focus:border-red-600 w-48"
+                 placeholder:text-gray-600 font-mono focus:outline-none focus:border-red-600 w-48"
         />
       </div>
 
