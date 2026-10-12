@@ -23,6 +23,17 @@
 
 export const prerender = false;
 
+// Happy-eyeballs per-address connect timeout. The default (250 ms) is
+// shorter than the real RTT to the CDN edge from some networks (~300 ms),
+// so Node intermittently aborts connects that would have succeeded —
+// surfacing as connect ETIMEDOUT after ~2×250 ms and, through this
+// proxy, flaky 502s and missing token icons. Widen the window; dead
+// addresses still fall through to the next family.
+import net from 'node:net';
+if (typeof net.setDefaultAutoSelectFamilyAttemptTimeout === 'function') {
+  net.setDefaultAutoSelectFamilyAttemptTimeout(1000);
+}
+
 /** CIDv0 (base58, Qm…) or CIDv1 (base32, bafy…/bafkrei…, lowercase). */
 const CID_RE = /^(?:Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{8,})$/;
 /** Safe subpath segments (file names inside the CID). */
