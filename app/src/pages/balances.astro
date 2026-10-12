@@ -3,6 +3,7 @@ import Layout from '@/layouts/Layout.astro';
 import ReceiveModal from '@/components/ReceiveModal';
 import { getBalance, getTokensInfo, isWalletNotOpenError, type TokenInfo } from '@/lib/wallet-rpc';
 import { hexToText } from '@/lib/token-utils';
+import { safeImageUri } from '@/lib/safe-uri';
 import { INDEXER_START_CMD } from '@/lib/indexer';
 
 // Mintlayer bech32 hrp (verified: testnet=tmt, mainnet=mtc). Null on other
@@ -67,8 +68,8 @@ function nftIconUrl(info: TokenInfo | undefined): string | null {
   if (info?.type !== 'NonFungibleToken') return null;
   const raw = hexToText(info.content.metadata.icon_uri) ?? null;
   if (!raw) return null;
-  if (raw.startsWith("ipfs://")) return "https://ipfs.io/ipfs/" + raw.slice(7);
-  return raw;
+  // Whitelist-filtered (https/ipfs/data:image) — never a raw chain URI.
+  return safeImageUri(raw.startsWith("ipfs://") ? "https://ipfs.io/ipfs/" + raw.slice(7) : raw);
 }
 ---
 
@@ -326,7 +327,18 @@ function nftIconUrl(info: TokenInfo | undefined): string | null {
               ML
             </span>
           </div>
-          <p class="text-xs text-gray-600 mt-1">Network fees are calculated automatically.</p>
+          <p class="text-xs text-gray-500 mt-1">Network fees are calculated automatically.</p>
+        </div>
+
+        <div id="send-totp-row">
+          <label for="send-totp" class="block text-sm font-medium text-gray-300 mb-1.5">
+            Authenticator code
+          </label>
+          <input id="send-totp" type="text" placeholder="000000" inputmode="numeric"
+            autocomplete="one-time-code" maxlength="6"
+            class="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600
+                   px-3 py-2 text-sm font-mono tracking-widest focus:outline-none focus:ring-2 focus:ring-mint-600" />
+          <p class="text-xs text-gray-500 mt-1">Required to authorize the send. Each code works once.</p>
         </div>
 
         <div id="send-result" class="hidden rounded-lg border border-mint-700 bg-mint-900/30 p-4">
@@ -378,18 +390,6 @@ fetch('/api/indexer-status')
   })
   .catch(() => {});
 
-// ── RPC helper ────────────────────────────────────────────────────────────────
-async function rpc<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-  const res = await fetch('/api/rpc', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ method, params }),
-  });
-  const data = await res.json() as { ok: boolean; result?: T; error?: { message: string } };
-  if (!data.ok) throw new Error(data.error?.message ?? 'RPC error');
-  return data.result as T;
-}
-
 // ── Send modal state ──────────────────────────────────────────────────────────
 let activeAssetType: 'ml' | 'token' = 'ml';
 let activeAssetId = '';
@@ -405,8 +405,16 @@ const errBox     = document.getElementById('send-error')!;
 const resultBox  = document.getElementById('send-result')!;
 const txidEl     = document.getElementById('send-txid')!;
 const submitBtn  = document.getElementById('send-submit') as HTMLButtonElement;
+const totpInput  = document.getElementById('send-totp') as HTMLInputElement;
+
+/** Fetch followed the auth 302 to /login — the caller must redirect, not retry. */
+class SendExpiredError extends Error {}
+
+/** Bumped on every openSendModal; stale async continuations compare and bail. */
+let sendModalGen = 0;
 
 function openSendModal(assetType: 'ml' | 'token', assetId: string, ticker: string, isNft: boolean) {
+  sendModalGen++;
   activeAssetType = assetType;
   activeAssetId   = assetId;
   activeIsNft     = isNft;
@@ -415,6 +423,7 @@ function openSendModal(assetType: 'ml' | 'token', assetId: string, ticker: strin
   tickerEl.textContent   = ticker;
   addrInput.value        = '';
   amtInput.value         = '';
+  totpInput.value        = '';
   errBox.textContent     = '';
   errBox.classList.add('hidden');
   resultBox.classList.add('hidden');
@@ -494,12 +503,26 @@ addrInput.addEventListener('blur', checkAddressTypo);
 
 // Submit
 submitBtn.addEventListener('click', async () => {
+  // After a successful send the button doubles as "Close" so the txid
+  // (and its copy affordance) stays visible until the user moves on.
+  if (!resultBox.classList.contains('hidden')) {
+    closeModal();
+    return;
+  }
+
   const address = addrInput.value.trim();
   const amount  = activeIsNft ? '1' : amtInput.value.trim();
+  const totpCode = totpInput.value.trim();
 
   if (!address || (!activeIsNft && !amount)) {
     errBox.textContent = 'Address and amount are required.';
     errBox.classList.remove('hidden');
+    return;
+  }
+  if (!/^\d{6}$/.test(totpCode)) {
+    errBox.textContent = 'Enter the 6-digit code from your authenticator app to authorize the send.';
+    errBox.classList.remove('hidden');
+    totpInput.focus();
     return;
   }
 
@@ -510,45 +533,84 @@ submitBtn.addEventListener('click', async () => {
     return;
   }
 
+  // Review step: sends are irreversible — one explicit confirmation with the
+  // full amount/recipient summary before anything is signed or broadcast.
+  const summary = activeIsNft
+    ? `NFT ${activeAssetId.slice(0, 12)}…`
+    : `${amount} ${tickerEl.textContent}`;
+  if (!window.confirm(`Send ${summary} to\n${address}?\n\nThis cannot be undone.`)) {
+    return;
+  }
+
   errBox.classList.add('hidden');
   resultBox.classList.add('hidden');
   submitBtn.disabled    = true;
   submitBtn.textContent = 'Submitting…';
+  const gen = sendModalGen; // discard stale continuations if the modal reopened
 
   try {
-    await submitWithToast(
+    const txId = await submitWithToast(
       async () => {
-        let txId: string;
-        if (activeAssetType === 'ml') {
-          const res = await rpc<{ tx_id: string }>('address_send', {
-            account: 0,
+        const res = await fetch('/api/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
             address,
-            amount: { decimal: amount },
-            selected_utxos: [],
-            options: {},
-          });
-          txId = res.tx_id;
-        } else {
-          const res = await rpc<{ tx_id: string }>('token_send', {
-            account: 0,
+            amount,
+            asset_type: activeAssetType === 'ml' ? 'ml' : 'token',
             token_id: activeAssetId,
-            address,
-            amount: { decimal: amount },
-            options: {},
-          });
-          txId = res.tx_id;
+            totp_code: totpCode,
+          }),
+        });
+        // Session expiry and proxy errors return HTML/plain text, not JSON.
+        // Parsing that would surface a raw SyntaxError instead of the cause.
+        if (res.redirected || !(res.headers.get('content-type') ?? '').includes('application/json')) {
+          if (res.redirected || res.status === 401 || res.status === 302) {
+            throw new SendExpiredError();
+          }
+          throw new Error(`Send failed (HTTP ${res.status}) — no transaction was broadcast`);
         }
-        return txId;
+        const body = await res.json().catch(() => null) as { ok: boolean; tx_id?: string; error?: string; code_consumed?: boolean } | null;
+        if (!body) {
+          throw new Error(`Send failed (HTTP ${res.status}) — no transaction was broadcast`);
+        }
+        if (!res.ok || !body.ok || !body.tx_id) {
+          if (body.code_consumed) {
+            // Step-up already burned the code even though the send failed
+            // daemon-side: the retry needs a FRESH code, so say so.
+            throw new Error(`${body.error ?? 'Send failed'} — your authenticator code was consumed; enter a fresh code to retry.`);
+          }
+          throw new Error(body.error ?? 'Send failed');
+        }
+        return body.tx_id;
       },
       watchTx,
     );
 
-    closeModal();
+    if (gen !== sendModalGen) return;
+    // Keep the modal open with the transaction id + copy affordance.
+    txidEl.textContent = txId;
+    resultBox.classList.remove('hidden');
+    submitBtn.disabled    = false;
+    submitBtn.textContent = 'Close';
+    // The code was burned by a successful send; clear the stale field.
+    totpInput.value = '';
   } catch (err) {
+    if (gen !== sendModalGen) return;
+    if (err instanceof SendExpiredError) {
+      errBox.textContent = 'Your session expired — redirecting to login…';
+      errBox.classList.remove('hidden');
+      setTimeout(() => window.location.assign('/login'), 800);
+      return;
+    }
     errBox.textContent = (err as Error).message;
     errBox.classList.remove('hidden');
+    // A failed step-up means the code is dead (burned or stale) — never let
+    // the user retry the same six digits.
+    totpInput.value = '';
+    totpInput.focus();
     submitBtn.disabled    = false;
-    submitBtn.textContent = `Send`;
+    submitBtn.textContent = `Send ${tickerEl.textContent}`;
   }
 });
 </script>

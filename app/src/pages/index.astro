@@ -100,13 +100,17 @@ const indexerEnabled = process.env.INDEXER_ENABLED === 'true';
     <div id="wallet-opening-screen" class="rounded-lg border border-gray-700 bg-gray-900 p-8 mb-6 text-center">
       <div class="inline-block w-6 h-6 border-2 border-mint-500 border-t-transparent rounded-full animate-spin mb-4"></div>
       <p class="text-gray-300 font-medium mb-1">Opening wallet…</p>
-      <p id="wallet-opening-msg" class="text-sm text-gray-500">Connecting to mintlayer.wallet</p>
+      <p id="wallet-opening-msg" role="alert" tabindex="-1" class="text-sm text-gray-500 focus:outline-none">Connecting to mintlayer.wallet</p>
+      <div id="wallet-opening-actions" class="hidden mt-4 flex gap-3 justify-center">
+        <button type="button" id="wallet-open-retry" class="rounded-lg bg-mint-600 hover:bg-mint-700 px-4 py-2 text-sm font-semibold text-white transition-colors">Retry</button>
+        <a href="/setup" class="rounded-lg border border-gray-700 hover:bg-gray-800 px-4 py-2 text-sm font-semibold text-gray-300 transition-colors">Wallet setup</a>
+      </div>
     </div>
   )}
 
   <!-- Offline banner -->
   {daemonOffline && (
-    <div class="rounded-lg border border-yellow-700 bg-yellow-900/30 p-4 mb-6 text-yellow-300 text-sm">
+    <div role="status" class="rounded-lg border border-yellow-700 bg-yellow-900/30 p-4 mb-6 text-yellow-300 text-sm">
       <strong class="font-semibold">Wallet daemon unreachable.</strong>
       {' '}Check that <code>wallet-rpc-daemon</code> is running.
       <a href="/setup" class="ml-2 underline hover:text-yellow-100">Set up wallet →</a>
@@ -114,7 +118,7 @@ const indexerEnabled = process.env.INDEXER_ENABLED === 'true';
   )}
 
   {walletError && !daemonOffline && (
-    <div class="rounded-lg border border-red-700 bg-red-900/30 p-4 mb-6 text-red-300 text-sm">
+    <div role="alert" class="rounded-lg border border-red-700 bg-red-900/30 p-4 mb-6 text-red-300 text-sm">
       <strong class="font-semibold">Error:</strong> {walletError}
       <a href="/setup" class="ml-2 underline hover:text-red-100">Open / create wallet →</a>
     </div>
@@ -261,7 +265,7 @@ const indexerEnabled = process.env.INDEXER_ENABLED === 'true';
         <p class="text-xs text-gray-500 mb-5">Enter your password to unlock the wallet.</p>
 
         {passwordError && (
-          <div class="rounded-lg border border-red-700 bg-red-900/30 px-3 py-2 mb-4 text-red-300 text-xs">
+          <div role="alert" class="rounded-lg border border-red-700 bg-red-900/30 px-3 py-2 mb-4 text-red-300 text-xs">
             {passwordError}
           </div>
         )}
@@ -299,6 +303,17 @@ const indexerEnabled = process.env.INDEXER_ENABLED === 'true';
   const modal = document.getElementById('wallet-password-modal') as HTMLDialogElement | null;
   modal?.showModal();
 
+  // The locked wallet is the ONLY thing to do on this screen: Escape (native
+  // dialog cancel) would strand the user on a dead dashboard, so re-open the
+  // dialog whenever it closes without a successful unlock.
+  if (modal) {
+    modal.addEventListener('close', () => {
+      window.setTimeout(() => {
+        if (!modal.open) modal.showModal();
+      }, 0);
+    });
+  }
+
   // If the wallet-opening screen is visible, call the open API then reload
   const openingScreen = document.getElementById('wallet-opening-screen');
   const openingMsg = document.getElementById('wallet-opening-msg');
@@ -319,10 +334,18 @@ const indexerEnabled = process.env.INDEXER_ENABLED === 'true';
           openingScreen.classList.add('border-red-700', 'bg-red-900/20');
           const spinner = openingScreen.querySelector('.animate-spin') as HTMLElement | null;
           if (spinner) spinner.style.display = 'none';
+          // Give the user a way out instead of a frozen "Opening wallet…" card.
+          document.getElementById('wallet-opening-actions')?.classList.remove('hidden');
+          openingMsg?.focus();
         }
       } catch {
         if (openingMsg) openingMsg.textContent = 'Could not reach the server.';
+        document.getElementById('wallet-opening-actions')?.classList.remove('hidden');
+        openingMsg?.focus();
       }
     })();
+
+    const retryBtn = document.getElementById('wallet-open-retry');
+    retryBtn?.addEventListener('click', () => window.location.reload());
   }
 </script>
