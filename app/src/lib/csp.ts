@@ -61,7 +61,9 @@ function wsOriginOf(apiUrl: string): string | null {
 
 /** Builds the connect-src source list, deduplicated, 'self' first. */
 export function connectSources(): string[] {
-  const sources = new Set<string>(['self', COINGECKO_ORIGIN]);
+  // 'self' must stay quoted — a bare `self` is an invalid CSP source and
+  // would silently drop same-origin under enforcement.
+  const sources = new Set<string>(["'self'", COINGECKO_ORIGIN]);
   const apiUrls = [
     apiBase('PUBLIC_BRIDGE_API_URL', getBridgeApiUrl()),
     apiBase('PUBLIC_MINTLAYER_API_URL', getMintlayerApiUrl()),

@@ -14,7 +14,7 @@ describe('csp connect-src derivation', () => {
 
   it('includes the default bridge, indexer (and their ws twins) plus coingecko', () => {
     const sources = cspConnectSrc().split(' ');
-    expect(sources).toContain('self');
+    expect(sources).toContain("'self'");
     expect(sources).toContain('https://api.bridge.mintlayer.org');
     expect(sources).toContain('wss://api.bridge.mintlayer.org');
     expect(sources).toContain('https://api-server.mintlayer.org');
@@ -22,6 +22,7 @@ describe('csp connect-src derivation', () => {
   });
 
   it('keeps every other directive unchanged', () => {
+    expect(cspConnectSrc()).toContain("'self' https://api.coingecko.com");
     expect(buildCsp()).toContain("default-src 'self'");
     expect(buildCsp()).toContain("img-src 'self' https: data:");
     expect(buildCsp()).toContain("script-src 'self' 'unsafe-inline'");
