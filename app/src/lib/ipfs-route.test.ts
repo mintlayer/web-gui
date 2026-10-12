@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { GET, upstreamForPath, gatewaysForPath } from './[...path]';
+import { GET, upstreamForPath, gatewaysForPath } from '../pages/ipfs/[...path]';
 
 const CID_V0 = 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
 const CID_V1 = 'bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi';
@@ -113,6 +113,46 @@ describe('GET /ipfs/[...path]', () => {
     const res = await GET(ctx(CID_V0));
     expect(res.status).toBe(502);
     expect(res.headers.get('cache-control')).toBe('no-store');
+  });
+
+  it('retries a network-level throw on the same gateway once', async () => {
+    // Cold connects to the proxy intermittently fail (ETIMEDOUT well
+    // under the per-gateway budget) and succeed on an immediate retry.
+    const calls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL) => {
+        calls.push(String(url));
+        if (calls.length === 1) {
+          const err = new Error('connect ETIMEDOUT') as Error & { cause?: unknown };
+          err.cause = Object.assign(new Error('connect ETIMEDOUT'), { code: 'ETIMEDOUT' });
+          throw err;
+        }
+        return new Response('{"ok":true}', {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }) as unknown as typeof fetch,
+    );
+    const res = await GET(ctx(CID_V0));
+    expect(res.status).toBe(200);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toBe(calls[1]); // same gateway, retried
+    expect(res.headers.get('x-ipfs-gateway')).toBe('bridge.mintlayer.org');
+  });
+
+  it('does not retry HTTP-level failures', async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL) => {
+        calls.push(String(url));
+        return new Response('still down', { status: 503 });
+      }) as unknown as typeof fetch,
+    );
+    const res = await GET(ctx(CID_V0));
+    expect(res.status).toBe(502);
+    expect(calls).toHaveLength(1); // HTTP answer → next gateway (none) → give up
   });
 
   it('follows same-site redirects but never foreign ones', async () => {

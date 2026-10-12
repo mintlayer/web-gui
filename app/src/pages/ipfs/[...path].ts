@@ -133,91 +133,100 @@ export async function GET(ctx: {
 
   let lastStatus = 502;
   for (const upstream of candidates) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), GATEWAY_TIMEOUT_MS);
-    let upstreamRes: Response;
-    try {
-      // Redirects are handled manually: the CID allowlist gates hop 1,
-      // so only a same-site redirect (CIDv1 → subdomain gateway) is
-      // followed — never a bounce to an arbitrary host.
-      upstreamRes = await fetch(upstream, {
-        redirect: 'manual',
-        signal: controller.signal,
-        headers: { accept: 'application/json, image/*;q=0.9, text/plain;q=0.5' },
-      });
-    } catch {
-      clearTimeout(timer);
-      lastStatus = 502;
-      continue;
-    }
-
-    if (upstreamRes.status >= 300 && upstreamRes.status < 400) {
-      const location = upstreamRes.headers.get('location') ?? '';
-      // Timer stays armed — both hops share the per-gateway budget.
-      if (isSameSite(upstream, location)) {
-        try {
-          upstreamRes = await fetch(location, {
-            redirect: 'error',
-            signal: controller.signal,
-            headers: { accept: 'application/json, image/*;q=0.9, text/plain;q=0.5' },
-          });
-        } catch {
-          lastStatus = 502;
-          continue;
-        }
-      } else {
+    // Cold connects from small containers to the proxy intermittently
+    // fail at connect time (ETIMEDOUT/AggregateError well under the
+    // per-gateway budget) and succeed on an immediate retry — the
+    // browser-visible symptom was missing token icons. Retry the same
+    // gateway once on a network-level throw; HTTP statuses are never
+    // retried (they are answers, not accidents).
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), GATEWAY_TIMEOUT_MS);
+      let upstreamRes: Response;
+      try {
+        // Redirects are handled manually: the CID allowlist gates hop 1,
+        // so only a same-site redirect (CIDv1 → subdomain gateway) is
+        // followed — never a bounce to an arbitrary host.
+        upstreamRes = await fetch(upstream, {
+          redirect: 'manual',
+          signal: controller.signal,
+          headers: { accept: 'application/json, image/*;q=0.9, text/plain;q=0.5' },
+        });
+      } catch {
         clearTimeout(timer);
         lastStatus = 502;
-        continue;
+        continue; // network accident — retry this gateway once
       }
-    }
 
-    if (upstreamRes.status !== 200) {
-      clearTimeout(timer);
-      lastStatus = upstreamRes.status === 404 ? 404 : 502;
-      continue;
-    }
+      if (upstreamRes.status >= 300 && upstreamRes.status < 400) {
+        const location = upstreamRes.headers.get('location') ?? '';
+        // Timer stays armed — both hops share the per-gateway budget.
+        if (isSameSite(upstream, location)) {
+          try {
+            upstreamRes = await fetch(location, {
+              redirect: 'error',
+              signal: controller.signal,
+              headers: { accept: 'application/json, image/*;q=0.9, text/plain;q=0.5' },
+            });
+          } catch {
+            clearTimeout(timer);
+            lastStatus = 502;
+            continue;
+          }
+        } else {
+          clearTimeout(timer);
+          lastStatus = 502;
+          break; // foreign redirect — this gateway misbehaves, next one
+        }
+      }
 
-    // Honour an honest content-length before reading anything.
-    const declaredLength = Number(upstreamRes.headers.get('content-length') ?? '');
-    if (Number.isFinite(declaredLength) && declaredLength > MAX_BYTES) {
-      clearTimeout(timer);
-      return errorResponse('Too large', 413);
-    }
+      if (upstreamRes.status !== 200) {
+        clearTimeout(timer);
+        lastStatus = upstreamRes.status === 404 ? 404 : 502;
+        break; // an HTTP answer — next gateway, not a retry
+      }
 
-    const contentType = (upstreamRes.headers.get('content-type') ?? '')
-      .split(';')[0]
-      .trim();
-    if (!ALLOWED_TYPES.test(contentType)) {
-      clearTimeout(timer);
-      // Fail fast: content-type is a property of the CID content, not
-      // of the gateway — another gateway would serve the same bytes.
-      return errorResponse('Unsupported media type', 415);
-    }
-
-    try {
-      const buffer = await readCapped(upstreamRes);
-      if (buffer === null) {
+      // Honour an honest content-length before reading anything.
+      const declaredLength = Number(upstreamRes.headers.get('content-length') ?? '');
+      if (Number.isFinite(declaredLength) && declaredLength > MAX_BYTES) {
+        clearTimeout(timer);
         return errorResponse('Too large', 413);
       }
-      return new Response(buffer.buffer as ArrayBuffer, {
-        status: 200,
-        headers: {
-          'content-type': contentType || 'application/octet-stream',
-          // Content-addressed: the bytes for a CID can never change.
-          'cache-control': 'public, max-age=2592000, immutable',
-          'x-content-type-options': 'nosniff',
-          'content-security-policy': RESPONSE_CSP,
-          // A poisoned/buggy gateway caching wrong bytes is diagnosable
-          // with one curl.
-          'x-ipfs-gateway': new URL(upstream).host,
-        },
-      });
-    } catch {
-      lastStatus = 502;
-      continue;
-    } finally {
-      clearTimeout(timer);
+
+      const contentType = (upstreamRes.headers.get('content-type') ?? '')
+        .split(';')[0]
+        .trim();
+      if (!ALLOWED_TYPES.test(contentType)) {
+        clearTimeout(timer);
+        // Fail fast: content-type is a property of the CID content, not
+        // of the gateway — another gateway would serve the same bytes.
+        return errorResponse('Unsupported media type', 415);
+      }
+
+      try {
+        const buffer = await readCapped(upstreamRes);
+        if (buffer === null) {
+          return errorResponse('Too large', 413);
+        }
+        return new Response(buffer.buffer as ArrayBuffer, {
+          status: 200,
+          headers: {
+            'content-type': contentType || 'application/octet-stream',
+            // Content-addressed: the bytes for a CID can never change.
+            'cache-control': 'public, max-age=2592000, immutable',
+            'x-content-type-options': 'nosniff',
+            'content-security-policy': RESPONSE_CSP,
+            // A poisoned/buggy gateway caching wrong bytes is diagnosable
+            // with one curl.
+            'x-ipfs-gateway': new URL(upstream).host,
+          },
+        });
+      } catch {
+        lastStatus = 502;
+        continue;
+      } finally {
+        clearTimeout(timer);
+      }
     }
   }
 
