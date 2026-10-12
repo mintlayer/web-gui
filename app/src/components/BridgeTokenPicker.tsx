@@ -20,7 +20,51 @@ interface Props {
   onChange: (ticker: string) => void;
   /** Resolved display metadata by ticker (drives icons). */
   metadata: Record<string, TokenMetadata | null>;
+  /** Connected-wallet balance by ticker (decimal string or null). */
+  balances?: Record<string, string | null>;
+  /** USD spot price by ticker; drives holdings-first ordering. */
+  usdPrices?: Record<string, number | null>;
   disabled?: boolean;
+}
+
+const NO_BALANCES: Record<string, string | null> = Object.create(null);
+const NO_PRICES: Record<string, number | null> = Object.create(null);
+
+function parseBalance(raw: string | null | undefined): number | null {
+  if (typeof raw !== 'string') return null;
+  const n = parseFloat(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+function compactUsd(v: number): string {
+  if (v >= 1000) return `$${(v / 1000).toFixed(1)}k`;
+  return `$${v.toFixed(2)}`;
+}
+
+/** Holdings first (by USD value), then the rest alphabetically. */
+function byHoldings(
+  balances: Record<string, string | null>,
+  usdPrices: Record<string, number | null>,
+) {
+  const group = (t: string): number => {
+    const b = parseBalance(balances[t]);
+    return b !== null && b > 0 ? 0 : 1;
+  };
+  const usd = (t: string): number | null => {
+    const b = parseBalance(balances[t]);
+    const p = usdPrices[t];
+    return b !== null && typeof p === 'number' ? b * p : null;
+  };
+  return (x: PickerAsset, y: PickerAsset): number => {
+    const gx = group(x.ticker) - group(y.ticker);
+    if (gx !== 0) return gx;
+    const vx = usd(x.ticker);
+    const vy = usd(y.ticker);
+    if (vx !== null && vy !== null && vx !== vy) return vy - vx;
+    if (vx === null && vy !== null) return 1;
+    if (vy === null && vx !== null) return -1;
+    return x.ticker.localeCompare(y.ticker);
+  };
 }
 
 const input =
@@ -52,7 +96,15 @@ function TokenIcon({ metadata, ticker }: { metadata: TokenMetadata | null; ticke
   );
 }
 
-export default function BridgeTokenPicker({ assets, value, onChange, metadata, disabled }: Props) {
+export default function BridgeTokenPicker({
+  assets,
+  value,
+  onChange,
+  metadata,
+  balances = NO_BALANCES,
+  usdPrices = NO_PRICES,
+  disabled,
+}: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
@@ -64,14 +116,16 @@ export default function BridgeTokenPicker({ assets, value, onChange, metadata, d
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return assets;
-    return assets.filter(
-      (a) =>
-        a.ticker.toLowerCase().includes(q) ||
-        a.name.toLowerCase().includes(q) ||
-        a.tags.some((t) => t.toLowerCase().includes(q)),
-    );
-  }, [assets, query]);
+    const hits = q
+      ? assets.filter(
+          (a) =>
+            a.ticker.toLowerCase().includes(q) ||
+            a.name.toLowerCase().includes(q) ||
+            a.tags.some((t) => t.toLowerCase().includes(q)),
+        )
+      : assets;
+    return [...hits].sort(byHoldings(balances, usdPrices));
+  }, [assets, query, balances, usdPrices]);
 
   // The highlight index must stay inside the filtered list — typing can
   // shrink it while a higher index is active.
@@ -177,8 +231,29 @@ export default function BridgeTokenPicker({ assets, value, onChange, metadata, d
                   {a.name && a.name !== a.ticker && (
                     <span className="truncate text-xs text-gray-500">{a.name}</span>
                   )}
+                  {(() => {
+                    const b = parseBalance(balances[a.ticker]);
+                    if (b === null) return null;
+                    const p = usdPrices[a.ticker];
+                    const v = typeof p === 'number' ? b * p : null;
+                    return (
+                      <span className="ml-auto text-right text-xs leading-tight">
+                        <span className="block text-gray-300">
+                          {b.toLocaleString(undefined, { maximumFractionDigits: 8 })}
+                        </span>
+                        {v !== null && (
+                          <span className="block text-gray-500">≈{compactUsd(v)}</span>
+                        )}
+                      </span>
+                    );
+                  })()}
                   {a.ticker === value && (
-                    <span aria-hidden="true" className="ml-auto text-xs text-mint-400">✓</span>
+                    <span
+                      aria-hidden="true"
+                      className={`${parseBalance(balances[a.ticker]) === null ? 'ml-auto ' : ''}text-xs text-mint-400`}
+                    >
+                      ✓
+                    </span>
                   )}
                 </button>
               </li>
