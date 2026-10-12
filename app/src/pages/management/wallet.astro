@@ -15,7 +15,8 @@ import {
   type SeedPhraseResult,
 } from '@/lib/wallet-rpc';
 import { recoverThenSwapWallet } from '@/lib/wallet-recovery';
-import { verifyTOTP } from '@/lib/auth';
+import { verifyAndBurnTotpCode } from '@/lib/step-up';
+import { getClientAddress } from '@/lib/auth';
 import { getStringPref, getPref, setPref } from '@/lib/prefs-db';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
@@ -80,12 +81,18 @@ if (Astro.request.method === 'POST') {
     if (action === 'show_seed') {
       const totpCode = (form.get('totp_code') as string | null) ?? '';
       const totpSecret = getStringPref('auth.totp_secret');
-      if (!verifyTOTP(totpCode, totpSecret)) {
-        actionError = 'Invalid authenticator code.';
+      const throttleKey = getClientAddress(Astro.request, Astro.clientAddress);
+      if (!totpSecret) {
+        actionError = '2FA is not configured.';
       } else {
+        const burn = verifyAndBurnTotpCode(totpCode, totpSecret, throttleKey);
+        if (!burn.ok) {
+          actionError = burn.error;
+        } else {
         seedPhrase = await walletShowSeedPhrase();
         isLocked = false;
         if (!seedPhrase) actionError = 'Seed phrase is not stored in this wallet.';
+        }
       }
     } else if (action === 'lock') {
       await walletLockPrivateKeys();
@@ -113,13 +120,25 @@ if (Astro.request.method === 'POST') {
     } else if (action === 'import_seed') {
       const confirm = (form.get('confirm') as string | null) ?? '';
       const mnemonic = ((form.get('mnemonic') as string | null) ?? '').trim();
+      const totpCode = (form.get('totp_code') as string | null) ?? '';
+      const totpSecret = getStringPref('auth.totp_secret');
       if (confirm !== 'I CONFIRM') {
         actionError = 'You must type "I CONFIRM" exactly to proceed.';
       } else if (!mnemonic) {
         actionError = 'Seed phrase is required.';
       } else if (!validateMnemonic(mnemonic)) {
         actionError = 'Invalid seed phrase — check that all words are valid BIP39 words and the checksum is correct.';
+      } else if (!totpSecret) {
+        actionError = '2FA is not configured.';
       } else {
+        // Importing a seed REPLACES the wallet: funds subsequently sent from
+        // this wallet (with the owner's own valid step-up code) would land on
+        // attacker-derived addresses. The session cookie alone must not be
+        // able to do this — require a fresh TOTP code, same as seed reveal.
+        const burn = verifyAndBurnTotpCode(totpCode, totpSecret, getClientAddress(Astro.request, Astro.clientAddress));
+        if (!burn.ok) {
+          actionError = burn.error;
+        } else {
         // Recover to a temp path first and swap only after a successful scan -
         // never destroy the wallet file before recovery has succeeded.
         const { unlink, rename } = await import('node:fs/promises');
@@ -129,6 +148,7 @@ if (Astro.request.method === 'POST') {
         );
         info = await walletInfo().catch(() => null);
         actionSuccess = 'Wallet recovered from seed phrase and blockchain scan complete.';
+        }
       }
     }
   } catch (err) {
@@ -154,7 +174,7 @@ Astro.response.headers.set('Cache-Control', 'no-store');
 
   <!-- Wallet info -->
   {infoError && (
-    <div class="rounded-lg border border-red-700 bg-red-900/30 p-4 text-red-300 text-sm mb-6">
+    <div role="alert" class="rounded-lg border border-red-700 bg-red-900/30 p-4 text-red-300 text-sm mb-6">
       {infoError}
     </div>
   )}
@@ -211,12 +231,12 @@ Astro.response.headers.set('Cache-Control', 'no-store');
 
   <!-- Action feedback -->
   {actionSuccess && (
-    <div class="rounded-lg border border-mint-700 bg-mint-900/30 p-3 mb-6 text-mint-300 text-sm">
+    <div role="status" class="rounded-lg border border-mint-700 bg-mint-900/30 p-3 mb-6 text-mint-300 text-sm">
       {actionSuccess}
     </div>
   )}
   {actionError && (
-    <div class="rounded-lg border border-red-700 bg-red-900/30 p-3 mb-6 text-red-300 text-sm">
+    <div role="alert" class="rounded-lg border border-red-700 bg-red-900/30 p-3 mb-6 text-red-300 text-sm">
       {actionError}
     </div>
   )}
@@ -442,7 +462,7 @@ Astro.response.headers.set('Cache-Control', 'no-store');
     </h2>
 
     <!-- Red danger warning -->
-    <div class="rounded-lg border border-red-700 bg-red-950/60 p-4 mb-5">
+    <div role="alert" class="rounded-lg border border-red-700 bg-red-950/60 p-4 mb-5">
       <p class="text-sm font-semibold text-red-300 mb-2">⚠ DANGER — This operation is irreversible</p>
       <p class="text-xs text-red-400 leading-relaxed mb-2">
         Importing a new seed phrase will perform three destructive steps in sequence:
@@ -479,6 +499,27 @@ Astro.response.headers.set('Cache-Control', 'no-store');
           class="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-gray-200
                  placeholder-gray-600 font-mono focus:outline-none focus:border-red-600 resize-none"
         ></textarea>
+      </div>
+
+      <div>
+        <label for="import-totp" class="block text-xs text-gray-400 mb-1">
+          Authenticator Code
+          <span class="text-gray-600 ml-1">(2FA — importing replaces the wallet, so it needs a fresh code)</span>
+        </label>
+        <input
+          id="import-totp"
+          type="text"
+          name="totp_code"
+          inputmode="numeric"
+          autocomplete="one-time-code"
+          maxlength="6"
+          pattern="[0-9]{6}"
+          title="6-digit code"
+          required
+          placeholder="123456"
+          class="rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-gray-200
+                 placeholder-gray-600 font-mono tracking-widest focus:outline-none focus:border-red-600 w-36"
+        />
       </div>
 
       <div>

@@ -51,25 +51,50 @@ export class EvmError extends Error {
   }
 }
 
+/**
+ * Normalize a wallet/contract rejection into an EvmError with a stable code:
+ * - 4001 / ACTION_REJECTED → user rejected (info, not error — the user chose
+ *   to cancel and the UI should treat it as such)
+ * - -32002 → a request for the same confirmation is already pending in the
+ *   wallet (user should open the wallet extension)
+ * Everything else keeps its raw code/message so unexpected failures still
+ * surface verbatim.
+ */
+export function normalizeEvmRejection(err: unknown): EvmError {
+  const e = err as { code?: number | string; message?: string };
+  const code = typeof e?.code === 'number' ? e.code : undefined;
+  const message = e?.message ?? String(err);
+  if (code === 4001 || /ACTION_REJECTED|user rejected/i.test(message)) {
+    return new EvmError('Request rejected in your wallet.', 4001);
+  }
+  if (code === -32002 || /already pending/i.test(message)) {
+    return new EvmError(
+      'A request is already waiting in your wallet — open the wallet extension to approve or reject it.',
+      -32002,
+    );
+  }
+  return new EvmError(message, code);
+}
+
 export function hasEthereumProvider(): boolean {
   return typeof window !== 'undefined' && !!window.ethereum;
 }
 
-function provider(): BrowserProvider {
+/** Typed accessor for the guarded provider (call after hasEthereumProvider()). */
+function eth(): NonNullable<Window['ethereum']> {
   if (!hasEthereumProvider()) {
     throw new EvmError('MetaMask not installed');
   }
-  return new BrowserProvider(window.ethereum as never);
+  return window.ethereum!;
+}
+
+function provider(): BrowserProvider {
+  return new BrowserProvider(eth());
 }
 
 /** Prompt MetaMask for account access. Returns the selected address. */
 export async function connectMetaMask(): Promise<string> {
-  if (!hasEthereumProvider()) {
-    throw new EvmError(
-      'MetaMask not installed. Install the MetaMask extension to bridge.',
-    );
-  }
-  const accounts = (await window.ethereum!.request({
+  const accounts = (await eth().request({
     method: 'eth_requestAccounts',
   })) as string[];
   if (!accounts?.length) throw new EvmError('No accounts authorized');
@@ -93,9 +118,8 @@ export async function switchChain(
   chainIdHex: string,
   chainParams?: Record<string, unknown>,
 ): Promise<void> {
-  if (!hasEthereumProvider()) throw new EvmError('MetaMask not installed');
   try {
-    await window.ethereum!.request({
+    await eth().request({
       method: 'wallet_switchEthereumChain',
       params: [{ chainId: chainIdHex }],
     });
@@ -103,7 +127,7 @@ export async function switchChain(
     const code = (err as { code?: number }).code;
     // 4902 = chain not added to the wallet
     if (code === 4902 && chainParams) {
-      await window.ethereum!.request({
+      await eth().request({
         method: 'wallet_addEthereumChain',
         params: [{ chainId: chainIdHex, ...chainParams }],
       });
@@ -150,5 +174,5 @@ export async function depositToBridge(
   const bridge = new Contract(bridgeContractAddress, BRIDGE_DEPOSIT_ABI, signer);
   onProgress?.('deposit');
   const depositTx = await bridge.deposit(tokenAddress, amountWei, mintlayerAddress);
-  return depositTx.hash as string;
+  return depositTx.hash;
 }

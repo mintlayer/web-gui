@@ -20,3 +20,14 @@ export const getBridgeApiUrl = (): string =>
 
 export const getMintlayerApiUrl = (): string =>
   env.PUBLIC_MINTLAYER_API_URL ?? DEFAULT_MINTLAYER_API_URL;
+
+/**
+ * Server-side bridge API URL. Astro API routes run in Node, where
+ * process.env takes precedence over the public (build-time) var — lets an
+ * operator point server-side bridge calls at an internal mirror without
+ * rebuilding, while the browser keeps using the public URL.
+ */
+export const getServerBridgeApiUrl = (): string =>
+  process.env.BRIDGE_API_URL?.trim() ||
+  env.PUBLIC_BRIDGE_API_URL ||
+  DEFAULT_BRIDGE_API_URL;

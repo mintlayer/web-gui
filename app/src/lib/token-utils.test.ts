@@ -1,5 +1,25 @@
 import { describe, it, expect } from 'vitest';
-import { hexToText } from '@/lib/token-utils';
+import { hexToText, toHexField } from '@/lib/token-utils';
+
+describe('toHexField', () => {
+  it('encodes an ASCII string as lowercase hex', () => {
+    expect(toHexField('hello')).toEqual({ hex: '68656c6c6f' });
+  });
+
+  it('encodes an empty string as an empty hex payload', () => {
+    expect(toHexField('')).toEqual({ hex: '' });
+  });
+
+  it('encodes multi-byte UTF-8 characters correctly', () => {
+    // "€" is U+20AC → UTF-8 bytes E2 82 AC
+    expect(toHexField('€')).toEqual({ hex: 'e282ac' });
+  });
+
+  it('round-trips with hexToText', () => {
+    const field = toHexField('café € 100');
+    expect(hexToText({ text: null, hex: field.hex })).toBe('café € 100');
+  });
+});
 
 describe('hexToText', () => {
   it('returns null for null input', () => {
@@ -48,6 +68,12 @@ describe('hexToText', () => {
     // The resulting Uint8Array with NaN gets set to 0, which decodes but is empty
     // Either way the function must not throw
     expect(() => hexToText({ text: null, hex: 'abc' })).not.toThrow();
+  });
+
+  it('returns null via the catch branch when hex is not a string', () => {
+    // A non-string hex makes `.match` throw a TypeError, which the catch
+    // branch swallows and converts to null instead of crashing the caller.
+    expect(hexToText({ text: null, hex: 1234 as unknown as string })).toBeNull();
   });
 
   it('prefers text over hex when both are present', () => {

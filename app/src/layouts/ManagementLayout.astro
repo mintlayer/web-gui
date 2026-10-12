@@ -20,7 +20,7 @@ const tabs = [
 
 <Layout title={title} activeNav="management">
   <!-- Management sub-nav -->
-  <nav class="flex gap-1 mb-8 border-b border-gray-800 pb-0">
+  <nav class="flex gap-1 mb-8 border-b border-gray-800 pb-0 overflow-x-auto">
     {tabs.map(({ href, label, key }) => (
       <a
         href={href}

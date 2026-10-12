@@ -36,7 +36,6 @@ interface Props {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const TEN_MINUTES = 10 * 60 * 1000;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -117,30 +116,17 @@ export default function IssuedTokensPanel({ network }: Props) {
     try {
       const map = await fetchLiveInfos(tokens.map(t => t.tokenId));
       setLiveInfos(map);
-      sweepStaleTokens(tokens, map);
+      // NOTE: deliberately no auto-sweep of "unknown" tokens here. A null
+      // lookup means the node hasn't indexed the issuance yet (or is lagging),
+      // not that the token is gone — deleting the row destroyed the user's
+      // only local record. Failed issuances are flagged by checkFailedTxs and
+      // stay removable via the row's Remove button.
       await checkFailedTxs(tokens, map);
     } catch {
       // silently fail - we still show stored data
     } finally {
       setLoading(false);
     }
-  }
-
-  function sweepStaleTokens(tokens: StoredToken[], map: Map<string, TokenLiveInfo>) {
-    const now = Date.now();
-    const staleIds = new Set(
-      tokens
-        .filter(t => map.get(t.tokenId) === null && t.issuedAt > 0 && now - t.issuedAt > TEN_MINUTES)
-        .map(t => t.tokenId)
-    );
-    if (staleIds.size === 0) return;
-    setStored(prev => {
-      const updated = prev.filter(t => !staleIds.has(t.tokenId));
-      saveStored(updated);
-      return updated;
-    });
-    setLiveInfos(prev => { const next = new Map(prev); staleIds.forEach(id => next.delete(id)); return next; });
-    setFailedTokenIds(prev => { const next = new Set(prev); staleIds.forEach(id => next.delete(id)); return next; });
   }
 
   function removeToken(tokenId: string) {

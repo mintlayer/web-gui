@@ -21,7 +21,7 @@ export default function IssueNFTButton({ ipfsEnabled }: Props) {
         <IssueNFTModal
           ipfsEnabled={ipfsEnabled}
           onClose={() => setOpen(false)}
-          onIssued={() => setTimeout(() => window.location.reload(), 3000)}
+          onIssued={() => window.location.reload()}
         />
       )}
     </>

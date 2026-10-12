@@ -1,5 +1,11 @@
 import type { APIRoute } from 'astro';
 import { json } from '@/lib/api-utils';
+import { rpcCall, WalletRpcError } from '@/lib/wallet-rpc';
+import { requireStepUp, totpFromBody } from '@/lib/step-up';
+import { getServerBridgeApiUrl } from '@/lib/bridge-sdk/config';
+import { apiRequest } from '@/lib/bridge-sdk/http';
+import { isPositiveDecimal, isEvmAddress } from '@/lib/validation';
+import { validateEvmAddress } from '@/lib/bridge-sdk/addresses';
 
 /**
  * POST /api/bridge/ml-intent-tx
@@ -8,12 +14,17 @@ import { json } from '@/lib/api-utils';
  * needed for an M2E bridge request (Mintlayer -> Ethereum). Runs server-side
  * so wallet-rpc credentials never reach the browser.
  *
- * Security posture: the token_id and destination are NOT taken from the
- * request — they are resolved server-side from the bridge agents-config, so
- * a caller can only mint bridge deposits for supported tokens into the
- * bridge's own deposit address. The intent (EVM receiver) is user choice.
+ * Security posture:
+ *  - Money-movement endpoint: requires a fresh, single-use TOTP code
+ *    (step-up) on top of the session cookie, plus per-IP rate limiting.
+ *  - The token_id and destination are NOT taken from the request — they are
+ *    resolved server-side from the bridge agents-config, so a caller can only
+ *    mint bridge deposits for supported tokens into the bridge's own deposit
+ *    address. The intent (EVM receiver) is user choice.
+ *  - Wallet/bridge internals are never echoed to the client; only
+ *    whitelisted, user-fixable error classes pass through.
  *
- * Body: { token_id, amount, intent }
+ * Body: { token_id, amount, intent, totp_code }
  *  - token_id: Mintlayer token id (must be a bridged ML token)
  *  - amount:   decimal amount string (token units)
  *  - intent:   destination Ethereum address (0x…)
@@ -33,18 +44,42 @@ interface AgentsConfig {
 
 function pickFlavorConfig(config: AgentsConfig) {
   const flavors = config.eth_flavor_specific_config ?? {};
-  const key = Object.keys(flavors).find((k) => flavors[k]?.m2e != null) ?? '';
+  // Flavor keys are network-specific ('' = mainnet, 'sepolia' = testnet) and
+  // their order is not — pick the one matching the configured network first.
+  const preferred = config.network_type === 'mainnet' ? '' : 'sepolia';
+  const key =
+    flavors[preferred]?.m2e != null
+      ? preferred
+      : (Object.keys(flavors).find((k) => flavors[k]?.m2e != null) ?? '');
   return { flavor: key, cfg: flavors[key] };
 }
 
-async function fetchJson<T>(url: string, timeoutMs = 15000): Promise<T> {
-  const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
-  if (!res.ok) throw new Error(`bridge API returned ${res.status}`);
-  return res.json() as Promise<T>;
+/**
+ * Whitelist wallet-rpc failures into safe, user-fixable messages.
+ * Transport failures (code -32000/-32001) and daemon HTTP >=500 are service
+ * outages, not user mistakes — they must return 503 so the UI doesn't tell
+ * the user to fix something they cannot. Daemon JSON-RPC rejections keep the
+ * whitelist below; anything unrecognized stays generic (never echo daemon
+ * internals such as URLs to the client).
+ */
+function safeWalletError(err: unknown): { message: string; status: number } {
+  if (err instanceof WalletRpcError) {
+    if (err.code === -32000 || err.code === -32001 || err.code >= 500) {
+      console.error('[bridge/ml-intent-tx] wallet RPC transport failure:', err);
+      return { message: 'Wallet service unavailable', status: 503 };
+    }
+    const msg = err.message.toLowerCase();
+    if (msg.includes('insufficient')) return { message: 'Insufficient funds for this transfer', status: 400 };
+    if (msg.includes('not open') || msg.includes('wallet not')) return { message: 'Wallet is not open — open it from the dashboard first', status: 409 };
+    if (msg.includes('balance')) return { message: 'Insufficient balance for this transfer', status: 400 };
+    return { message: 'Wallet rejected the bridge transaction', status: 400 };
+  }
+  console.error('[bridge/ml-intent-tx] wallet RPC failure:', err);
+  return { message: 'Wallet service unavailable', status: 503 };
 }
 
-export const POST: APIRoute = async ({ request }) => {
-  let body: { token_id?: unknown; amount?: unknown; intent?: unknown };
+export const POST: APIRoute = async ({ request, clientAddress }) => {
+  let body: Record<string, unknown> = {};
   try {
     body = await request.json();
   } catch {
@@ -58,21 +93,29 @@ export const POST: APIRoute = async ({ request }) => {
   if (!tokenId || !amount || !intent) {
     return json({ ok: false, error: 'token_id, amount and intent are required' }, 400);
   }
-  if (!/^0x[0-9a-fA-F]{40}$/.test(intent)) {
-    return json({ ok: false, error: 'intent must be a 0x… Ethereum address' }, 400);
+  if (!isEvmAddress(intent) || !validateEvmAddress(intent).valid) {
+    // Regex alone accepts any 40-hex string; the EIP-55 checksum (or a fully
+    // single-case address) is what catches a mistyped receiver before funds
+    // are irreversibly bridged.
+    return json({ ok: false, error: 'intent must be a valid Ethereum address' }, 400);
   }
-  if (!/^\d+(\.\d+)?$/.test(amount) || parseFloat(amount) <= 0) {
+  if (!isPositiveDecimal(amount)) {
     return json({ ok: false, error: 'amount must be a positive decimal string' }, 400);
   }
 
   // Resolve bridged-token + deposit destination from the live agents config
-  // (never trust client-supplied destinations).
+  // BEFORE the step-up gate (never trust client-supplied destinations). Every
+  // failure below this point would otherwise burn the user's authenticator
+  // code for an error knowable without the wallet.
   let destination: string;
   try {
-    const config = await fetchJson<AgentsConfig>(
-      `${process.env.BRIDGE_API_URL ?? 'https://api.bridge.mintlayer.org/api/v1/'}agents-config`,
+    const config = await apiRequest<AgentsConfig>(
+      `${getServerBridgeApiUrl().replace(/\/+$/, '')}/agents-config`,
     );
-    if (!config.ml_tokens?.[tokenId]) {
+    if (typeof config.ml_tokens?.[tokenId] !== 'string') {
+      // Not `!config.ml_tokens?.[tokenId]` — truthiness would pass inherited
+      // Object properties (constructor/toString/__proto__) and burn a code
+      // for a request the wallet would reject anyway.
       return json({ ok: false, error: `token ${tokenId} is not bridged` }, 400);
     }
     const { cfg } = pickFlavorConfig(config);
@@ -81,55 +124,43 @@ export const POST: APIRoute = async ({ request }) => {
       return json({ ok: false, error: 'bridge M2E deposits are not configured' }, 503);
     }
   } catch (err) {
-    return json(
-      { ok: false, error: `bridge config unavailable: ${(err as Error).message}` },
-      503,
-    );
+    console.error('[bridge/ml-intent-tx] agents-config unavailable:', err);
+    return json({ ok: false, error: 'bridge config unavailable' }, 503);
   }
 
-  // Create the signed, unbroadcast intent transaction via wallet-rpc-daemon.
+  // Step-up LAST before the RPC call: validates + burns the TOTP code. From
+  // here on every failure has already consumed the code, so responses carry
+  // code_consumed:true (the UI tells the user to enter a fresh code).
+  const stepUp = requireStepUp(totpFromBody(body), request, clientAddress as string | undefined);
+  if (!stepUp.ok) {
+    return json({ ok: false, error: stepUp.error }, stepUp.status);
+  }
+
+  // Create the signed, unbroadcast intent transaction via wallet-rpc-daemon
+  // (shared rpcCall: auth, URL, timeout, JSON/error handling in one place).
   try {
-    const auth = Buffer.from(
-      `${process.env.WALLET_RPC_USERNAME}:${process.env.WALLET_RPC_PASSWORD}`,
-    ).toString('base64');
-    const res = await fetch(
-      process.env.WALLET_RPC_URL ?? 'http://wallet-rpc-daemon:3034',
+    const result = await rpcCall<{ transaction?: string; signed_intent?: string }>(
+      'token_make_tx_to_send_with_intent',
       {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Basic ${auth}` },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'token_make_tx_to_send_with_intent',
-          params: {
-            account: 0,
-            token_id: tokenId,
-            address: destination,
-            amount,
-            intent,
-            options: {},
-          },
-        }),
-        signal: AbortSignal.timeout(120_000),
+        account: 0,
+        token_id: tokenId,
+        address: destination,
+        amount,
+        intent,
+        options: {},
       },
+      { timeoutMs: 120_000 },
     );
-    const data = (await res.json()) as {
-      result?: { transaction?: string; signed_intent?: string };
-      error?: { message?: string };
-    };
-    if (data.error) {
-      return json({ ok: false, error: data.error.message ?? 'wallet RPC error' }, 400);
-    }
-    const rawTx = data.result?.transaction;
-    const signedIntent = data.result?.signed_intent;
+    const rawTx = result?.transaction;
+    const signedIntent = result?.signed_intent;
     if (!rawTx || !signedIntent) {
-      return json({ ok: false, error: 'wallet returned an incomplete transaction' }, 500);
+      return json({ ok: false, error: 'wallet returned an incomplete transaction', code_consumed: true }, 500);
     }
     return json({ ok: true, raw_transaction: rawTx, intent: signedIntent });
   } catch (err) {
-    return json(
-      { ok: false, error: `wallet RPC failed: ${(err as Error).message}` },
-      503,
-    );
+    const { message, status } = safeWalletError(err);
+    // The TOTP code was verified + burned before the RPC call; tell the UI so
+    // it can ask for a fresh code instead of silently failing a retry.
+    return json({ ok: false, error: message, code_consumed: true }, status);
   }
 };

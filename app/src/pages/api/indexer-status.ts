@@ -8,8 +8,9 @@ export const GET: APIRoute = async () => {
     nodeBestBlockHeight().catch(() => null),
   ]);
   const up = height !== null;
-  const synced = up && nodeHeight !== null && height >= nodeHeight - 2;
-  return new Response(JSON.stringify({ up, height, nodeHeight, synced }), {
+  const nodeUp = nodeHeight !== null;
+  const synced = up && nodeUp && height >= nodeHeight - 2;
+  return new Response(JSON.stringify({ up, nodeUp, height, nodeHeight, synced }), {
     headers: { 'Content-Type': 'application/json' },
   });
 };

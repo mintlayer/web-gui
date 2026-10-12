@@ -140,12 +140,26 @@ fn save_seed(path: &PathBuf, mnemonic: &str, network: Network) -> Result<()> {
         network: network_name(network).to_string(),
         created_at: now_unix(),
     };
-    fs::write(path, serde_json::to_string_pretty(&file)?)?;
+    // create_new + 0600 from the start: no window where the mnemonic sits on
+    // disk with default (world-readable) permissions before the chmod lands.
+    // sync_all before returning: the only copy of the wallet's key material
+    // must not sit in a page cache that a crash/power-loss can lose — a seed
+    // file that exists but reads back empty truncates the wallet into
+    // unrecoverable.
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)?;
+        f.write_all(serde_json::to_string_pretty(&file)?.as_bytes())?;
+        f.sync_all()?;
     }
+    #[cfg(not(unix))]
+    fs::write(path, serde_json::to_string_pretty(&file)?)?;
     Ok(())
 }
 
@@ -175,6 +189,23 @@ fn build_wallet(config: &Config, mnemonic: &str) -> Result<BdkWallet> {
     let database = AnyDatabase::from_config(&AnyDatabaseConfig::Sqlite(SqliteDbConfiguration {
         path: config.data_dir.join("wallet.sqlite").display().to_string(),
     }))?;
+
+    // The sqlite db (plus its WAL/SHM sidecars) holds the full xprv — tighten
+    // to owner-only. bdk creates the file with the process umask, which in
+    // typical container images leaves it 0644 (world-readable).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perm = fs::Permissions::from_mode(0o600);
+        let db_path = config.data_dir.join("wallet.sqlite");
+        let _ = fs::set_permissions(&db_path, perm.clone());
+        for sidecar in ["wallet.sqlite-wal", "wallet.sqlite-shm"] {
+            let p = config.data_dir.join(sidecar);
+            if p.exists() {
+                let _ = fs::set_permissions(&p, perm.clone());
+            }
+        }
+    }
 
     let wallet = Wallet::new(&external, Some(&internal), config.network, database)
         .context("failed to open wallet")?;
@@ -226,10 +257,18 @@ fn parse_btc_to_sats(amount: &str) -> Result<u64> {
     if trimmed.is_empty() || !trimmed.chars().all(|c| c.is_ascii_digit() || c == '.') {
         bail!("amount must contain only digits and a decimal point");
     }
+    // Reject multi-dot inputs BEFORE splitting: '.' in the fraction would
+    // underflow the digit math below (panic in debug, silent wrap in release).
+    if trimmed.matches('.').count() > 1 {
+        bail!("amount must contain at most one decimal point");
+    }
     let (whole, frac) = match trimmed.split_once('.') {
         None => (trimmed, ""),
         Some((w, f)) => (w, f),
     };
+    if !frac.chars().all(|c| c.is_ascii_digit()) {
+        bail!("amount must contain only digits and a decimal point");
+    }
     if frac.len() > 8 {
         bail!("amount supports at most 8 decimal places");
     }
@@ -241,15 +280,26 @@ fn parse_btc_to_sats(amount: &str) -> Result<u64> {
     let mut sats: u64 = whole.checked_mul(100_000_000).context("amount overflow")?;
     let mut scale = 10_000_000u64; // first fractional digit is worth 1e7 sats
     for c in frac.chars() {
-        sats = sats
-            .checked_add((c as u8 - b'0') as u64 * scale)
-            .context("amount overflow")?;
+        let digit = c.to_digit(10).context("invalid fractional digit")? as u64;
+        sats = sats.checked_add(digit * scale).context("amount overflow")?;
         scale /= 10;
     }
     Ok(sats)
 }
 
 // ── Auth middleware ────────────────────────────────────────────────────────────
+
+/// Constant-time byte comparison (length difference still leaks - acceptable).
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
 
 async fn auth_middleware(
     State(state): State<Arc<AppState>>,
@@ -274,7 +324,10 @@ async fn auth_middleware(
         .map(|creds| {
             creds
                 .split_once(':')
-                .map(|(u, p)| u == state.config.http_user && p == state.config.http_pass)
+                .map(|(u, p)| {
+                    ct_eq(u.as_bytes(), state.config.http_user.as_bytes())
+                        && ct_eq(p.as_bytes(), state.config.http_pass.as_bytes())
+                })
                 .unwrap_or(false)
         })
         .unwrap_or(false);
@@ -285,25 +338,67 @@ async fn auth_middleware(
     }
 }
 
-// ── Handlers ───────────────────────────────────────────────────────────────────
+// ── Response helpers ───────────────────────────────────────────────────────────
 
-fn internal_error(e: anyhow::Error) -> Response {
-    error!("{e:#}");
+fn wallet_not_created() -> Response {
     (
-        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-        Json(json!({ "ok": false, "error": e.to_string() })),
+        axum::http::StatusCode::CONFLICT,
+        Json(json!({ "ok": false, "error": "wallet not created yet - POST /wallet first" })),
     )
         .into_response()
 }
 
+/// Map a balance to its JSON shape (shared by /status and /balance).
+fn balance_json(b: &bdk::Balance) -> serde_json::Value {
+    json!({
+        "confirmed": b.confirmed.to_string(),
+        "trustedPending": b.trusted_pending.to_string(),
+        "untrustedPending": b.untrusted_pending.to_string(),
+        "immature": b.immature.to_string(),
+    })
+}
+
+/// Best-effort classification of *user-fixable* send errors. Everything else
+/// is returned opaque (full detail stays in the tracing log only) so sidecar
+/// internals (paths, sqlite, RPC bodies) never reach the browser.
+fn classify_send_error(msg: &str) -> Option<(axum::http::StatusCode, String)> {
+    let lower = msg.to_lowercase();
+    if lower.contains("insufficient") || lower.contains("not enough") {
+        Some((axum::http::StatusCode::BAD_REQUEST, "insufficient funds".into()))
+    } else if lower.contains("signing failed") || lower.contains("could not finalize") {
+        Some((axum::http::StatusCode::BAD_REQUEST, "transaction signing failed".into()))
+    } else if lower.contains("wallet not created yet") {
+        Some((axum::http::StatusCode::CONFLICT, "wallet not created yet - POST /wallet first".into()))
+    } else if lower.contains("broadcast") || lower.contains("bitcoind rpc error") {
+        Some((axum::http::StatusCode::BAD_GATEWAY, "bitcoin node refused the transaction".into()))
+    } else if lower.contains("fee rate") || lower.contains("feerate") {
+        Some((axum::http::StatusCode::BAD_REQUEST, "invalid fee rate".into()))
+    } else {
+        None
+    }
+}
+
+fn internal_error(e: anyhow::Error) -> Response {
+    error!("{e:#}");
+    if let Some((status, msg)) = classify_send_error(&e.to_string()) {
+        return (status, Json(json!({ "ok": false, "error": msg }))).into_response();
+    }
+    (
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({ "ok": false, "error": "internal error (see sidecar logs)" })),
+    )
+        .into_response()
+}
+
+// ── Handlers ───────────────────────────────────────────────────────────────────
+
 /// Load the wallet in a blocking task and store it in the shared state.
-async fn open_wallet(state: &Arc<AppState>, mnemonic: &str, created_at: u64) -> Result<()> {
-    let config = Arc::clone(&state.config);
+async fn open_wallet(state: &Arc<AppState>, mnemonic: &str, created_at: u64) -> Result<()> {    let config = Arc::clone(&state.config);
     let mnemonic = mnemonic.to_string();
     let wallet = spawn_blocking(move || build_wallet(&config, &mnemonic))
         .await
         .map_err(|e| anyhow!("join error: {e}"))??;
-    *state.sync_start_time.lock().unwrap() = created_at;
+    *state.sync_start_time.lock().unwrap_or_else(|p| p.into_inner()) = created_at;
     *state.wallet.lock().await = Some(wallet);
     Ok(())
 }
@@ -329,7 +424,7 @@ async fn create_wallet(
     }
 
     let mnemonic = match req.seed {
-        Some(s) => {
+        Some(ref s) => {
             let normalized = s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
             if let Err(e) = Mnemonic::parse_in(Language::English, &normalized) {
                 return (
@@ -351,13 +446,19 @@ async fn create_wallet(
     }
 
     match open_wallet(&state, &mnemonic, now_unix()).await {
-        Ok(()) => Json(json!({
-            "ok": true,
-            "created": true,
-            "network": network_name(state.config.network),
-            "mnemonic": mnemonic,
-        }))
-        .into_response(),
+        Ok(()) => {
+            // Echo the mnemonic ONLY when we generated it. For restores the
+            // user already knows their seed - never serve it back.
+            let mut body = json!({
+                "ok": true,
+                "created": true,
+                "network": network_name(state.config.network),
+            });
+            if req.seed.is_none() {
+                body["mnemonic"] = json!(mnemonic);
+            }
+            Json(body).into_response()
+        }
         Err(e) => internal_error(e.context("opening wallet after creation")),
     }
 }
@@ -370,7 +471,7 @@ async fn sync(State(state): State<Arc<AppState>>) -> Response {
     let st = Arc::clone(&state);
     tokio::spawn(async move {
         let res = spawn_blocking(move || -> Result<()> {
-            let start_time = *st.sync_start_time.lock().unwrap();
+            let start_time = *st.sync_start_time.lock().unwrap_or_else(|p| p.into_inner());
             let chain = RpcBlockchain::from_config(&st.config.rpc_config(start_time))?;
             let mut guard = st.wallet.blocking_lock();
             if let Some(w) = guard.as_mut() {
@@ -407,15 +508,7 @@ async fn status(State(state): State<Arc<AppState>>) -> Response {
     let wallet = state.wallet.lock().await;
     let (wallet_loaded, balance) = match wallet.as_ref() {
         Some(w) => match w.get_balance() {
-            Ok(b) => (
-                true,
-                Some(json!({
-                    "confirmed": b.confirmed.to_string(),
-                    "trustedPending": b.trusted_pending.to_string(),
-                    "untrustedPending": b.untrusted_pending.to_string(),
-                    "immature": b.immature.to_string(),
-                })),
-            ),
+            Ok(b) => (true, Some(balance_json(&b))),
             Err(e) => {
                 warn!("get_balance failed: {e}");
                 (true, None)
@@ -445,22 +538,15 @@ async fn status(State(state): State<Arc<AppState>>) -> Response {
 async fn balance(State(state): State<Arc<AppState>>) -> Response {
     let wallet = state.wallet.lock().await;
     let Some(w) = wallet.as_ref() else {
-        return (
-            axum::http::StatusCode::CONFLICT,
-            Json(json!({ "ok": false, "error": "wallet not created yet - POST /wallet first" })),
-        )
-            .into_response();
+        return wallet_not_created();
     };
     match w.get_balance() {
-        Ok(b) => Json(json!({
-            "ok": true,
-            "confirmed": b.confirmed.to_string(),
-            "trustedPending": b.trusted_pending.to_string(),
-            "untrustedPending": b.untrusted_pending.to_string(),
-            "immature": b.immature.to_string(),
-            "total": (b.confirmed + b.trusted_pending + b.untrusted_pending).to_string(),
-        }))
-        .into_response(),
+        Ok(b) => {
+            let mut body = balance_json(&b);
+            body["ok"] = json!(true);
+            body["total"] = json!((b.confirmed + b.trusted_pending + b.untrusted_pending).to_string());
+            Json(body).into_response()
+        }
         Err(e) => internal_error(e.into()),
     }
 }
@@ -473,11 +559,7 @@ async fn new_address(State(state): State<Arc<AppState>>) -> Response {
             Ok(info) => Json(json!({ "ok": true, "address": info.address.to_string() })).into_response(),
             Err(e) => internal_error(e.into()),
         },
-        None => (
-            axum::http::StatusCode::CONFLICT,
-            Json(json!({ "ok": false, "error": "wallet not created yet - POST /wallet first" })),
-        )
-            .into_response(),
+        None => wallet_not_created(),
     }
 }
 
@@ -489,11 +571,7 @@ async fn current_address(State(state): State<Arc<AppState>>) -> Response {
             Ok(info) => Json(json!({ "ok": true, "address": info.address.to_string() })).into_response(),
             Err(e) => internal_error(e.into()),
         },
-        None => (
-            axum::http::StatusCode::CONFLICT,
-            Json(json!({ "ok": false, "error": "wallet not created yet - POST /wallet first" })),
-        )
-            .into_response(),
+        None => wallet_not_created(),
     }
 }
 
@@ -509,11 +587,7 @@ async fn txs(
 ) -> Response {
     let wallet = state.wallet.lock().await;
     let Some(w) = wallet.as_ref() else {
-        return (
-            axum::http::StatusCode::CONFLICT,
-            Json(json!({ "ok": false, "error": "wallet not created yet - POST /wallet first" })),
-        )
-            .into_response();
+        return wallet_not_created();
     };
     let limit = q.limit.unwrap_or(50).min(500);
     let tx_list = w.list_transactions(false).unwrap_or_default();
@@ -591,7 +665,7 @@ async fn send(State(state): State<Arc<AppState>>, Json(req): Json<SendReq>) -> R
 
     let st = Arc::clone(&state);
     let res = spawn_blocking(move || -> Result<String> {
-        let start_time = *st.sync_start_time.lock().unwrap();
+        let start_time = *st.sync_start_time.lock().unwrap_or_else(|p| p.into_inner());
         let chain = RpcBlockchain::from_config(&st.config.rpc_config(start_time))?;
         let mut guard = st.wallet.blocking_lock();
         let Some(w) = guard.as_mut() else {
@@ -671,7 +745,14 @@ async fn main() -> Result<()> {
         wallet: AsyncMutex::new(None),
         sync_start_time: Mutex::new(now_unix()),
         syncing: AtomicBool::new(false),
-        node: reqwest::Client::new(),
+        // Bounded timeouts on the bitcoind client: without them a hung/rpc-
+        // wedged node pins sync/send handlers until the HTTP client gives up
+        // (which, with no timeout, is never).
+        node: reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .context("failed to build bitcoind HTTP client")?,
     });
 
     // Auto-load the wallet if a seed was previously persisted.
@@ -705,4 +786,63 @@ async fn main() -> Result<()> {
     info!("listening on {addr}");
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+// ── Tests ──────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_plain_amounts() {
+        assert_eq!(parse_btc_to_sats("1").unwrap(), 100_000_000);
+        assert_eq!(parse_btc_to_sats("0.5").unwrap(), 50_000_000);
+        assert_eq!(parse_btc_to_sats("0.00000001").unwrap(), 1);
+        assert_eq!(parse_btc_to_sats("12.3456789").unwrap(), 1_234_567_890);
+        assert_eq!(parse_btc_to_sats(" 21 ").unwrap(), 2_100_000_000);
+        assert_eq!(parse_btc_to_sats(".5").unwrap(), 50_000_000);
+        assert_eq!(parse_btc_to_sats("1.").unwrap(), 100_000_000);
+    }
+
+    #[test]
+    fn rejects_multi_dot_amounts() {
+        // used to u8-underflow to a silent 3.74 BTC misparse in release builds
+        assert!(parse_btc_to_sats("1.2.3").is_err());
+        assert!(parse_btc_to_sats("..").is_err());
+    }
+
+    #[test]
+    fn rejects_garbage_amounts() {
+        assert!(parse_btc_to_sats("").is_err());
+        assert!(parse_btc_to_sats("  ").is_err());
+        assert!(parse_btc_to_sats("-1").is_err());
+        assert!(parse_btc_to_sats("1e3").is_err());
+        assert!(parse_btc_to_sats("abc").is_err());
+        assert!(parse_btc_to_sats("0.000000001").is_err()); // 9 decimals
+        assert!(parse_btc_to_sats("1.2.3.4").is_err());
+    }
+
+    #[test]
+    fn rejects_overflow() {
+        assert!(parse_btc_to_sats("99999999999").is_err() || parse_btc_to_sats("184467440737.09551616").is_err());
+        assert!(parse_btc_to_sats("18446744073709551616").is_err());
+    }
+
+    #[test]
+    fn ct_eq_matches_only_equal_inputs() {
+        assert!(ct_eq(b"abc", b"abc"));
+        assert!(!ct_eq(b"abc", b"abd"));
+        assert!(!ct_eq(b"abc", b"abcd"));
+        assert!(!ct_eq(b"", b"a"));
+        assert!(ct_eq(b"", b""));
+    }
+
+    #[test]
+    fn send_error_classification() {
+        let (s, m) = classify_send_error("InsufficientFunds { needed: .. }").unwrap();
+        assert_eq!(s, axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(m, "insufficient funds");
+        assert_eq!(classify_send_error("NoSpaceLeft { path: \"/data/wallet.sqlite\" }"), None);
+    }
 }

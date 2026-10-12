@@ -20,7 +20,7 @@ export function TotpField({
   const id = useId();
   return (
     <div>
-      <label htmlFor={id} className="block text-xs text-gray-400 mb-1">2FA code</label>
+      <label htmlFor={id} className="block text-xs text-gray-400 mb-1">Authenticator code</label>
       <input
         id={id}
         ref={inputRef}

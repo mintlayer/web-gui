@@ -139,17 +139,21 @@ function New-RandomPassword([int]$Length = 32) {
 }
 
 function New-PasswordHash([string]$Password) {
+    # 210k iterations - OWASP floor (matches init.sh / the app's rehash logic).
     $rng  = [System.Security.Cryptography.RandomNumberGenerator]::Create()
     $salt = New-Object byte[] 32
     $rng.GetBytes($salt)
     $saltHex = ([BitConverter]::ToString($salt) -replace '-').ToLower()
+    # The app's verifyPassword hashes over the UTF-8 bytes of the stored HEX
+    # SALT STRING (salt.encode() in init.sh / deploy/linux.sh) — deriving over
+    # the raw salt bytes produces a different key and logins always fail.
     $pbkdf2  = New-Object System.Security.Cryptography.Rfc2898DeriveBytes(
-        $Password, $salt, 100000,
+        $Password, [System.Text.Encoding]::UTF8.GetBytes($saltHex), 210000,
         [System.Security.Cryptography.HashAlgorithmName]::SHA512)
     $key    = $pbkdf2.GetBytes(64)
     $pbkdf2.Dispose()
     $keyHex = ([BitConverter]::ToString($key) -replace '-').ToLower()
-    return "pbkdf2:sha512:100000:${saltHex}:${keyHex}"
+    return "pbkdf2:sha512:210000:${saltHex}:${keyHex}"
 }
 
 function ConvertTo-Base32([byte[]]$Bytes) {
@@ -394,6 +398,9 @@ services:
   # ─────────────────────────────────────────
   web-gui:
     image: "${ML_WEB_GUI_IMAGE:-mintlayer/web-gui:latest}"
+    # Run as the invoking host user (same as the repo compose) so the
+    # bind-mounted prefs DB and uploads/ stay owned by one uid.
+    user: "${ML_USER_ID:-10001}:${ML_GROUP_ID:-10001}"
     depends_on:
       - wallet-rpc-daemon
     volumes:
@@ -418,11 +425,15 @@ services:
       PINATA_JWT: "${PINATA_JWT:-}"
       IPFS_PROVIDER: "${IPFS_PROVIDER:-}"
       FILEBASE_TOKEN: "${FILEBASE_TOKEN:-}"
-      UI_PASSWORD_HASH: "${UI_PASSWORD_HASH}"
-      UI_TOTP_SECRET: "${UI_TOTP_SECRET}"
       SESSION_SECRET: "${SESSION_SECRET}"
       WALLET_RPC_CMD: "${WALLET_RPC_CMD:-}"
       INDEXER_ENABLED: "${INDEXER_ENABLED:-false}"
+      BITCOIN_ENABLED: "${BITCOIN_ENABLED:-false}"
+      BITCOIN_NETWORK: "${BITCOIN_NETWORK:-}"
+      BITCOIN_WALLET_URL: "http://bdk-wallet:8080"
+      BITCOIN_WALLET_USERNAME: "${BITCOIN_WALLET_HTTP_USERNAME:-}"
+      BITCOIN_WALLET_PASSWORD: "${BITCOIN_WALLET_HTTP_PASSWORD:-}"
+      BITCOIN_EXPLORER_URL: "${BITCOIN_EXPLORER_URL:-}"
       HOST: "0.0.0.0"
       PORT: "4321"
     restart: unless-stopped
@@ -535,6 +546,65 @@ services:
       LOG_FILE: "false"
     profiles:
       - duckdns
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────
+  # Optional: Bitcoin stack  (profile: bitcoin)
+  # Enable by setting BITCOIN_ENABLED=true in .env, generating the BITCOIN_*
+  # RPC credentials, then: docker compose --profile bitcoin up -d
+  # mainnet needs ~700 GB (txindex); testnet ~50 GB; pruned ~15-25 GB.
+  # ─────────────────────────────────────────
+  bitcoind:
+    image: "${BITCOIND_IMAGE:-bitcoin/bitcoin:25}"
+    volumes:
+      - "./bitcoin-data:/home/bitcoin/.bitcoin"
+    command:
+      - "-printtoconsole=1"
+      - "-chain=${BITCOIN_CORE_CHAIN:-${BITCOIN_NETWORK:-mainnet}}"
+      - "-rpcbind=0.0.0.0:8332"
+      - "-rpcallowip=0.0.0.0/0"
+      - "-rpcuser=${BITCOIN_RPC_USERNAME}"
+      - "-rpcpassword=${BITCOIN_RPC_PASSWORD}"
+      - "-txindex=${BITCOIN_TXINDEX:-1}"
+      - "-prune=${BITCOIN_PRUNE:-0}"
+      - "-fallbackfee=0.0002"
+    profiles:
+      - bitcoin
+    restart: unless-stopped
+
+  btc-explorer:
+    image: "${BTC_EXPLORER_IMAGE:-mintlayer/web-gui/btc-explorer:latest}"
+    depends_on:
+      - bitcoind
+    environment:
+      BTCEXP_BITCOIND_URI: "bitcoin://${BITCOIN_RPC_USERNAME}:${BITCOIN_RPC_PASSWORD}@bitcoind:8332?timeout=15000"
+      BTCEXP_HOST: "0.0.0.0"
+      BTCEXP_PORT: "3002"
+      BTCEXP_ADDRESS_API: "none"
+    ports:
+      - "127.0.0.1:${BITCOIN_EXPLORER_PORT:-3002}:3002"
+    profiles:
+      - bitcoin
+    restart: unless-stopped
+
+  bdk-wallet:
+    image: "${BDK_WALLET_IMAGE:-mintlayer/web-gui/bdk-wallet:latest}"
+    user: "${ML_USER_ID:-1000}:${ML_GROUP_ID:-1000}"
+    depends_on:
+      - bitcoind
+    volumes:
+      - "./bitcoin-wallet-data:/data"
+    environment:
+      BITCOIN_NETWORK: "${BITCOIN_NETWORK:-mainnet}"
+      BITCOIN_RPC_URL: "http://bitcoind:8332"
+      BITCOIN_RPC_USERNAME: "${BITCOIN_RPC_USERNAME}"
+      BITCOIN_RPC_PASSWORD: "${BITCOIN_RPC_PASSWORD}"
+      WALLET_HTTP_USERNAME: "${BITCOIN_WALLET_HTTP_USERNAME}"
+      WALLET_HTTP_PASSWORD: "${BITCOIN_WALLET_HTTP_PASSWORD}"
+      DATA_DIR: "/data"
+      RUST_LOG: "${RUST_LOG:-info}"
+    profiles:
+      - bitcoin
     restart: unless-stopped
 
 volumes:
@@ -697,22 +767,20 @@ if ($script:NonInteractive) {
     Write-Host "${CYAN}│${RESET}"
     Ok-ML "TOTP secret generated"
     Write-Host "${CYAN}│${RESET}"
-    Write-Host "${CYAN}│${RESET}  ${BOLD}Scan this with Google Authenticator, Authy, or any TOTP app:${RESET}"
+    Write-Host "${CYAN}│${RESET}  ${BOLD}Set up with Google Authenticator, Authy, or any TOTP app:${RESET}"
     Write-Host "${CYAN}│${RESET}"
-    Write-Host "${CYAN}│${RESET}  Paste this URI into ${CYAN}https://qr.io${RESET} to generate a QR code:"
-    Write-Host "${CYAN}│${RESET}  ${GRAY}$TotpUri${RESET}"
+    # Never send the secret anywhere — no third-party QR websites. Manual
+    # enrollment keeps the secret on this machine.
+    Write-Host "${CYAN}│${RESET}  In your authenticator app choose ${BOLD}`"Enter a setup key`"${RESET} and type:"
+    Write-Host "${CYAN}│${RESET}    Account: Mintlayer Web GUI"
+    Write-Host "${CYAN}│${RESET}    Key:     ${BOLD}${UiTotpSecret}${RESET}"
+    Write-Host "${CYAN}│${RESET}    Type:    Time-based (TOTP), 6 digits"
     Write-Host "${CYAN}│${RESET}"
-    Hint-ML "Or enter the secret manually: ${BOLD}${UiTotpSecret}${RESET}"
+    Hint-ML "Or paste this URI into your app's import field: ${BOLD}$TotpUri${RESET}"
     Write-Host "${CYAN}│${RESET}"
 
-    $openQr = Confirm-ML "Open QR code in your browser now?" 'Y'
-    if ($openQr -eq 'yes') {
-        Start-Process ("https://qr.io/?text=" + [Uri]::EscapeDataString($TotpUri))
-    }
-
     Write-Host "${CYAN}│${RESET}"
-    Warn-ML "Scan the QR code / save the TOTP secret NOW — it will not be shown again."
-    Write-Host "${CYAN}│${RESET}"
+    Warn-ML "Save the TOTP secret NOW — it will not be shown again."
     $scanned = 'no'
     while ($scanned -ne 'yes') {
         $scanned = Confirm-ML "I have scanned the QR code / saved the TOTP secret" 'N'
@@ -938,6 +1006,14 @@ $IndexerEnabled = if ($enableIndexer -eq 'yes') { 'true' } else { 'false' }
 $EnableHttps    = if ($httpsSetup -eq 'yes') { 'true' } else { 'false' }
 $WalletRpcCmd   = "wallet-rpc-daemon $Network"
 
+# Persist active compose profiles so later manual `docker compose up -d`
+# invocations keep the optional stacks enabled (the --profile flag at start
+# is one-shot).
+$composeProfiles = @()
+if ($enableIndexer -eq 'yes') { $composeProfiles += 'indexer' }
+if ($httpsSetup -eq 'yes')    { $composeProfiles += 'https' }
+if ($httpsSetup -eq 'yes' -and $DuckdnsSubdomain) { $composeProfiles += 'duckdns' }
+
 $envContent = @"
 # Generated by windows.ps1 on $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
 # ─────────────────────────────────────────
@@ -979,6 +1055,23 @@ ENABLE_HTTPS=$EnableHttps
 DOMAIN=$Domain
 DUCKDNS_SUBDOMAIN=$DuckdnsSubdomain
 DUCKDNS_TOKEN=$DuckdnsToken
+
+# ── Optional Bitcoin stack (profile: bitcoin) ────────────────────────────────
+# To enable: set BITCOIN_ENABLED=true, fill in RPC credentials, then:
+#   docker compose --profile bitcoin up -d
+BITCOIN_ENABLED=false
+BITCOIN_NETWORK=$Network
+BITCOIN_CORE_CHAIN=
+BITCOIN_RPC_USERNAME=bitcoin_user
+BITCOIN_RPC_PASSWORD=
+BITCOIN_WALLET_HTTP_USERNAME=
+BITCOIN_WALLET_HTTP_PASSWORD=
+BITCOIN_TXINDEX=1
+BITCOIN_PRUNE=0
+BITCOIN_EXPLORER_URL=
+
+# Active compose profiles
+COMPOSE_PROFILES=$($composeProfiles -join ',')
 "@
 Write-Utf8 (Join-Path $script:InstallDir '.env') $envContent
 Ok-ML ".env written"
@@ -994,7 +1087,12 @@ authenticator app (Google Authenticator, Authy, ...):
 
   Secret: $UiTotpSecret
 
-Or paste this URI into https://qr.io to generate a QR code:
+In your authenticator app choose "Enter a setup key" and type:
+  Account: Mintlayer Web GUI
+  Key:     $UiTotpSecret
+  Type:    Time-based (TOTP), 6 digits
+
+Or paste this URI into your app's import field:
 
   $TotpUri
 
@@ -1008,6 +1106,10 @@ This file contains a secret. Delete it after setup:
 # ── Write credentials to SQLite via temporary alpine container ────────────────
 $prefsDir = Join-Path $script:InstallDir 'mintlayer-data\prefs'
 New-Item -ItemType Directory -Force -Path $prefsDir | Out-Null
+# Pre-create uploads/ as the invoking user (docker would create it root-owned,
+# and web-gui — running as ML_USER_ID — must write uploads there).
+New-Item -ItemType Directory -Force -Path (Join-Path $script:InstallDir 'mintlayer-data\uploads') | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $script:InstallDir 'mintlayer-data\plugins') | Out-Null
 
 $sqlLines = [System.Collections.Generic.List[string]]::new()
 $sqlLines.Add("CREATE TABLE IF NOT EXISTS prefs (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
@@ -1033,7 +1135,12 @@ docker run --rm `
 
 Remove-Item $sqlFile -ErrorAction SilentlyContinue
 
+# Harden the prefs DB (holds the TOTP secret + password hash) and the .env
+# (holds SESSION_SECRET + RPC passwords) to the current user only.
 $dbPath = Join-Path $prefsDir 'mintlayer_prefs.sqlite'
+if (Test-Path $dbPath) { icacls $dbPath /inheritance:r /grant:r "${env:USERNAME}:F" | Out-Null }
+$envPath = Join-Path $script:InstallDir '.env'
+if (Test-Path $envPath) { icacls $envPath /inheritance:r /grant:r "${env:USERNAME}:F" | Out-Null }
 if (-not (Test-Path $dbPath) -or (Get-Item $dbPath).Length -eq 0) {
     Warn-ML "SQLite file was not created. Docker Desktop file sharing may be misconfigured."
     Hint-ML "Open Docker Desktop → Settings → Resources → File Sharing"

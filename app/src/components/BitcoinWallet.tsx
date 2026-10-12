@@ -1,42 +1,23 @@
 "use client";
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { CopyButton } from '@/components/CopyButton';
+import AddressSuggestion from '@/components/AddressSuggestion';
+import SeedBackupStep from '@/components/SeedBackupStep';
 import { suggestAddressCorrection, hrpForNetwork } from '@/lib/bech32-correct';
+import type {
+  BitcoinStatus,
+  BitcoinTransaction,
+  BitcoinBalance,
+} from '@/lib/bitcoin-wallet';
 
-// ── Types (mirror of the sidecar payloads) ────────────────────────────────────
-
-interface BitcoinNodeInfo {
-  reachable: boolean;
-  blocks: number;
-  headers: number;
-  synced: boolean;
-  initialBlockDownload: boolean;
-}
-
-interface BitcoinStatus {
-  network: string;
-  walletExists: boolean;
-  walletLoaded: boolean;
-  node: BitcoinNodeInfo;
-  balance: { confirmed: string; trustedPending: string; untrustedPending: string; immature: string } | null;
-}
-
-interface BitcoinTransaction {
-  txid: string;
-  received: string;
-  sent: string;
-  fee: string | null;
-  confirmed: boolean;
-  height: number | null;
-  timestamp: number | null;
-}
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 interface Overview {
   status: BitcoinStatus | null;
   address: string | null;
-  balance: { confirmed: string; trustedPending: string; untrustedPending: string; immature: string } | null;
+  balance: BitcoinBalance | null;
   transactions: BitcoinTransaction[] | null;
 }
 
@@ -47,7 +28,14 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: init?.body ? { 'Content-Type': 'application/json' } : undefined,
   });
-  const data = await res.json() as T & { ok?: boolean; error?: string };
+  // Auth expiry and proxy errors return the login HTML or a plain-text 403,
+  // never JSON — parsing those surfaces a raw SyntaxError instead of the cause.
+  const contentType = res.headers.get('content-type') ?? '';
+  if (res.redirected || res.status === 401 || !contentType.includes('application/json')) {
+    window.location.assign('/login');
+    throw new Error('Your session expired — redirecting to login…');
+  }
+  const data = (await res.json()) as T & { ok?: boolean; error?: string };
   if (!res.ok || data.ok === false) throw new Error(data.error ?? `Request failed (${res.status})`);
   return data;
 }
@@ -62,9 +50,17 @@ function satsToBtc(sats: string | bigint): string {
   return `${neg ? '-' : ''}${whole.toString()}${frac ? `.${frac}` : ''}`;
 }
 
+/** Clean a pasted seed: strip list numbering ("1. word") + collapse spaces. */
+function cleanSeed(val: string): string {
+  return val.replace(/\b\d+[.\s]\s*/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 const card = 'bg-gray-900 border border-gray-800 rounded-xl p-6';
 const input = 'w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-mint-600';
 const primaryBtn = 'rounded-lg bg-mint-700 hover:bg-mint-600 px-4 py-2 text-sm font-semibold text-white transition-colors disabled:opacity-50';
+
+const totpInput = `${input} max-w-[8rem] tracking-[0.3em] text-center`;
+const totpLabel = 'Web login is protected by 2FA — moving funds requires a fresh authenticator code.';
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -73,16 +69,32 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [noticeIsError, setNoticeIsError] = useState(false);
 
-  const [newMnemonic, setNewMnemonic] = useState<string[] | null>(null);
-  const [seedConfirmed, setSeedConfirmed] = useState(false);
+  const [newMnemonic, setNewMnemonic] = useState<string | null>(null);
+
+  // Create / restore (2FA-gated)
+  const [setupTotp, setSetupTotp] = useState('');
+  const [restoreOpen, setRestoreOpen] = useState(false);
+  const [restoreSeed, setRestoreSeed] = useState('');
+  const [setupError, setSetupError] = useState<string | null>(null);
 
   // Send form
   const [sendTo, setSendTo] = useState('');
   const [sendAmount, setSendAmount] = useState('');
+  const [sendTotp, setSendTotp] = useState('');
   const [sendError, setSendError] = useState<string | null>(null);
   const [sentTxid, setSentTxid] = useState<string | null>(null);
+  const [feeSatVb, setFeeSatVb] = useState<number | null>(null);
   const [addrSuggestion, setAddrSuggestion] = useState<{ corrected: string; fixedChars: number } | null>(null);
+
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const later = useCallback((fn: () => void, ms: number) => {
+    const t = setTimeout(fn, ms);
+    timers.current.push(t);
+  }, []);
+  useEffect(() => () => { timers.current.forEach(clearTimeout); }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -95,35 +107,96 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
 
   useEffect(() => { refresh(); }, [refresh]);
 
+  // Best-effort fee hint for the send form.
+  useEffect(() => {
+    api<{ satPerVb: Record<string, number> }>('/api/bitcoin/fee-estimate')
+      .then((r) => {
+        const fast = r.satPerVb?.['1'] ?? r.satPerVb?.['3'] ?? r.satPerVb?.['6'];
+        if (typeof fast === 'number') setFeeSatVb(fast);
+      })
+      .catch(() => { /* fee hint is optional */ });
+  }, []);
+
   const walletExists = overview?.status?.walletExists ?? false;
+
+  function showNotice(message: string, isError = false) {
+    setNotice(message);
+    setNoticeIsError(isError);
+  }
 
   // ── Create / restore wallet ─────────────────────────────────────────────────
 
   async function createWallet(seed?: string) {
     setBusy(true);
-    setNotice(null);
+    setSetupError(null);
     try {
       const res = await api<{ mnemonic?: string }>('/api/bitcoin/wallet', {
         method: 'POST',
-        body: JSON.stringify({ seed: seed ?? null }),
+        body: JSON.stringify({ seed: seed ?? null, totp_code: setupTotp.trim() }),
       });
-      setSeedConfirmed(false);
-      // Restores return no mnemonic — never show an empty seed-backup card.
-      const words = (res.mnemonic ?? '').split(/\s+/).filter(Boolean);
-      setNewMnemonic(words.length ? words : null);
+      setRestoreOpen(false);
+      setRestoreSeed('');
+      setSetupTotp('');
+      // Restores return no mnemonic — only a fresh generate shows the backup step.
+      setNewMnemonic(res.mnemonic ?? null);
       await refresh();
     } catch (err) {
-      setNotice((err as Error).message);
+      // The code may already be burned by this attempt — never leave stale
+      // six digits in the field for the user to blindly resubmit.
+      setSetupTotp('');
+      setSetupError((err as Error).message);
     } finally {
       setBusy(false);
     }
   }
 
-  function restoreWallet() {
-    const input = window.prompt('Enter your 12 or 24-word seed phrase');
-    if (!input || !input.trim()) return;
-    createWallet(input.trim());
+  function submitRestore(e: React.FormEvent) {
+    e.preventDefault();
+    const seed = cleanSeed(restoreSeed);
+    const words = seed.split(/\s+/).filter(Boolean);
+    if (words.length !== 12 && words.length !== 24) {
+      setSetupError(`A seed phrase has 12 or 24 words — this one has ${words.length}.`);
+      return;
+    }
+    createWallet(seed);
   }
+
+  useEffect(() => {
+    if (!restoreOpen || busy) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setRestoreOpen(false);
+        setSetupError(null);
+        // Shared with the create flow below — clear so a burned code from the
+        // modal never lingers in the inline create form.
+        setSetupTotp('');
+      }
+      // Light focus trap: keep Tab cycling inside the dialog.
+      if (e.key === 'Tab') {
+        const nodes = dialogRef.current?.querySelectorAll<HTMLElement>(
+          'button, input, textarea, [tabindex]:not([tabindex="-1"])',
+        );
+        if (!nodes || nodes.length === 0) return;
+        const first = nodes[0];
+        const last = nodes[nodes.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    dialogRef.current?.querySelector<HTMLElement>('textarea, input, button')?.focus();
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [restoreOpen, busy]);
 
   // ── Sync ────────────────────────────────────────────────────────────────────
 
@@ -131,10 +204,10 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
     setBusy(true);
     try {
       await api('/api/bitcoin/sync', { method: 'POST' });
-      setNotice('Sync started - balances refresh in a few seconds.');
-      setTimeout(refresh, 5000);
+      showNotice('Sync started - balances refresh in a few seconds.');
+      later(refresh, 5000);
     } catch (err) {
-      setNotice((err as Error).message);
+      showNotice((err as Error).message, true);
     } finally {
       setBusy(false);
     }
@@ -150,6 +223,10 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
       setSendError('Address and amount are required.');
       return;
     }
+    if (!/^\d{6}$/.test(sendTotp.trim())) {
+      setSendError('Enter your 6-digit 2FA code to confirm the send.');
+      return;
+    }
 
     // Typo recovery: checksum failure with a within-2-chars fix offers a
     // suggestion instead of sending. Never auto-replaces the input.
@@ -163,19 +240,35 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
       }
     }
 
+    if (
+      !window.confirm(
+        `Send ${sendAmount.trim()} BTC to\n${sendTo.trim()}?\n\nThis cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+
     setBusy(true);
     try {
       const res = await api<{ txid: string }>('/api/bitcoin/send', {
         method: 'POST',
-        body: JSON.stringify({ address: sendTo.trim(), amount_btc: sendAmount.trim() }),
+        body: JSON.stringify({
+          address: sendTo.trim(),
+          amount_btc: sendAmount.trim(),
+          totp_code: sendTotp.trim(),
+        }),
       });
       setSentTxid(res.txid);
       setSendTo('');
       setSendAmount('');
+      setSendTotp('');
       setAddrSuggestion(null);
-      setTimeout(refresh, 4000);
+      later(refresh, 4000);
     } catch (err) {
       setSendError((err as Error).message);
+      // The code that failed (invalid, expired or already burnt) must not be
+      // retried — clear it so the next attempt starts from a fresh entry.
+      setSendTotp('');
     } finally {
       setBusy(false);
     }
@@ -184,16 +277,34 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
   // ── Render ──────────────────────────────────────────────────────────────────
 
   if (loadError) {
-    return <div className={card}><p className="text-sm text-red-400">{loadError}</p></div>;
+    return (
+      <div className={card}>
+        <h2 className="text-base font-semibold text-gray-100 mb-2">Couldn&apos;t load the Bitcoin wallet</h2>
+        <p className="text-sm text-red-400 mb-3">{loadError}</p>
+        <p className="text-sm text-gray-400 mb-4">
+          If the Bitcoin stack isn&apos;t running, start it from the host:
+        </p>
+        <code className="block rounded bg-gray-800 px-3 py-2 text-xs font-mono text-mint-400 mb-4">
+          docker compose --profile bitcoin up -d
+        </code>
+        <button onClick={refresh} className={primaryBtn}>Retry</button>
+      </div>
+    );
   }
   if (!overview) {
-    return <div className={card}><p className="text-sm text-gray-500">Loading…</p></div>;
+    return (
+      <div className={card}>
+        <div className="h-4 w-40 rounded bg-gray-800 animate-pulse mb-3" />
+        <div className="h-24 rounded bg-gray-800/60 animate-pulse" />
+      </div>
+    );
   }
 
   const node = overview.status?.node;
   const offline = !overview.status || !node?.reachable;
   const balance = overview.balance;
   const explorer = explorerUrl ?? null;
+  const explorerHost = explorer ? (() => { try { return new URL(explorer).host; } catch { return null; } })() : null;
 
   return (
     <div className="space-y-6">
@@ -239,7 +350,16 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
       )}
 
       {notice && (
-        <div className="rounded-lg border border-mint-700 bg-mint-900/20 px-4 py-3 text-mint-300 text-sm">{notice}</div>
+        <div
+          role="status"
+          className={`rounded-lg border px-4 py-3 text-sm ${
+            noticeIsError
+              ? 'border-red-800 bg-red-950/50 text-red-300'
+              : 'border-mint-700 bg-mint-900/20 text-mint-300'
+          }`}
+        >
+          {notice}
+        </div>
       )}
 
       {/* ── No wallet yet ─────────────────────────────────────────────────────── */}
@@ -249,8 +369,24 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
           <p className="text-sm text-gray-400 mb-4">
             Recommended: restore with the <span className="text-gray-200 font-medium">same seed phrase as your Mintlayer wallet</span> —
             one seed, both chains (Bitcoin keys derive via BIP84 from the same words).
+            <span className="text-yellow-400"> The words are then stored by the BTC sidecar on this machine.</span>
           </p>
-          <button onClick={restoreWallet} disabled={busy} className={`${primaryBtn} mb-4`}>Restore from seed</button>
+          <p className="mt-4 text-xs text-gray-500">{totpLabel}</p>
+          <div className="mt-2 mb-4">
+            <label htmlFor="btc-setup-totp" className="block text-xs text-gray-400 mb-1">2FA code</label>
+            <input
+              id="btc-setup-totp"
+              value={setupTotp}
+              onChange={(e) => setSetupTotp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              placeholder="123456"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              className={totpInput}
+            />
+          </div>
+          <button onClick={() => { setRestoreOpen(true); setSetupError(null); }} disabled={busy} className={`${primaryBtn} mb-4`}>
+            Restore from seed
+          </button>
           <div className="rounded-lg border border-yellow-700/50 bg-yellow-900/10 px-3 py-2.5">
             <p className="text-xs text-yellow-400 mb-2">
               Or create an independent BTC wallet — this generates a <span className="font-semibold">separate seed phrase,
@@ -261,36 +397,96 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
               Create new wallet
             </button>
           </div>
+          {setupError && <p className="mt-2 text-sm text-red-400">{setupError}</p>}
         </div>
       )}
-      {/* ── One-time seed display ─────────────────────────────────────────────── */}
+
+      {/* ── One-time seed display (generated wallet only) ────────────────────── */}
       {newMnemonic && (
         <div className={card}>
-          <h2 className="text-base font-semibold text-gray-100 mb-2">Back up your seed phrase</h2>
-          <p className="text-sm text-gray-400 mb-4">
-            Write these 12 words down and keep them safe. <span className="text-red-400 font-semibold">They are shown only once</span> and
-            are the only way to recover your BTC wallet.
-          </p>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-5">
-            {newMnemonic.map((word, i) => (
-              <div key={i} className="flex items-center gap-2 rounded-lg bg-gray-800 border border-gray-700 px-3 py-2">
-                <span className="text-xs text-gray-500 w-4">{i + 1}</span>
-                <span className="text-sm font-mono text-gray-100">{word}</span>
-              </div>
-            ))}
-          </div>
-          <label className="flex items-center gap-2 mb-4 cursor-pointer select-none">
-            <input type="checkbox" checked={seedConfirmed} onChange={e => setSeedConfirmed(e.target.checked)} className="rounded accent-mint-500" />
-            <span className="text-sm text-gray-300">I have written down my seed phrase</span>
-          </label>
-          <button onClick={() => { setNewMnemonic(null); refresh(); }} disabled={!seedConfirmed} className={primaryBtn}>
+          <SeedBackupStep
+            mnemonic={newMnemonic}
+            walletPath="Bitcoin hot wallet (bdk sidecar on this machine)"
+            recoverHint="one-time-only"
+          />
+          <button onClick={() => { setNewMnemonic(null); refresh(); }} className={`${primaryBtn} mt-4`}>
             Continue
           </button>
         </div>
       )}
 
+      {/* ── Restore modal ────────────────────────────────────────────────────── */}
+      {restoreOpen && (
+        <div
+          ref={dialogRef}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Restore BTC wallet from seed"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !busy) {
+              setRestoreOpen(false);
+              setSetupError(null);
+              setSetupTotp('');
+            }
+          }}
+        >
+          <div className={`${card} w-full max-w-lg max-h-[90vh] overflow-y-auto`}>
+            <h2 className="text-base font-semibold text-gray-100 mb-2">Restore from seed phrase</h2>
+            <p className="text-sm text-gray-400 mb-3">
+              Enter your 12 or 24-word seed phrase. It is stored by the BTC sidecar on this machine.
+            </p>
+            <form onSubmit={submitRestore} className="space-y-3">
+              <div>
+                <label htmlFor="btc-restore-seed" className="block text-xs text-gray-400 mb-1">Seed phrase</label>
+                <textarea
+                  id="btc-restore-seed"
+                  value={restoreSeed}
+                  onChange={(e) => setRestoreSeed(cleanSeed(e.target.value))}
+                  rows={3}
+                  autoFocus
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="word1 word2 …"
+                  className={`${input} resize-none`}
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                  {restoreSeed.trim() ? restoreSeed.trim().split(/\s+/).length : 0} of 12 or 24 words
+                </p>
+              </div>
+              <div>
+                <label htmlFor="btc-restore-totp" className="block text-xs text-gray-400 mb-1">2FA code</label>
+                <input
+                  id="btc-restore-totp"
+                  value={setupTotp}
+                  onChange={(e) => setSetupTotp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder="123456"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  className={totpInput}
+                />
+              </div>
+              {setupError && <p className="text-sm text-red-400">{setupError}</p>}
+              <div className="flex gap-2 pt-1">
+                <button type="submit" disabled={busy} className={primaryBtn}>
+                  {busy ? 'Restoring…' : 'Restore wallet'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setRestoreOpen(false); setSetupError(null); }}
+                  disabled={busy}
+                  className="rounded-lg border border-gray-700 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* ── Wallet ────────────────────────────────────────────────────────────── */}
-      {overview.status && walletExists && (
+      {overview.status && walletExists && !newMnemonic && (
         <>
           {/* Balance — the sidecar's "immature" bucket (unmatured coinbase
               rewards) is intentionally not shown: it only applies to mined
@@ -316,7 +512,11 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
               <h2 className="text-base font-semibold text-gray-100 mb-4">Receive</h2>
               {overview.address ? (
                 <div className="flex flex-col items-center gap-4">
-                  <QRCodeSVG value={overview.address} size={148} bgColor="#111827" fgColor="#e5e7eb" />
+                  {/* White card + default colors: inverted QRs are rejected by
+                      some scanners — keep parity with the ML receive modal. */}
+                  <div className="rounded-xl bg-white p-3">
+                    <QRCodeSVG value={overview.address} size={140} />
+                  </div>
                   <code className="block rounded bg-gray-800 px-3 py-2 text-xs font-mono text-mint-400 break-all text-center">
                     {overview.address}
                   </code>
@@ -332,60 +532,89 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
                     </a>
                   )}
                 </div>
-              ) : (
+              ) : overview.status?.walletLoaded ? (
                 <p className="text-sm text-gray-500">Wallet is loading…</p>
+              ) : (
+                <div className="text-sm text-yellow-300">
+                  Wallet file exists but could not be loaded. Try Sync, and if it persists restart
+                  the bitcoin wallet service (docker compose --profile bitcoin up -d).
+                </div>
               )}
             </div>
 
             <div className={card}>
               <h2 className="text-base font-semibold text-gray-100 mb-4">Send</h2>
               {sentTxid && (
-                <div className="mb-4 px-3 py-2 rounded-lg border border-emerald-800 bg-emerald-950/50 text-emerald-300 text-sm">
-                  Sent! Transaction <code className="font-mono text-xs break-all">{sentTxid}</code>
+                <div role="status" className="mb-4 px-3 py-2 rounded-lg border border-emerald-800 bg-emerald-950/50 text-emerald-300 text-sm">
+                  Sent! Transaction <code className="font-mono text-xs break-all">{sentTxid}</code>{' '}
+                  <CopyButton value={sentTxid} title="Copy transaction id" />
+                  {explorer && (
+                    <>
+                      {' '}
+                      <a href={`${explorer}/tx/${sentTxid}`} target="_blank" rel="noopener noreferrer" className="underline hover:text-emerald-200">
+                        View ↗
+                      </a>
+                    </>
+                  )}
                 </div>
               )}
               {sendError && (
-                <div className="mb-4 px-3 py-2 rounded-lg border border-red-800 bg-red-950/50 text-red-300 text-sm">{sendError}</div>
+                <div role="alert" className="mb-4 px-3 py-2 rounded-lg border border-red-800 bg-red-950/50 text-red-300 text-sm">{sendError}</div>
               )}
               <form onSubmit={submitSend} className="space-y-3">
                 <div>
-                  <label className="block text-xs text-gray-400 mb-1">To address</label>
+                  <label htmlFor="btc-send-to" className="block text-xs text-gray-400 mb-1">To address</label>
                   <input
+                    id="btc-send-to"
                     value={sendTo}
                     onChange={e => { setSendTo(e.target.value); setAddrSuggestion(null); }}
                     placeholder="bc1…"
                     className={input}
+                    autoComplete="off"
+                    spellCheck={false}
                     required
                   />
                 </div>
                 {addrSuggestion && (
-                  <div className="rounded-lg border border-amber-800 bg-amber-900/20 px-3 py-2 text-xs text-amber-300">
-                    Did you mean{' '}
-                    <code className="font-mono text-mint-300 break-all">{addrSuggestion.corrected}</code>?
-                    <span className="text-amber-400/80"> (fixed {addrSuggestion.fixedChars} character{addrSuggestion.fixedChars === 1 ? '' : 's'})</span>
-                    <button
-                      type="button"
-                      onClick={() => { setSendTo(addrSuggestion.corrected); setAddrSuggestion(null); }}
-                      className="ml-1 underline font-semibold hover:text-amber-200"
-                    >
-                      Use suggested address
-                    </button>
-                  </div>
+                  <AddressSuggestion
+                    corrected={addrSuggestion.corrected}
+                    fixedChars={addrSuggestion.fixedChars}
+                    onAccept={() => { setSendTo(addrSuggestion.corrected); setAddrSuggestion(null); }}
+                    onDismiss={() => setAddrSuggestion(null)}
+                  />
                 )}
                 <div>
-                  <label className="block text-xs text-gray-400 mb-1">Amount (BTC)</label>
+                  <label htmlFor="btc-send-amount" className="block text-xs text-gray-400 mb-1">Amount (BTC)</label>
                   <input
+                    id="btc-send-amount"
                     value={sendAmount}
                     onChange={e => setSendAmount(e.target.value)}
                     placeholder="0.005"
                     inputMode="decimal"
                     pattern="\d{1,8}(\.\d{1,8})?"
                     className={input}
+                    autoComplete="off"
+                    required
+                  />
+                  {feeSatVb !== null && (
+                    <p className="mt-1 text-xs text-gray-500">Suggested fee: ~{feeSatVb} sat/vB</p>
+                  )}
+                </div>
+                <div>
+                  <label htmlFor="btc-send-totp" className="block text-xs text-gray-400 mb-1">2FA code</label>
+                  <input
+                    id="btc-send-totp"
+                    value={sendTotp}
+                    onChange={e => setSendTotp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    placeholder="123456"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    className={totpInput}
                     required
                   />
                 </div>
                 <button type="submit" disabled={busy} className={`${primaryBtn} w-full`}>
-                  {busy ? 'Signing…' : 'Send'}
+                  {busy ? 'Signing…' : 'Review & send'}
                 </button>
               </form>
             </div>
@@ -413,7 +642,7 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
                             target="_blank"
                             rel="noopener noreferrer"
                             className="text-xs text-gray-500 font-mono truncate hover:text-mint-400 transition-colors"
-                            title="View on mempool.space"
+                            title={explorerHost ? `View on ${explorerHost}` : 'View in explorer'}
                           >
                             {tx.txid} ↗
                           </a>
@@ -425,7 +654,7 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
                         <p className={`text-xs ${tx.confirmed ? 'text-gray-400' : 'text-yellow-400'}`}>
                           {tx.confirmed ? 'Confirmed' : 'Pending'}
                         </p>
-                        {tx.height !== null && <p className="text-xs text-gray-600">#{tx.height.toLocaleString()}</p>}
+                        {tx.height !== null && <p className="text-xs text-gray-500">#{tx.height.toLocaleString()}</p>}
                       </div>
                     </div>
                   );

@@ -2,10 +2,11 @@
  * bridge-sdk public API.
  *
  * @example
- * import { bridgeSdk } from '@/bridge-sdk';
- * const config = await bridgeSdk.getConfig();
+ * import { createBridgeSdk } from '@/bridge-sdk';
+ * const sdk = createBridgeSdk();
+ * const config = await sdk.getConfig();
  */
-export { createBridgeSdk, bridgeSdk } from './endpoints';
+export { createBridgeSdk } from './endpoints';
 export type { BridgeSdk, BridgeSdkDeps } from './endpoints';
 export type {
   BridgeRequestStatus,
@@ -18,7 +19,7 @@ export {
   getBridgeApiUrl,
   getMintlayerApiUrl,
 } from './config';
-export { apiRequest, apiRequestText, BridgeSdkError } from './http';
+export { apiRequest, BridgeSdkError } from './http';
 export type { RequestOptions, FetchLike, HttpMethod } from './http';
 export type {
   BridgeConfig,
@@ -45,4 +46,3 @@ export {
 export type { AddressValidation, BridgeChain } from './addresses';
 export { bech32mDecode, bech32mEncode, toWords, BECH32M_CONST } from './bech32m';
 export type { Bech32mDecoded } from './bech32m';
-export { resolveTokenIcon, toGatewayUrl } from './icons';

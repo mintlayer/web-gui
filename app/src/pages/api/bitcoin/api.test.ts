@@ -20,6 +20,11 @@ vi.mock('@/lib/bitcoin-wallet', () => ({
   },
 }));
 
+vi.mock('@/lib/step-up', () => ({
+  requireStepUp: vi.fn(),
+  totpFromBody: vi.fn(() => ''),
+}));
+
 import {
   isBitcoinEnabled,
   getBitcoinStatus,
@@ -30,9 +35,11 @@ import {
   sendBitcoin,
   triggerBitcoinSync,
 } from '@/lib/bitcoin-wallet';
+import { requireStepUp } from '@/lib/step-up';
 
 beforeEach(() => {
   vi.mocked(isBitcoinEnabled).mockReturnValue(true);
+  vi.mocked(requireStepUp).mockReturnValue({ ok: true });
 });
 
 afterEach(() => {
@@ -126,11 +133,42 @@ describe('POST /api/bitcoin/wallet', () => {
     const res = await POST(makeCtx({}));
     expect(res.status).toBe(409);
   });
+
+  it('rejects create/restore when 2FA step-up fails', async () => {
+    vi.mocked(requireStepUp).mockReturnValue({
+      ok: false,
+      status: 401,
+      error: 'Invalid authenticator code',
+    });
+    const { POST } = await import('@/pages/api/bitcoin/wallet');
+    const res = await POST(makeCtx({ seed: 'w1 w2 w3' }));
+    expect(res.status).toBe(401);
+    expect(vi.mocked(createBitcoinWallet)).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed JSON bodies with 400', async () => {
+    const { POST } = await import('@/pages/api/bitcoin/wallet');
+    const res = await POST({
+      request: new Request('http://localhost/api/bitcoin/wallet', {
+        method: 'POST',
+        body: 'not-json{{',
+      }),
+    } as never);
+    expect(res.status).toBe(400);
+  });
 });
 
 describe('POST /api/bitcoin/send', () => {
   const makeCtx = (body: unknown) =>
     ({ request: new Request('http://localhost/api/bitcoin/send', { method: 'POST', body: JSON.stringify(body) }) }) as never;
+
+  it('returns 404 when bitcoin is disabled', async () => {
+    vi.mocked(isBitcoinEnabled).mockReturnValue(false);
+    const { POST } = await import('@/pages/api/bitcoin/send');
+    const res = await POST(makeCtx({ address: 'bc1qabc', amount_btc: '0.5' }));
+    expect(res.status).toBe(404);
+    expect(vi.mocked(sendBitcoin)).not.toHaveBeenCalled();
+  });
 
   it('rejects invalid amounts', async () => {
     const { POST } = await import('@/pages/api/bitcoin/send');
@@ -155,6 +193,31 @@ describe('POST /api/bitcoin/send', () => {
     expect(vi.mocked(sendBitcoin)).toHaveBeenCalledWith({ address: 'bc1qabc', amountBtc: '0.5', feeRateSatVb: 10 });
   });
 
+  it('ignores a non-numeric fee_rate_sat_vb and still proxies the send', async () => {
+    vi.mocked(sendBitcoin).mockResolvedValue({ ok: true, txid: 'cafebabe' });
+    const { POST } = await import('@/pages/api/bitcoin/send');
+    const res = await POST(makeCtx({ address: 'bc1qabc', amount_btc: '0.5', fee_rate_sat_vb: '10' }));
+    const body = await res.json() as Record<string, unknown>;
+    expect(res.status).toBe(200);
+    expect(body.txid).toBe('cafebabe');
+    expect(vi.mocked(sendBitcoin)).toHaveBeenCalledWith({
+      address: 'bc1qabc',
+      amountBtc: '0.5',
+      feeRateSatVb: undefined,
+    });
+  });
+
+  it('rejects malformed JSON bodies with 400', async () => {
+    const { POST } = await import('@/pages/api/bitcoin/send');
+    const res = await POST({
+      request: new Request('http://localhost/api/bitcoin/send', {
+        method: 'POST',
+        body: 'not-json{{',
+      }),
+    } as never);
+    expect(res.status).toBe(400);
+  });
+
   it('keeps the sidecar 503 as 503', async () => {
     vi.mocked(sendBitcoin).mockRejectedValue(
       Object.assign(new Error('BTC wallet service unreachable'), { status: 503 }),
@@ -162,6 +225,27 @@ describe('POST /api/bitcoin/send', () => {
     const { POST } = await import('@/pages/api/bitcoin/send');
     const res = await POST(makeCtx({ address: 'bc1qabc', amount_btc: '0.5' }));
     expect(res.status).toBe(503);
+  });
+
+  it('rejects the send when 2FA step-up fails', async () => {
+    vi.mocked(requireStepUp).mockReturnValue({
+      ok: false,
+      status: 401,
+      error: 'Invalid authenticator code',
+    });
+    const { POST } = await import('@/pages/api/bitcoin/send');
+    const res = await POST(makeCtx({ address: 'bc1qabc', amount_btc: '0.5' }));
+    expect(res.status).toBe(401);
+    expect(vi.mocked(sendBitcoin)).not.toHaveBeenCalled();
+  });
+
+  it('keeps the sidecar 409 (wallet not created) as 409', async () => {
+    vi.mocked(sendBitcoin).mockRejectedValue(
+      Object.assign(new Error('wallet not created yet - POST /wallet first'), { status: 409 }),
+    );
+    const { POST } = await import('@/pages/api/bitcoin/send');
+    const res = await POST(makeCtx({ address: 'bc1qabc', amount_btc: '0.5' }));
+    expect(res.status).toBe(409);
   });
 });
 
@@ -179,5 +263,16 @@ describe('POST /api/bitcoin/sync', () => {
     const res = await POST({ request: new Request('http://localhost/api/bitcoin/sync', { method: 'POST' }) } as never);
     const body = await res.json() as Record<string, unknown>;
     expect(body.syncStarted).toBe(true);
+  });
+
+  it('passes the sidecar error status through', async () => {
+    vi.mocked(triggerBitcoinSync).mockRejectedValue(
+      Object.assign(new Error('wallet already syncing'), { status: 409 }),
+    );
+    const { POST } = await import('@/pages/api/bitcoin/sync');
+    const res = await POST({ request: new Request('http://localhost/api/bitcoin/sync', { method: 'POST' }) } as never);
+    expect(res.status).toBe(409);
+    const body = await res.json() as Record<string, unknown>;
+    expect(body.error).toBe('wallet already syncing');
   });
 });

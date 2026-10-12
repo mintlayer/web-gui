@@ -119,9 +119,16 @@ async function sidecarRequest<T>(
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
+    console.error('[bitcoin-wallet] sidecar request failed:', path, err);
+    // A timeout on /send is NOT the same as "unreachable": the request may
+    // have reached the sidecar and broadcast before we gave up. Callers must
+    // be able to distinguish the two so the UI can warn about double-send.
+    const timedOut = (err as { name?: string }).name === 'TimeoutError';
     throw new BitcoinWalletError(
-      `BTC wallet service unreachable (is the bitcoin profile running?)`,
-      503,
+      timedOut
+        ? 'BTC wallet service timed out — the operation may or may not have completed'
+        : `BTC wallet service unreachable (is the bitcoin profile running?)`,
+      timedOut ? 504 : 503,
     );
   }
   const body = (await res.json().catch(() => null)) as
