@@ -41,6 +41,7 @@ import {
 import BridgeTokenPicker, { type PickerAsset } from '@/components/BridgeTokenPicker';
 import BridgeHistorySection from '@/components/BridgeHistorySection';
 import { appendHistory, updateHistoryStatus } from '@/lib/bridge-sdk/bridge-history';
+import { ethExplorerBase, mlExplorerBase } from '@/lib/bridge-sdk/explorers';
 import AddressSuggestion from '@/components/AddressSuggestion';
 
 const sdk = createBridgeSdk();
@@ -119,16 +120,6 @@ const PROGRESS_STEP_LABELS = [
   'Agents processing the payout',
   'Completed',
 ];
-
-function mlExplorerBase(networkType: string): string {
-  return networkType === 'mainnet'
-    ? 'https://explorer.mintlayer.org'
-    : 'https://lovelace.explorer.mintlayer.org';
-}
-
-function ethExplorerBase(flavor: string): string {
-  return flavor === '' ? 'https://etherscan.io' : 'https://sepolia.etherscan.io';
-}
 
 interface IndexerStatus {
   up: boolean;

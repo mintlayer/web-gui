@@ -6,6 +6,7 @@ import {
   isTxHashLike,
   type BridgeRequestDetail,
 } from '@/lib/bridge-sdk';
+import { ethExplorerBase, mlExplorerBase } from '@/lib/bridge-sdk/explorers';
 import {
   listHistory,
   updateHistoryStatus,
@@ -104,7 +105,7 @@ function Row({
           <p className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
             {depositHash && isEthTxHash(depositHash) && (
               <a
-                href={`${flavor === '' ? 'https://etherscan.io' : 'https://sepolia.etherscan.io'}/tx/${depositHash}`}
+                href={`${ethExplorerBase(flavor)}/tx/${depositHash}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-mint-300 underline hover:opacity-80"
@@ -114,11 +115,7 @@ function Row({
             )}
             {payoutHash && isTxHashLike(payoutHash) && (
               <a
-                href={`${
-                  networkType === 'mainnet'
-                    ? 'https://explorer.mintlayer.org'
-                    : 'https://lovelace.explorer.mintlayer.org'
-                }/transaction/${payoutHash}`}
+                href={`${mlExplorerBase(networkType)}/transaction/${payoutHash}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-mint-300 underline hover:opacity-80"
