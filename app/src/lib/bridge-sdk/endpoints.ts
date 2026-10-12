@@ -50,8 +50,11 @@ export interface BridgeSdkDeps {
 export const createBridgeSdk = (
   deps: BridgeSdkDeps = {},
 ): BridgeSdk => {
-  const bridgeUrl = deps.bridgeApiUrl ?? getBridgeApiUrl();
-  const mlUrl = deps.mintlayerApiUrl ?? getMintlayerApiUrl();
+  // The endpoint templates below assume a trailing slash (`${bridgeUrl}fees`);
+  // an operator-provided URL without one would produce /api/v1fees.
+  const joinBase = (base: string): string => (base.endsWith('/') ? base : `${base}/`);
+  const bridgeUrl = joinBase(deps.bridgeApiUrl ?? getBridgeApiUrl());
+  const mlUrl = joinBase(deps.mintlayerApiUrl ?? getMintlayerApiUrl());
   // Resolved lazily so environments without a global fetch (tests, SSR edge
   // cases) can still import the module and inject their own implementation.
   const fetchImpl: FetchLike =
@@ -87,6 +90,3 @@ export const createBridgeSdk = (
       apiRequest(`${mlUrl}token/${encodeURIComponent(tokenId)}`, {}, fetchImpl),
   };
 };
-
-/** Default client using env-configured URLs and global fetch. */
-export const bridgeSdk = createBridgeSdk();

@@ -71,36 +71,14 @@ export async function apiRequest<T>(
     );
   }
 
-  return (await response.json()) as T;
-}
-
-/**
- * Performs an HTTP request and returns the raw response text (used by
- * legacy callers that parse lazily).
- */
-export async function apiRequestText(
-  url: string,
-  options: RequestOptions = {},
-  fetchImpl: FetchLike = fetch,
-): Promise<string> {
-  const { method = 'GET', body, headers = {} } = options;
-
-  const init: RequestInit = {
-    method,
-    headers: body !== undefined
-      ? { 'Content-Type': 'application/json', ...headers }
-      : headers,
-    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-  };
-
-  const response = await fetchImpl(url, init);
-
-  if (!response.ok) {
+  try {
+    return (await response.json()) as T;
+  } catch {
+    // 2xx with a non-JSON body (proxy interstitial, empty gateway reply):
+    // surface a typed error instead of a raw SyntaxError.
     throw new BridgeSdkError(
-      await extractErrorMessage(response),
+      `Invalid JSON response from ${url} (status ${response.status})`,
       response.status,
     );
   }
-
-  return response.text();
 }
