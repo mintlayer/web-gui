@@ -14,6 +14,7 @@ import { BrowserProvider, Contract, formatUnits, parseUnits } from 'ethers';
 export const ERC20_ABI = [
   'function balanceOf(address owner) view returns (uint256)',
   'function approve(address spender, uint256 amount) returns (bool)',
+  'function allowance(address owner, address spender) view returns (uint256)',
   'function decimals() view returns (uint8)',
 ];
 
@@ -167,9 +168,23 @@ export async function depositToBridge(
   const amountWei = parseUnits(amount, decimals);
 
   const token = new Contract(tokenAddress, ERC20_ABI, signer);
-  onProgress?.('approve');
-  const approveTx = await token.approve(bridgeContractAddress, amountWei);
-  await approveTx.wait();
+  // Skip the approve round-trip when the bridge already has enough
+  // allowance for this deposit (reads can fail on some providers —
+  // fall through to a fresh approve, the previous behaviour).
+  let needsApproval = true;
+  try {
+    const bridge = new Contract(bridgeContractAddress, BRIDGE_DEPOSIT_ABI, signer);
+    const ethAddress = await signer.getAddress();
+    const allowance = (await token.allowance(ethAddress, await bridge.getAddress())) as bigint;
+    needsApproval = allowance < amountWei;
+  } catch {
+    needsApproval = true;
+  }
+  if (needsApproval) {
+    onProgress?.('approve');
+    const approveTx = await token.approve(bridgeContractAddress, amountWei);
+    await approveTx.wait();
+  }
 
   const bridge = new Contract(bridgeContractAddress, BRIDGE_DEPOSIT_ABI, signer);
   onProgress?.('deposit');

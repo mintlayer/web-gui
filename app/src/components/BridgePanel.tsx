@@ -358,6 +358,39 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
     await switchChain(chain.id, chain.params);
   }
 
+  // Keep the ETH-side balance current for the selected asset so the
+  // percentage chips stay meaningful (wallet may also change accounts).
+  useEffect(() => {
+    if (direction !== 'e2m' || !ethAccount || !asset?.ethAddress) return;
+    let cancelled = false;
+    getTokenBalance(asset.ethAddress, ethAccount)
+      .then((b) => {
+        if (!cancelled) setEthBalance(b);
+      })
+      .catch(() => {
+        /* leave the previous value — chips disable on absence */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [ethAccount, asset?.ethAddress, direction]);
+
+  // 25% / 50% / Max of the wallet balance, capped by the per-request max.
+  const applyFraction = useCallback(
+    (fraction: number) => {
+      const balance = parseFloat(ethBalance ?? '');
+      if (!Number.isFinite(balance) || balance <= 0) return;
+      let target = balance * fraction;
+      const max = asset?.maxAmountPerRequest;
+      if (max !== undefined && /^\d+(\.\d+)?$/.test(max)) {
+        target = Math.min(target, parseFloat(max));
+      }
+      // Trim float noise without dragging in a decimal library.
+      setAmount(target.toFixed(8).replace(/\.?0+$/, ''));
+    },
+    [ethBalance, asset?.maxAmountPerRequest],
+  );
+
   function stopPolling() {
     if (pollRef.current) {
       clearInterval(pollRef.current);
@@ -908,6 +941,20 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
               autoComplete="off"
               className={input}
             />
+            {direction === 'e2m' && ethBalance !== null && (
+              <div className="mt-1 flex gap-2">
+                {([['25%', 0.25], ['50%', 0.5], ['Max', 1]] as const).map(([label, f]) => (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => applyFraction(f)}
+                    className="rounded border border-gray-700 px-2 py-0.5 text-xs text-gray-300 hover:border-mint-600 hover:text-mint-300"
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
             {usdPrice !== null && /^\d+(\.\d+)?$/.test(amount.trim()) && parseFloat(amount.trim()) > 0 && (
               <p className="text-xs text-gray-500 mt-1">
                 ≈ ${(parseFloat(amount.trim()) * usdPrice).toLocaleString(undefined, { maximumFractionDigits: 2 })} USD
