@@ -50,10 +50,47 @@ describe('GET /ipfs/[...path]', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('cache-control')).toContain('max-age');
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(res.headers.get('content-security-policy')).toContain("sandbox");
     expect(await res.text()).toBe('{"name":"mlPEPE"}');
     expect(vi.mocked(fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).toBe(
       `https://ipfs.io/ipfs/${CID_V0}`,
     );
+    // Redirects are refused — only hop 1 is CID-gated.
+    expect(
+      (vi.mocked(fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as RequestInit)
+        .redirect,
+    ).toBe('error');
+  });
+
+  it('refuses svg — same-origin svg can carry script', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response('<svg onload="alert(1)"></svg>', {
+          status: 200,
+          headers: { 'content-type': 'image/svg+xml' },
+        }),
+      ) as unknown as typeof fetch,
+    );
+    expect((await GET(ctx(CID_V0))).status).toBe(415);
+  });
+
+  it('caps streamed bodies that lie about their size', async () => {
+    const big = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(1024 * 1024).fill(120));
+      },
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(big, {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      ) as unknown as typeof fetch,
+    );
+    expect((await GET(ctx(CID_V0))).status).toBe(413);
   });
 
   it('rejects disallowed content types', async () => {
