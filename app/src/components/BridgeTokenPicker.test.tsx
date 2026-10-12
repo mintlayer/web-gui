@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /** Tests for BridgeTokenPicker — search, keyboard navigation, selection. */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import BridgeTokenPicker from './BridgeTokenPicker';

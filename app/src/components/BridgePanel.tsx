@@ -39,6 +39,8 @@ import {
   type TokenMetadata,
 } from '@/lib/bridge-sdk';
 import BridgeTokenPicker, { type PickerAsset } from '@/components/BridgeTokenPicker';
+import BridgeHistorySection from '@/components/BridgeHistorySection';
+import { appendHistory, updateHistoryStatus } from '@/lib/bridge-sdk/bridge-history';
 import AddressSuggestion from '@/components/AddressSuggestion';
 
 const sdk = createBridgeSdk();
@@ -166,6 +168,7 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
   const [tracked, setTracked] = useState<InFlightBridge | null>(() => loadInFlight());
   const [trackedProgress, setTrackedProgress] = useState<BridgeProgress | null>(null);
   const [trackedRequest, setTrackedRequest] = useState<BridgeRequestDetail | null>(null);
+  const [historyToken, setHistoryToken] = useState(0);
   const wsThrottleRef = useRef(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // Synchronous double-submit guard: between the confirm dialog and the first
@@ -394,6 +397,15 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
       startedAt: new Date().toISOString(),
       lastStep: 1,
     });
+    appendHistory({
+      uuid,
+      direction,
+      asset: assetTicker,
+      amount: amount.trim(),
+      receiver: receiver.trim(),
+      startedAt: new Date().toISOString(),
+    });
+    setHistoryToken((t) => t + 1);
     setPhase('polling');
   }
 
@@ -429,6 +441,7 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
           depositTxHash: latest.depositTxHash ?? next.depositTxHash ?? undefined,
         });
       }
+      updateHistoryStatus(current.uuid, next.rawStatus);
     } catch {
       /* transient — the next poll retries; unknown state keeps polling */
     }
@@ -1158,6 +1171,12 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
           </button>
         )}
       </div>
+
+      <BridgeHistorySection
+        refreshToken={historyToken}
+        networkType={networkType}
+        flavor={flavor}
+      />
     </div>
   );
 }
