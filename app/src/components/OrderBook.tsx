@@ -268,7 +268,7 @@ function BuySellPanel({
     }
   };
 
-  const inputCls = "w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-mint-600 disabled:opacity-50";
+  const inputCls = "w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder:text-gray-600 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-mint-600 disabled:opacity-50";
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
@@ -646,7 +646,7 @@ function PairBookRow({
             type="number" min="0" step="any" placeholder={fillLabel}
             value={fillAmount} onChange={e => setFillAmount(e.target.value)}
             disabled={loading}
-            className="w-24 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600
+            className="w-24 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder:text-gray-600
                        px-2 py-1 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-mint-600 disabled:opacity-50"
           />
           <button
@@ -1183,7 +1183,7 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
               value={filterText}
               onChange={e => setFilterText(e.target.value)}
               placeholder="Search by ticker or order ID…"
-              className="rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600
+              className="rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder:text-gray-600
                          px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-mint-600 w-56"
             />
             {/* Status filter */}

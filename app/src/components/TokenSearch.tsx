@@ -282,7 +282,7 @@ export default function TokenSearch({ network }: Props) {
           value={query}
           onChange={e => setQuery(e.target.value)}
           placeholder={indexerAvailable ? 'Ticker (e.g. MYTKN) or token ID…' : 'Token ID (mmltk1…)'}
-          className="flex-1 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600
+          className="flex-1 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder:text-gray-600
                      px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-mint-600"
         />
         <button

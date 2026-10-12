@@ -189,7 +189,7 @@ export default function CommandPalette({ items }: Props) {
             placeholder="Go to..."
             value={query}
             onChange={e => setQuery(e.target.value)}
-            className="flex-1 bg-transparent text-gray-100 placeholder-gray-500 text-sm outline-none"
+            className="flex-1 bg-transparent text-gray-100 placeholder:text-gray-500 text-sm outline-none"
           />
           <kbd className="text-xs text-gray-600 border border-gray-700 rounded px-1.5 py-0.5 font-mono">
             esc

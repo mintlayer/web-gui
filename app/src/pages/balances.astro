@@ -284,7 +284,7 @@ function nftIconUrl(info: TokenInfo | undefined): string | null {
 
   <!-- ── Send modal ────────────────────────────────────────────────────────── -->
   <div id="send-modal"
-       class="fixed inset-0 z-50 hidden items-center justify-center bg-black/70 backdrop-blur-sm">
+       class="fixed inset-0 z-50 hidden items-center justify-center bg-black/70 backdrop-blur-xs">
     <div class="relative bg-gray-900 border border-gray-800 rounded-2xl p-6 w-full max-w-md mx-4 shadow-2xl">
       <div class="flex items-center justify-between mb-5">
         <h2 id="send-modal-title" class="text-base font-semibold text-gray-100">Send</h2>
@@ -303,7 +303,7 @@ function nftIconUrl(info: TokenInfo | undefined): string | null {
             Recipient address
           </label>
           <input id="send-address" type="text" placeholder="mtc1…" autocomplete="off" data-hrp={mlHrp ?? ''}
-            class="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600
+            class="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder:text-gray-600
                    px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-mint-600" />
           <div id="addr-suggestion" class="hidden mt-2 rounded-lg border border-amber-800 bg-amber-900/20 px-3 py-2 text-xs text-amber-300">
             <span>Checksum failed — did you mean</span>
@@ -320,7 +320,7 @@ function nftIconUrl(info: TokenInfo | undefined): string | null {
           <div class="relative">
             <input id="send-amount" type="text" placeholder="0.00" inputmode="decimal"
               pattern="[0-9]*\.?[0-9]*" autocomplete="off"
-              class="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600
+              class="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder:text-gray-600
                      px-3 py-2 pr-16 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-mint-600" />
             <span id="send-ticker"
               class="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-500 pointer-events-none font-mono">
@@ -336,7 +336,7 @@ function nftIconUrl(info: TokenInfo | undefined): string | null {
           </label>
           <input id="send-totp" type="text" placeholder="000000" inputmode="numeric"
             autocomplete="one-time-code" maxlength="6"
-            class="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600
+            class="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder:text-gray-600
                    px-3 py-2 text-sm font-mono tracking-widest focus:outline-none focus:ring-2 focus:ring-mint-600" />
           <p class="text-xs text-gray-500 mt-1">Required to authorize the send. Each code works once.</p>
         </div>
