@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { rpc } from '@/lib/client-rpc';
+import { ModalOverlay } from '@/components/ui/ModalOverlay';
 
 type State =
   | { status: "idle" }
@@ -69,11 +70,8 @@ export default function ReceiveModal() {
       </button>
 
       {open && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
-          onClick={(e) => { if (e.target === e.currentTarget) setOpen(false); }}
-        >
-          <div className="relative bg-gray-900 border border-gray-800 rounded-2xl p-6 w-full max-w-sm mx-4 shadow-2xl">
+        <ModalOverlay onClose={() => setOpen(false)} label="Receive address" maxWidth="max-w-sm">
+          <div className="p-6">
             {/* Header */}
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-base font-semibold text-gray-100">Receive</h2>
@@ -152,7 +150,7 @@ export default function ReceiveModal() {
               </div>
             )}
           </div>
-        </div>
+        </ModalOverlay>
       )}
     </>
   );

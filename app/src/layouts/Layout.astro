@@ -49,11 +49,11 @@ const navItems: NavItem[] = [
     { key: 'token-management', label: 'Token Management', href: '/token-management', section: 'ASSETS'   },
     { key: 'trading',          label: 'Trading',          href: '/trading',          section: 'TRADE'    },
   ] : []),
-  ...(bitcoinEnabled ? [
-    { key: 'bitcoin',          label: 'Bitcoin',          href: '/bitcoin',          section: 'WALLET'   },
-  ] : []),
   ...(bridgeEnabled ? [
     { key: 'bridge',           label: 'Bridge',           href: '/bridge',           section: 'WALLET'   },
+  ] : []),
+  ...(bitcoinEnabled ? [
+    { key: 'bitcoin',          label: 'Bitcoin',          href: '/bitcoin',          section: 'WALLET'   },
   ] : []),
   { key: 'management',       label: 'Settings',         href: '/management',        section: 'SETTINGS'  },
   ...enabledPlugins.map(p => ({
@@ -79,7 +79,6 @@ const PLUGIN_ICON_DEFAULT = 'M11.42 15.17L17.25 21A2.652 2.652 0 0021 17.25l-5.8
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Mintlayer GUI-X: {title}</title>
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
   </head>
 
   <body class="h-full text-gray-100 font-sans" data-network={network}>
@@ -320,9 +319,9 @@ const PLUGIN_ICON_DEFAULT = 'M11.42 15.17L17.25 21A2.652 2.652 0 0021 17.25l-5.8
         <button
           id="open-palette-btn"
           aria-label="Open command palette"
-          class="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-400 border border-gray-800 rounded px-2 py-1 transition-colors"
+          class="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-400 border border-gray-800 rounded px-2 py-1 transition-colors"
         >
-          <kbd class="font-mono">⌘K</kbd>
+          <kbd class="font-mono">Ctrl/⌘K</kbd>
         </button>
       </div>
 
@@ -435,7 +434,8 @@ const PLUGIN_ICON_DEFAULT = 'M11.42 15.17L17.25 21A2.652 2.652 0 0021 17.25l-5.8
       #sidebar[data-collapsed] .nav-item {
         position: relative;
       }
-      #sidebar[data-collapsed] .nav-item:hover::after {
+      #sidebar[data-collapsed] .nav-item:hover::after,
+      #sidebar[data-collapsed] .nav-item:focus-visible::after {
         content: attr(data-tooltip);
         position: absolute;
         left: 100%;
