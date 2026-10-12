@@ -116,7 +116,11 @@ export function sanitizeTokenMetadata(raw: unknown): TokenMetadata | null {
   if (decimals !== undefined) metadata.decimals = decimals;
 
   // Same icon fallback chain resolveTokenIcon has always used.
-  const icon = clipIcon(raw.tokenIcon ?? raw.icon_uri ?? raw.icon ?? raw.image);
+  // logo_uri: the schema actually published on-chain (e.g. mlUSDC
+  // metadata) puts the logo there.
+  const icon = clipIcon(
+    raw.tokenIcon ?? raw.icon_uri ?? raw.logo_uri ?? raw.icon ?? raw.image,
+  );
   if (icon) metadata.icon = icon;
 
   if (isRecord(raw.origin)) {
