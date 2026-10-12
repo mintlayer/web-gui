@@ -3,9 +3,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   createBridgeSdk,
+  deriveProgress,
+  loadInFlight,
+  saveInFlight,
+  clearInFlight,
+  IN_FLIGHT_EVENT,
+  PROGRESS_POLL_MS,
+  DEPOSIT_CONFIRMATIONS,
+  getSubscribeUrl,
+  isEthTxHash,
+  isTxHashLike,
   type BridgeConfig,
   type BridgeFees,
   type BridgeRequestDetail,
+  type BridgeProgress,
+  type InFlightBridge,
 } from '@/lib/bridge-sdk';
 import {
   connectMetaMask,
@@ -90,11 +102,24 @@ function chainForFlavor(flavor: string): { id: string; params: Record<string, un
   return { id: '0x1', params: {} };
 }
 
-const STATUS_STEPS: Record<string, { label: string; step: number }> = {
-  pending: { label: 'Agents processing deposit…', step: 1 },
-  processed_by_master: { label: 'Signed by master agent — waiting for cosigner…', step: 2 },
-  completed: { label: 'Bridge completed', step: 3 },
-};
+/** Progress steps shown on the tracked-bridge card. */
+const PROGRESS_STEP_LABELS = [
+  'Request submitted',
+  'Deposit seen — waiting for confirmations',
+  'Deposit confirmed',
+  'Agents processing the payout',
+  'Completed',
+];
+
+function mlExplorerBase(networkType: string): string {
+  return networkType === 'mainnet'
+    ? 'https://explorer.mintlayer.org'
+    : 'https://lovelace.explorer.mintlayer.org';
+}
+
+function ethExplorerBase(flavor: string): string {
+  return flavor === '' ? 'https://etherscan.io' : 'https://sepolia.etherscan.io';
+}
 
 interface IndexerStatus {
   up: boolean;
@@ -130,6 +155,11 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
   const [info, setInfo] = useState<string | null>(null);
   const [requestUuid, setRequestUuid] = useState<string | null>(null);
   const [requestStatus, setRequestStatus] = useState<string | null>(null);
+  // Tracked (in-flight) bridge — persisted so a refresh restores the card.
+  const [tracked, setTracked] = useState<InFlightBridge | null>(() => loadInFlight());
+  const [trackedProgress, setTrackedProgress] = useState<BridgeProgress | null>(null);
+  const [trackedRequest, setTrackedRequest] = useState<BridgeRequestDetail | null>(null);
+  const wsThrottleRef = useRef(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // Synchronous double-submit guard: between the confirm dialog and the first
   // setPhase the async submits leave `busy` false, so the button alone can't
@@ -298,6 +328,113 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
 
   useEffect(() => stopPolling, []);
 
+  /** Persist a freshly broadcast bridge so the card survives refreshes. */
+  function trackRequest(uuid: string, txHash: string) {
+    saveInFlight({
+      uuid,
+      txHash,
+      asset: assetTicker,
+      amount: amount.trim(),
+      receiver: receiver.trim(),
+      destinationChain: direction === 'e2m' ? 'ML' : 'ETH',
+      startedAt: new Date().toISOString(),
+      lastStep: 1,
+    });
+    setPhase('polling');
+  }
+
+  // ── Tracked-bridge monitor ──────────────────────────────────────────────
+  // The 10s poll on GET /bridge-request/:uuid is the source of truth; the
+  // /subscribe WebSocket only accelerates it (min 1.5s between prompted
+  // polls). Polling stops on any terminal state.
+  const pollTracked = useCallback(async () => {
+    const current = loadInFlight();
+    if (!current) return;
+    try {
+      const detail: BridgeRequestDetail = await sdk.getBridgeRequest(current.uuid);
+      const next = deriveProgress(detail);
+      // Fresh re-read doubles as both the takeover guard (a newer bridge's
+      // progress must not be published under the old request) and the save
+      // base (keeps lastStep monotonic against overlapping polls).
+      const latest = loadInFlight();
+      if (latest?.uuid !== current.uuid) return;
+      setTrackedRequest(detail);
+      setTrackedProgress(next);
+      if (next.kind !== 'in-progress') {
+        setPhase(next.kind === 'completed' ? 'done' : next.kind === 'manual' ? 'manual' : 'failed');
+      }
+      setRequestStatus(next.rawStatus);
+      const advanced = next.step > latest.lastStep;
+      // First sight of the deposit hash (ML→ETH submits without one) —
+      // persisted so the card links it even across refreshes.
+      const depositHashArrived = !latest.depositTxHash && next.depositTxHash;
+      if (advanced || depositHashArrived) {
+        saveInFlight({
+          ...latest,
+          lastStep: Math.max(latest.lastStep, next.step),
+          depositTxHash: latest.depositTxHash ?? next.depositTxHash ?? undefined,
+        });
+      }
+    } catch {
+      /* transient — the next poll retries; unknown state keeps polling */
+    }
+  }, []);
+
+  useEffect(() => {
+    const onFlight = () => setTracked(loadInFlight());
+    window.addEventListener(IN_FLIGHT_EVENT, onFlight);
+    return () => window.removeEventListener(IN_FLIGHT_EVENT, onFlight);
+  }, []);
+
+  useEffect(() => {
+    if (!tracked) return;
+    if (trackedProgress && trackedProgress.kind !== 'in-progress') return;
+    void pollTracked();
+    const id = setInterval(() => void pollTracked(), PROGRESS_POLL_MS);
+    return () => clearInterval(id);
+  }, [tracked, trackedProgress?.kind, pollTracked]);
+
+  useEffect(() => {
+    const uuid = tracked?.uuid;
+    if (!uuid) return;
+    if (trackedProgress && trackedProgress.kind !== 'in-progress') return;
+    let socket: WebSocket | null = null;
+    let closed = false;
+    try {
+      socket = new WebSocket(getSubscribeUrl());
+      socket.onmessage = (event) => {
+        if (closed) return;
+        const payload =
+          typeof event.data === 'string' ? event.data : String(event.data ?? '');
+        if (
+          payload.includes(uuid) &&
+          Date.now() - wsThrottleRef.current > 1_500
+        ) {
+          wsThrottleRef.current = Date.now();
+          void pollTracked();
+        }
+      };
+      socket.onerror = () => {
+        /* polling remains the source of truth */
+      };
+    } catch {
+      /* no WebSocket support — polling only */
+    }
+    return () => {
+      closed = true;
+      socket?.close();
+    };
+  }, [tracked?.uuid, trackedProgress?.kind, pollTracked]);
+
+  function dismissTracked() {
+    clearInFlight();
+    setTracked(null);
+    setTrackedProgress(null);
+    setTrackedRequest(null);
+    setRequestUuid(null);
+    setRequestStatus(null);
+  }
+
   function resetForm() {
     setPhase('idle');
     setRequestUuid(null);
@@ -368,6 +505,18 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
 
     // Review step: bridge transfers are irreversible — one explicit
     // confirmation with the full amount/fee/destination summary.
+    // Starting a new bridge while one is already in flight takes over the
+    // single tracked-bridge slot — ask before replacing it.
+    const existingFlight = loadInFlight();
+    if (existingFlight && (!trackedProgress || trackedProgress.kind === 'in-progress')) {
+      if (
+        !window.confirm(
+          'You already have a bridge in progress. Start a new one and track it instead? The current one keeps processing in the background.',
+        )
+      ) {
+        return;
+      }
+    }
     const feeSummary = directionFees
       ? (() => {
           const total = totalFee(directionFees.fixed_fee, amount.trim(), directionFees.percentage_fee ?? '');
@@ -410,7 +559,7 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
           deposit_transactions: [{ transaction_hash: txHash }],
         });
         setRequestUuid(res.bridge_request_uuid);
-        pollRequest(res.bridge_request_uuid);
+        trackRequest(res.bridge_request_uuid, txHash);
       } else {
         // ── Mintlayer → Ethereum ──
         if (!ethAccount) throw new Error('Connect MetaMask first (it is the receiver).');
@@ -464,7 +613,7 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
           ],
         });
         setRequestUuid(res.bridge_request_uuid);
-        pollRequest(res.bridge_request_uuid);
+        trackRequest(res.bridge_request_uuid, '');
       }
     } catch (err) {
       // Wallet rejections are user choices, not failures — an EvmError with
@@ -579,7 +728,7 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
           : phase === 'submitting'
             ? 'Submitting the bridge request…'
             : phase === 'polling'
-              ? (requestStatus ? (STATUS_STEPS[requestStatus]?.label ?? `Status: ${requestStatus}`) : 'Agents are processing…')
+              ? 'Agents are processing…'
               : phase === 'done'
                 ? 'Bridge completed — tokens arrived.'
                 : phase === 'failed'
@@ -587,7 +736,6 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
                   : phase === 'manual'
                     ? 'Escalated for manual review — support will look at this request.'
                     : '';
-  const phaseStep = requestStatus ? (STATUS_STEPS[requestStatus]?.step ?? 1) : 1;
 
   return (
     <div className="space-y-6">
@@ -774,44 +922,128 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
         {info && (
           <div role="status" className="rounded-lg border border-gray-700 bg-gray-800/60 px-3 py-2 text-gray-300 text-sm">{info}</div>
         )}
-        {phase !== 'idle' && phaseLabel && (
+        {tracked && trackedProgress && (
           <div
             role="status"
-            className={`rounded-lg border px-3 py-2 text-sm ${
-              phaseState === 'ok'
-                ? 'border-mint-700 bg-mint-900/20 text-mint-300'
-                : phaseState === 'bad'
-                  ? phase === 'manual'
-                    ? 'border-amber-800 bg-amber-900/20 text-amber-300'
-                    : 'border-red-800 bg-red-950/50 text-red-300'
-                  : 'border-gray-700 bg-gray-800/60 text-gray-300'
+            className={`rounded-lg border px-3 py-3 text-sm ${
+              trackedProgress.kind === 'completed'
+                ? 'border-mint-700 bg-mint-900/20'
+                : trackedProgress.kind === 'failed'
+                  ? 'border-red-800 bg-red-950/50'
+                  : trackedProgress.kind === 'manual'
+                    ? 'border-amber-800 bg-amber-900/20'
+                    : 'border-gray-700 bg-gray-800/60'
             }`}
           >
-            {phaseState === 'busy' && (
-              <span className="inline-flex items-center gap-2">
-                <span className="flex gap-1" aria-hidden="true">
-                  {[1, 2, 3].map((n) => (
+            <p className="font-semibold text-gray-100 mb-2">
+              Bridging {tracked.amount} {tracked.asset} →{" "}
+              {tracked.destinationChain === 'ML' ? 'Mintlayer' : 'Ethereum'}
+            </p>
+            <ol className="space-y-1.5 mb-2">
+              {PROGRESS_STEP_LABELS.map((label, idx) => {
+                const stepNo = idx + 1;
+                const reached = trackedProgress.step >= stepNo;
+                const isTerminal = stepNo === 5;
+                const terminalMismatch =
+                  isTerminal && trackedProgress.kind !== 'completed';
+                return (
+                  <li key={label} className="flex items-center gap-2">
                     <span
-                      key={n}
-                      className={`w-1.5 h-1.5 rounded-full ${n <= phaseStep ? 'bg-mint-400' : 'bg-gray-600'}`}
+                      aria-hidden="true"
+                      className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                        reached
+                          ? terminalMismatch
+                            ? trackedProgress.kind === 'manual'
+                              ? 'bg-amber-400'
+                              : 'bg-red-400'
+                            : 'bg-mint-400'
+                          : 'bg-gray-600'
+                      } ${reached && !terminalMismatch && stepNo === trackedProgress.step && trackedProgress.kind === 'in-progress' ? 'animate-pulse' : ''}`}
                     />
-                  ))}
-                </span>
-              </span>
-            )}{' '}
-            {phaseLabel}
-            {requestUuid && (
-              <p className="text-xs text-gray-500 mt-1 font-mono break-all">request {requestUuid}</p>
+                    <span className={reached ? 'text-gray-200' : 'text-gray-500'}>
+                      {terminalMismatch
+                        ? trackedProgress.kind === 'manual'
+                          ? 'Needs manual processing — funds are safe, this takes longer'
+                          : 'Bridge request failed — contact support with the request ID'
+                        : label}
+                    </span>
+                  </li>
+                );
+              })}
+            </ol>
+            {(tracked.txHash || tracked.depositTxHash || trackedProgress.mlTxHash) && (
+              <p className="flex flex-wrap gap-x-4 gap-y-1 text-xs mb-1">
+                {(tracked.txHash || tracked.depositTxHash) &&
+                  isEthTxHash(tracked.txHash || tracked.depositTxHash || '') && (
+                    <a
+                      href={`${ethExplorerBase(flavor)}/tx/${tracked.txHash || tracked.depositTxHash}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-mint-300 underline hover:opacity-80"
+                    >
+                      Deposit on Etherscan ↗
+                    </a>
+                  )}
+                {trackedProgress.mlTxHash && isTxHashLike(trackedProgress.mlTxHash) && (
+                  <a
+                    href={`${mlExplorerBase(networkType)}/transaction/${trackedProgress.mlTxHash}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-mint-300 underline hover:opacity-80"
+                  >
+                    Payout on the Mintlayer explorer ↗
+                  </a>
+                )}
+              </p>
             )}
-            {phaseState !== 'busy' && (
+            <p className="text-xs text-gray-500 font-mono break-all">
+              request {tracked.uuid}
+            </p>
+            {trackedProgress.kind !== 'in-progress' ? (
+              <div className="flex gap-3 mt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    dismissTracked();
+                    resetForm();
+                  }}
+                  className="underline font-semibold hover:opacity-80 text-gray-200"
+                >
+                  Bridge another
+                </button>
+              </div>
+            ) : (
               <button
                 type="button"
-                onClick={resetForm}
-                className="mt-2 block underline font-semibold hover:opacity-80"
+                onClick={dismissTracked}
+                className="mt-2 text-xs text-gray-500 underline hover:opacity-80"
               >
-                {phaseState === 'ok' ? 'Bridge another' : 'Start over'}
+                Stop tracking (the bridge keeps processing)
               </button>
             )}
+          </div>
+        )}
+
+        {(phase === 'approve' || phase === 'deposit' || phase === 'signing' || phase === 'submitting') && phaseLabel && (
+          <div
+            role="status"
+            className="rounded-lg border border-gray-700 bg-gray-800/60 px-3 py-2 text-sm text-gray-300"
+          >
+            <span className="inline-flex items-center gap-2">
+              <span className="flex gap-1" aria-hidden="true">
+                {[1, 2, 3].map((n) => (
+                  <span
+                    key={n}
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      n <= (phase === 'approve' ? 1 : phase === 'deposit' ? 2 : phase === 'signing' ? 2 : 3)
+                        ? 'bg-mint-400'
+                        : 'bg-gray-600'
+                    }`}
+                  />
+                ))}
+              </span>
+            </span>{' '}
+            {phaseLabel}
           </div>
         )}
 
