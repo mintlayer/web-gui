@@ -69,6 +69,9 @@ dev-env:
 		printf 'ML_USER_ID=%s\nML_GROUP_ID=%s\n' "$$(id -u)" "$$(id -g)" >> .env.dev; \
 		echo "Generated .env.dev with dev credentials and a fresh SESSION_SECRET."; \
 	fi
+	@mkdir -p mintlayer-data/prefs && chmod 0777 mintlayer-data/prefs
+	@# Rootless docker maps the container uid to an unrelated host uid; the bind-
+	@# mounted prefs dir must stay world-writable or the app cannot open its sqlite.
 
 ## Open an interactive wallet-cli session connected to the running wallet-rpc-daemon
 wallet-cli:

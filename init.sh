@@ -861,6 +861,9 @@ ok ".env written"
 # uploads/ is bind-mounted into web-gui; pre-create it here so it is owned by
 # this user (docker creates missing bind-mount dirs as root).
 mkdir -p mintlayer-data/prefs mintlayer-data/plugins mintlayer-data/uploads
+# Rootless docker maps the container uid to an unrelated host uid; the bind-
+# mounted prefs dir must stay world-writable or the app cannot open its sqlite.
+chmod 0777 mintlayer-data/prefs
 {
   echo "CREATE TABLE IF NOT EXISTS prefs (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
   echo "INSERT OR REPLACE INTO prefs VALUES ('auth.password_hash', '\"${UI_PASSWORD_HASH}\"');"
