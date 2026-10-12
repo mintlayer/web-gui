@@ -5,6 +5,14 @@ import { useState, useRef, useCallback } from 'react';
 export interface SeedBackupStepProps {
   mnemonic: string;    // space-separated word string
   walletPath: string;  // for display in success panel and print header
+  /**
+   * Post-success recovery hint. Default assumes the seed can be re-revealed
+   * via Management → Show Seed Phrase (Mintlayer wallets). Wallets whose seed
+   * is only ever shown once (e.g. the independent BTC sidecar wallet) must
+   * override this — a false "you can see it again later" pointer on a
+   * one-time seed is how backups get skipped.
+   */
+  recoverHint?: 'management-seed-reveal' | 'one-time-only';
 }
 
 type BackupPhase =
@@ -33,9 +41,13 @@ function pickVerificationIndices(wordCount: number): [number, number, number, nu
 
 const PRINT_STYLE = `
 @media print {
-  body > * { display: none !important; }
+  /* Visibility (not display) so the print area prints even though it is NOT a
+     direct child of <body>: a display:none ancestor removes descendants from
+     the box tree entirely, so counter-displaying a deep descendant produced
+     blank pages — the user thinks the seed is backed up when it is not. */
+  body * { visibility: hidden !important; }
+  #seed-print-area, #seed-print-area * { visibility: visible !important; }
   #seed-print-area {
-    display: block !important;
     position: fixed;
     inset: 0;
     padding: 2.5rem;
@@ -188,20 +200,22 @@ function SeedVerifyPanel({
       </p>
 
       <div
-        className={`space-y-4 transition-transform ${shaking ? 'animate-shake' : ''}`}
+        className="space-y-4 transition-transform"
         style={shaking ? { animation: 'shake 0.5s ease' } : {}}
       >
         {indices.map((wordIdx, slot) => (
           <div key={slot}>
-            <label className="block text-xs text-gray-400 mb-1">
+            <label htmlFor={`verify-word-${slot}`} className="block text-xs text-gray-400 mb-1">
               Word #{wordIdx + 1}
             </label>
             <input
+              id={`verify-word-${slot}`}
               type="text"
               autoComplete="off"
               autoCorrect="off"
               autoCapitalize="none"
               spellCheck={false}
+              aria-label={`Word ${wordIdx + 1} of ${words.length}`}
               value={inputs[slot]}
               onChange={e => onChange(slot, e.target.value)}
               onKeyDown={e => e.key === 'Enter' && onSubmit()}
@@ -214,7 +228,7 @@ function SeedVerifyPanel({
       </div>
 
       {error && (
-        <div className="mt-4 rounded-lg border border-red-700 bg-red-900/30 px-4 py-3 text-red-300 text-xs">
+        <div role="alert" className="mt-4 rounded-lg border border-red-700 bg-red-900/30 px-4 py-3 text-red-300 text-xs">
           One or more words didn't match. Check your backup and try again.
         </div>
       )}
@@ -253,7 +267,13 @@ function SeedVerifyPanel({
 
 // ── Success phase ─────────────────────────────────────────────────────────────
 
-function SeedSuccessPanel({ walletPath }: { walletPath: string }) {
+function SeedSuccessPanel({
+  walletPath,
+  recoverHint = 'management-seed-reveal',
+}: {
+  walletPath: string;
+  recoverHint?: SeedBackupStepProps['recoverHint'];
+}) {
   return (
     <div className="max-w-md">
       <div className="rounded-xl border border-mint-700 bg-mint-900/30 p-6">
@@ -266,8 +286,17 @@ function SeedSuccessPanel({ walletPath }: { walletPath: string }) {
         </p>
         <p className="text-xs font-mono text-gray-400 mb-4 break-all">{walletPath}</p>
         <p className="text-xs text-gray-500 mb-5">
-          To view your seed phrase again, go to{' '}
-          <strong className="text-gray-400">Management → Show Seed Phrase</strong>.
+          {recoverHint === 'one-time-only' ? (
+            <>
+              These words <strong className="text-gray-400">cannot be shown again</strong>. If you
+              have not written them down, go back now — this was your only copy.
+            </>
+          ) : (
+            <>
+              To view your seed phrase again, go to{' '}
+              <strong className="text-gray-400">Management → Show Seed Phrase</strong>.
+            </>
+          )}
         </p>
         <a
           href="/"
@@ -282,7 +311,7 @@ function SeedSuccessPanel({ walletPath }: { walletPath: string }) {
 
 // ── Root component ────────────────────────────────────────────────────────────
 
-export default function SeedBackupStep({ mnemonic, walletPath }: SeedBackupStepProps) {
+export default function SeedBackupStep({ mnemonic, walletPath, recoverHint }: SeedBackupStepProps) {
   const words = mnemonic.trim().split(/\s+/);
   const [step, setStep] = useState<BackupPhase>({ phase: 'display' });
   const shakeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -306,9 +335,16 @@ export default function SeedBackupStep({ mnemonic, walletPath }: SeedBackupStepP
       setStep({ phase: 'success' });
     } else {
       if (shakeTimer.current) clearTimeout(shakeTimer.current);
-      setStep({ ...step, shaking: true, error: true, inputs: ['', '', '', ''] });
+      // Keep the entries the user got right — clearing all four on a failed
+      // check forces a full retype of a backup they demonstrably have.
+      const kept = step.inputs.map(
+        (val, slot) => (step.indices[slot] !== undefined && val.trim().toLowerCase() === words[step.indices[slot]].toLowerCase() ? val : ''),
+      ) as [string, string, string, string];
+      setStep({ ...step, shaking: true, error: true, inputs: kept });
       shakeTimer.current = setTimeout(() => {
         setStep(s => (s.phase === 'verify' ? { ...s, shaking: false } : s));
+        // Role="alert" announces the failure; move focus to the first field.
+        document.getElementById('verify-word-0')?.focus();
       }, 600);
     }
   }, [step, words]);
@@ -348,5 +384,5 @@ export default function SeedBackupStep({ mnemonic, walletPath }: SeedBackupStepP
     );
   }
 
-  return <SeedSuccessPanel walletPath={walletPath} />;
+  return <SeedSuccessPanel walletPath={walletPath} recoverHint={recoverHint} />;
 }
