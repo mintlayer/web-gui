@@ -93,12 +93,13 @@ export async function isIndexerAvailable(): Promise<boolean> {
 
 async function indexerGet<T>(path: string, params?: Record<string, string | number>): Promise<T> {
   const url = new URL(`${INDEXER_URL}/api/v2${path}`);
+  const signal = AbortSignal.timeout(10_000);
   if (params) {
     for (const [k, v] of Object.entries(params)) {
       url.searchParams.set(k, String(v));
     }
   }
-  const res = await fetch(url.toString());
+  const res = await fetch(url.toString(), { signal });
   if (!res.ok) {
     throw new Error(`Indexer error ${res.status}: ${await res.text()}`);
   }
@@ -114,7 +115,7 @@ export async function listTokenIds(offset = 0, items = 50): Promise<string[]> {
 
 /** Get full token info by ID (bech32). */
 export async function getIndexerToken(tokenId: string): Promise<IndexerToken> {
-  return indexerGet<IndexerToken>(`/token/${tokenId}`);
+  return indexerGet<IndexerToken>(`/token/${encodeURIComponent(tokenId)}`);
 }
 
 /** Search tokens by ticker substring. */
@@ -131,7 +132,7 @@ export async function listIndexerOrders(offset = 0, items = 50): Promise<Indexer
 
 /** Get a single order by ID. */
 export async function getIndexerOrder(orderId: string): Promise<IndexerOrder> {
-  return indexerGet<IndexerOrder>(`/order/${orderId}`);
+  return indexerGet<IndexerOrder>(`/order/${encodeURIComponent(orderId)}`);
 }
 
 /**
@@ -140,7 +141,7 @@ export async function getIndexerOrder(orderId: string): Promise<IndexerOrder> {
  * Use "ML" as the coin ticker.
  */
 export async function listOrdersByPair(pair: string, offset = 0, items = 50): Promise<IndexerOrder[]> {
-  return indexerGet<IndexerOrder[]>(`/order/pair/${pair}`, { offset, items });
+  return indexerGet<IndexerOrder[]>(`/order/pair/${encodeURIComponent(pair)}`, { offset, items });
 }
 
 // ── Pool endpoints ────────────────────────────────────────────────────────────
