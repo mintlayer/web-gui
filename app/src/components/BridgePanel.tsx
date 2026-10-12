@@ -13,9 +13,14 @@ import {
   getConnectedAccount,
   getTokenBalance,
   hasEthereumProvider,
+  normalizeEvmRejection,
   switchChain,
 } from '@/lib/evm';
 import { suggestAddressCorrection, hrpForNetwork } from '@/lib/bech32-correct';
+import { rpc } from '@/lib/client-rpc';
+import { isPositiveDecimal } from '@/lib/validation';
+import { validateEvmAddress } from '@/lib/bridge-sdk/addresses';
+import AddressSuggestion from '@/components/AddressSuggestion';
 
 const sdk = createBridgeSdk();
 
@@ -28,7 +33,8 @@ type Phase =
   | 'submitting'
   | 'polling'
   | 'done'
-  | 'failed';
+  | 'failed'
+  | 'manual';
 
 interface Asset {
   ticker: string;
@@ -42,6 +48,7 @@ const input =
   'w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-mint-600';
 const primaryBtn =
   'w-full rounded-lg bg-mint-700 hover:bg-mint-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
+const totpInput = `${input} max-w-[8rem] tracking-[0.3em] text-center`;
 
 /** Fixed-point decimal total: fixed + amount × pct/100, at 18-digit scale. */
 function totalFee(fixed: string, amount: string, pctPercent: string): string | null {
@@ -60,7 +67,7 @@ function totalFee(fixed: string, amount: string, pctPercent: string): string | n
     const total = f + (a * p) / (100n * S); // pct is a percentage: /100 overall
     // format at scale 18, trim trailing zeros
     const whole = total / S;
-    let frac = (total % S).toString().padStart(18, '0').replace(/0+$/, '');
+    const frac = (total % S).toString().padStart(18, '0').replace(/0+$/, '');
     return `${whole.toString()}${frac ? `.${frac}` : ''}`;
   } catch {
     return null;
@@ -87,12 +94,11 @@ const STATUS_STEPS: Record<string, { label: string; step: number }> = {
   pending: { label: 'Agents processing deposit…', step: 1 },
   processed_by_master: { label: 'Signed by master agent — waiting for cosigner…', step: 2 },
   completed: { label: 'Bridge completed', step: 3 },
-  failed: { label: 'Bridge failed', step: 3 },
-  manual: { label: 'Escalated for manual review', step: 3 },
 };
 
 interface IndexerStatus {
   up: boolean;
+  nodeUp: boolean;
   height: number | null;
   nodeHeight: number | null;
   synced: boolean;
@@ -108,6 +114,8 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
   const [amount, setAmount] = useState('');
   const [receiver, setReceiver] = useState('');
   const [receiverSuggestion, setReceiverSuggestion] = useState<{ corrected: string; fixedChars: number } | null>(null);
+  const [bridgeTotp, setBridgeTotp] = useState('');
+  const bridgeTotpRef = useRef<HTMLInputElement>(null);
 
   const [ethAccount, setEthAccount] = useState<string | null>(null);
   const [ethBalance, setEthBalance] = useState<string | null>(null);
@@ -115,12 +123,18 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
   const [mlAddress, setMlAddress] = useState<string | null>(null);
   const [addressLoading, setAddressLoading] = useState(false);
   const [indexerStatus, setIndexerStatus] = useState<IndexerStatus | null>(null);
+  const [indexerError, setIndexerError] = useState(false);
 
   const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
   const [requestUuid, setRequestUuid] = useState<string | null>(null);
   const [requestStatus, setRequestStatus] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Synchronous double-submit guard: between the confirm dialog and the first
+  // setPhase the async submits leave `busy` false, so the button alone can't
+  // stop a double click from creating two deposits.
+  const submittingRef = useRef(false);
 
   const metamaskInstalled = hasEthereumProvider();
 
@@ -133,14 +147,8 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
         if (cancelled) return;
         setConfig(cfg);
         setFees(feeTable);
-        const network = cfg.network_type ?? 'mainnet';
-        const flavorCfg =
-          cfg.eth_flavor_specific_config?.[network === 'mainnet' ? 'mainnet' : 'sepolia'] ??
-          cfg.eth_flavor_specific_config?.[''] ??
-          null;
         const tickers = Object.keys(cfg.ml_tokens ?? {});
         setAssetTicker((prev) => prev || tickers[0] || '');
-        void flavorCfg;
       } catch (err) {
         if (!cancelled) setConfigError((err as Error).message);
       }
@@ -153,20 +161,12 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
   // ── Own ML address (receive side for E2M) ───────────────────────────────────
   const fetchMlAddress = useCallback(async (): Promise<string | null> => {
     try {
-      const res = await fetch('/api/rpc', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          method: 'address_show',
-          params: { account: 0, include_change_addresses: false },
-        }),
-      });
-      const data = (await res.json()) as {
-        ok: boolean;
-        result?: { address: string; used: boolean; purpose: string }[];
-      };
-      if (!data.ok || !Array.isArray(data.result)) return null;
-      const first = data.result.find((a) => a.purpose === 'Receive' && !a.used) ?? data.result[0];
+      const result = await rpc<{ address: string; used: boolean; purpose: string }[]>(
+        'address_show',
+        { account: 0, include_change_addresses: false },
+      );
+      if (!Array.isArray(result)) return null;
+      const first = result.find((a) => a.purpose === 'Receive' && !a.used) ?? result[0];
       return first?.address ?? null;
     } catch {
       return null; /* dashboard shows wallet errors elsewhere */
@@ -197,17 +197,25 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
   }
 
   // ── Indexer readiness gate ──────────────────────────────────────────────────
-  useEffect(() => {
+  const loadIndexerStatus = useCallback(() => {
     if (!indexerEnabled) return;
-    const load = () =>
-      fetch('/api/indexer-status')
-        .then((r) => r.json() as Promise<IndexerStatus>)
-        .then(setIndexerStatus)
-        .catch(() => {});
-    load();
-    const t = setInterval(load, 10_000);
-    return () => clearInterval(t);
+    fetch('/api/indexer-status')
+      .then((r) => {
+        if (!r.ok) throw new Error(`indexer-status ${r.status}`);
+        return r.json() as Promise<IndexerStatus>;
+      })
+      .then((s) => {
+        setIndexerStatus(s);
+        setIndexerError(false);
+      })
+      .catch(() => setIndexerError(true));
   }, [indexerEnabled]);
+
+  useEffect(() => {
+    loadIndexerStatus();
+    const t = setInterval(loadIndexerStatus, 10_000);
+    return () => clearInterval(t);
+  }, [loadIndexerStatus]);
 
   const indexerReady = !indexerEnabled || indexerStatus?.synced === true;
 
@@ -241,6 +249,7 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
   async function connectWallet() {
     setConnecting(true);
     setError(null);
+    setInfo(null);
     try {
       await switchChainIfNeeded();
       const address = await connectMetaMask();
@@ -279,7 +288,7 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
         setRequestStatus(status);
         if (status === 'completed' || status === 'failed' || status === 'manual') {
           stopPolling();
-          setPhase(status === 'completed' ? 'done' : 'failed');
+          setPhase(status === 'completed' ? 'done' : status === 'manual' ? 'manual' : 'failed');
         }
       } catch {
         /* transient poll errors are retried on the next tick */
@@ -289,8 +298,19 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
 
   useEffect(() => stopPolling, []);
 
+  function resetForm() {
+    setPhase('idle');
+    setRequestUuid(null);
+    setRequestStatus(null);
+    setAmount('');
+    setReceiver('');
+    setReceiverSuggestion(null);
+    setBridgeTotp('');
+  }
+
   async function submit() {
     setError(null);
+    setInfo(null);
     setReceiverSuggestion(null);
     if (!asset) {
       setError('No bridged asset selected.');
@@ -300,19 +320,39 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
       setError(direction === 'e2m' ? 'Amount and Mintlayer address are required.' : 'Amount and Ethereum address are required.');
       return;
     }
-    if (!/^\d+(\.\d+)?$/.test(amount.trim())) {
+    if (!isPositiveDecimal(amount)) {
       setError('Amount must be a positive decimal number.');
       return;
     }
-    if (direction === 'm2e' && !/^0x[0-9a-fA-F]{40}$/.test(receiver.trim())) {
-      setError('Receiver must be a valid 0x… Ethereum address.');
+    if (
+      asset.maxAmountPerRequest &&
+      /^\d+(\.\d+)?$/.test(asset.maxAmountPerRequest) &&
+      parseFloat(amount.trim()) > parseFloat(asset.maxAmountPerRequest)
+    ) {
+      setError(`Maximum ${asset.maxAmountPerRequest} ${assetTicker} per bridge request.`);
+      return;
+    }
+    if (direction === 'm2e') {
+      const evmCheck = validateEvmAddress(receiver);
+      if (!evmCheck.valid) {
+        setError(evmCheck.error ?? 'Receiver must be a valid 0x… Ethereum address.');
+        return;
+      }
+    }
+    if (direction === 'm2e' && !/^\d{6}$/.test(bridgeTotp.trim())) {
+      setError('Enter your 6-digit 2FA code to sign the bridge transaction.');
       return;
     }
 
     // E2M: the ML receiver can be typo-corrected via the bech32 checksum.
     if (direction === 'e2m') {
       const hrp = hrpForNetwork('ml', networkType);
-      if (hrp) {
+      if (!hrp) {
+        // Fail closed: an unvalidatable address must never reach the bridge.
+        setError(`Cannot validate Mintlayer addresses for network "${networkType}".`);
+        return;
+      }
+      {
         const res = suggestAddressCorrection(receiver.trim(), hrp, 'ml');
         if (res.status === 'corrected' && res.corrected) {
           setReceiverSuggestion({ corrected: res.corrected, fixedChars: res.fixedChars ?? 1 });
@@ -326,6 +366,24 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
       }
     }
 
+    // Review step: bridge transfers are irreversible — one explicit
+    // confirmation with the full amount/fee/destination summary.
+    const feeSummary = directionFees
+      ? (() => {
+          const total = totalFee(directionFees.fixed_fee, amount.trim(), directionFees.percentage_fee ?? '');
+          return total !== null ? `\nFee: ${total} ${assetTicker}` : '';
+        })()
+      : '';
+    if (
+      !window.confirm(
+        `Bridge ${amount.trim()} ${assetTicker}\n${sourceChain} → ${destinationChain}\nReceiver: ${receiver.trim()}${feeSummary}\n\nThis cannot be undone. Continue?`,
+      )
+    ) {
+      return;
+    }
+
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     try {
       if (direction === 'e2m') {
         // ── Ethereum → Mintlayer ──
@@ -357,17 +415,42 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
         // ── Mintlayer → Ethereum ──
         if (!ethAccount) throw new Error('Connect MetaMask first (it is the receiver).');
         setPhase('signing');
-        const signed = await fetch('/api/bridge/ml-intent-tx', {
+        const signedRes = await fetch('/api/bridge/ml-intent-tx', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             token_id: asset.mlTokenId,
             amount: amount.trim(),
             intent: receiver.trim(),
+            totp_code: bridgeTotp.trim(),
           }),
-        }).then((r) => r.json() as Promise<{ ok: boolean; error?: string; raw_transaction?: string; intent?: string }>);
+        });
+        // Session expiry: the auth middleware answers with a 302 to /login,
+        // which fetch silently follows — the body is HTML, not JSON.
+        if (signedRes.redirected) {
+          setBridgeTotp('');
+          setPhase('idle');
+          setError('Your session expired — redirecting to login…');
+          setTimeout(() => location.assign('/login'), 800);
+          return;
+        }
+        if (!(signedRes.headers.get('content-type') ?? '').includes('application/json')) {
+          // Proxy interstitial / gateway error page — parse nothing.
+          bridgeTotpRef.current?.focus();
+          throw new Error(`Bridge signing failed (HTTP ${signedRes.status}) — no transaction was created.`);
+        }
+        const signed = await signedRes.json() as { ok: boolean; error?: string; raw_transaction?: string; intent?: string; code_consumed?: boolean };
         if (!signed.ok || !signed.raw_transaction || !signed.intent) {
-          throw new Error(signed.error ?? 'Failed to create the bridge transaction.');
+          // Failures after the step-up gate consumed the authenticator code:
+          // clear the field so the retry starts with a fresh code.
+          const consumedHint = signed.code_consumed
+            ? ' Your authenticator code was consumed — enter a fresh code to retry.'
+            : '';
+          if (signed.code_consumed) {
+            setBridgeTotp('');
+            bridgeTotpRef.current?.focus();
+          }
+          throw new Error((signed.error ?? 'Failed to create the bridge transaction.') + consumedHint);
         }
         setPhase('submitting');
         const res = await sdk.broadcastBridgeRequest({
@@ -384,18 +467,81 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
         pollRequest(res.bridge_request_uuid);
       }
     } catch (err) {
-      const e = err as { code?: number; message?: string };
-      setError(e.message ?? 'Bridge request failed.');
-      setPhase('idle');
+      // Wallet rejections are user choices, not failures — an EvmError with
+      // code 4001 renders as neutral info, everything else as a real error.
+      const e = normalizeEvmRejection(err);
+      if (e.code === 4001) {
+        setInfo(e.message);
+        setPhase('idle');
+      } else {
+        setError(e.message);
+        setPhase('idle');
+      }
+    } finally {
+      submittingRef.current = false;
     }
   }
 
   const busy = phase === 'approve' || phase === 'deposit' || phase === 'signing' || phase === 'submitting' || phase === 'polling';
   const receiverLabel = direction === 'e2m' ? 'Your Mintlayer address (receiver)' : 'Your Ethereum address (receiver)';
 
-  // Indexer still scanning: hide the whole bridge UI to avoid half-working
-  // state (the m2e side spends from the local wallet, whose view of balances
-  // is only complete once the indexer caught up with the node).
+  // ── Gating cards ──────────────────────────────────────────────────────────────
+  if (indexerEnabled && indexerError) {
+    return (
+      <div className={card}>
+        <div className="flex items-center gap-3 mb-3">
+          <span className="w-2 h-2 rounded-full bg-red-500 shrink-0"></span>
+          <h2 className="text-base font-semibold text-gray-100">Couldn&apos;t check the indexer status</h2>
+        </div>
+        <p className="text-sm text-gray-400 mb-4">
+          The bridge stays disabled while the indexer status is unknown, so you don&apos;t act on
+          incomplete balances or history.
+        </p>
+        <button onClick={loadIndexerStatus} className={primaryBtn + ' w-auto px-4'}>Retry</button>
+      </div>
+    );
+  }
+
+  if (indexerEnabled && indexerStatus && !indexerStatus.nodeUp) {
+    return (
+      <div className={card}>
+        <div className="flex items-center gap-3 mb-3">
+          <span className="w-2 h-2 rounded-full bg-red-500 shrink-0"></span>
+          <h2 className="text-base font-semibold text-gray-100">The Mintlayer node is unreachable</h2>
+        </div>
+        <p className="text-sm text-gray-400 mb-3">
+          The bridge needs the node to verify balances and history. Check that the node daemon is
+          running:
+        </p>
+        <code className="block rounded bg-gray-800 px-3 py-2 text-xs font-mono text-mint-400 mb-4">
+          docker compose ps node-daemon
+        </code>
+        <button onClick={loadIndexerStatus} className={primaryBtn + ' w-auto px-4'}>Retry</button>
+      </div>
+    );
+  }
+
+  if (indexerEnabled && indexerStatus && !indexerStatus.up) {
+    // Distinguish "indexer down" from "still syncing" — both leave synced
+    // false, but a down indexer would otherwise render as syncing block #0
+    // (0%) forever with no hint that anything is actually wrong.
+    return (
+      <div className={card}>
+        <div className="flex items-center gap-3 mb-3">
+          <span className="w-2 h-2 rounded-full bg-red-500 shrink-0"></span>
+          <h2 className="text-base font-semibold text-gray-100">The indexer is offline</h2>
+        </div>
+        <p className="text-sm text-gray-400 mb-3">
+          The bridge needs the indexer to read balances and history. Start it with:
+        </p>
+        <code className="block rounded bg-gray-800 px-3 py-2 text-xs font-mono text-mint-400 mb-4">
+          docker compose --profile indexer up -d
+        </code>
+        <button onClick={loadIndexerStatus} className={primaryBtn + ' w-auto px-4'}>Retry</button>
+      </div>
+    );
+  }
+
   if (indexerEnabled && indexerStatus && !indexerStatus.synced) {
     const height = indexerStatus.height ?? 0;
     const nodeHeight = indexerStatus.nodeHeight ?? 0;
@@ -421,6 +567,8 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
     );
   }
 
+  const phaseState =
+    phase === 'done' ? 'ok' : phase === 'failed' || phase === 'manual' ? 'bad' : 'busy';
   const phaseLabel =
     phase === 'approve'
       ? 'Waiting for ERC20 approval in MetaMask…'
@@ -436,7 +584,10 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
                 ? 'Bridge completed — tokens arrived.'
                 : phase === 'failed'
                   ? 'Bridge failed.'
-                  : '';
+                  : phase === 'manual'
+                    ? 'Escalated for manual review — support will look at this request.'
+                    : '';
+  const phaseStep = requestStatus ? (STATUS_STEPS[requestStatus]?.step ?? 1) : 1;
 
   return (
     <div className="space-y-6">
@@ -457,7 +608,7 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
           <button
             key={key}
             type="button"
-            onClick={() => { setDirection(key); setError(null); }}
+            onClick={() => { setDirection(key); setError(null); setInfo(null); }}
             className={`rounded-xl border px-4 py-3 text-left transition-colors ${
               direction === key
                 ? 'border-mint-600 bg-mint-900/20'
@@ -507,8 +658,8 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
       <div className={card + ' space-y-4'}>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Asset</label>
-            <select value={assetTicker} onChange={(e) => setAssetTicker(e.target.value)} className={input}>
+            <label htmlFor="bridge-asset" className="block text-xs text-gray-400 mb-1">Asset</label>
+            <select id="bridge-asset" value={assetTicker} onChange={(e) => setAssetTicker(e.target.value)} className={input}>
               {assets.map((a) => (
                 <option key={a.ticker} value={a.ticker}>{a.ticker}</option>
               ))}
@@ -516,14 +667,21 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
             </select>
           </div>
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Amount</label>
+            <label htmlFor="bridge-amount" className="block text-xs text-gray-400 mb-1">Amount</label>
             <input
+              id="bridge-amount"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               placeholder="0.00"
               inputMode="decimal"
+              autoComplete="off"
               className={input}
             />
+            {asset?.maxAmountPerRequest && (
+              <p className="text-xs text-gray-500 mt-1">
+                Max {asset.maxAmountPerRequest} {assetTicker} per request
+              </p>
+            )}
             {directionFees && (
               <p className="text-xs text-gray-500 mt-1">
                 {(() => {
@@ -546,13 +704,16 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
         </div>
 
         <div>
-          <label className="block text-xs text-gray-400 mb-1">{receiverLabel}</label>
+          <label htmlFor="bridge-receiver" className="block text-xs text-gray-400 mb-1">{receiverLabel}</label>
           <div className="flex gap-2">
             <input
+              id="bridge-receiver"
               value={receiver}
               onChange={e => { setReceiver(e.target.value); setReceiverSuggestion(null); }}
               placeholder={direction === 'e2m' ? 'tmt1…' : '0x…'}
               className={input}
+              autoComplete="off"
+              spellCheck={false}
             />
             {direction === 'e2m' ? (
               <button
@@ -577,29 +738,79 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
             )}
           </div>
           {receiverSuggestion && (
-            <div className="mt-2 rounded-lg border border-amber-800 bg-amber-900/20 px-3 py-2 text-xs text-amber-300">
-              Did you mean{' '}
-              <code className="font-mono text-mint-300 break-all">{receiverSuggestion.corrected}</code>?
-              <span className="text-amber-400/80"> (fixed {receiverSuggestion.fixedChars} character{receiverSuggestion.fixedChars === 1 ? '' : 's'})</span>
-              <button
-                type="button"
-                onClick={() => { setReceiver(receiverSuggestion.corrected); setReceiverSuggestion(null); }}
-                className="ml-1 underline font-semibold hover:text-amber-200"
-              >
-                Use suggested address
-              </button>
+            <div className="mt-2">
+              <AddressSuggestion
+                corrected={receiverSuggestion.corrected}
+                fixedChars={receiverSuggestion.fixedChars}
+                onAccept={() => { setReceiver(receiverSuggestion.corrected); setReceiverSuggestion(null); }}
+                onDismiss={() => setReceiverSuggestion(null)}
+              />
             </div>
           )}
         </div>
 
+        {direction === 'm2e' && (
+          <div>
+            <label htmlFor="bridge-totp" className="block text-xs text-gray-400 mb-1">2FA code</label>
+            <input
+              id="bridge-totp"
+              ref={bridgeTotpRef}
+              value={bridgeTotp}
+              onChange={(e) => setBridgeTotp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              placeholder="123456"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              className={totpInput}
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              Mintlayer → Ethereum signs a wallet transaction — confirm it with your authenticator.
+            </p>
+          </div>
+        )}
+
         {error && (
-          <div className="rounded-lg border border-red-800 bg-red-900/30 px-3 py-2 text-red-300 text-sm">{error}</div>
+          <div role="alert" className="rounded-lg border border-red-800 bg-red-900/30 px-3 py-2 text-red-300 text-sm">{error}</div>
+        )}
+        {info && (
+          <div role="status" className="rounded-lg border border-gray-700 bg-gray-800/60 px-3 py-2 text-gray-300 text-sm">{info}</div>
         )}
         {phase !== 'idle' && phaseLabel && (
-          <div className="rounded-lg border border-mint-700 bg-mint-900/20 px-3 py-2 text-mint-300 text-sm">
+          <div
+            role="status"
+            className={`rounded-lg border px-3 py-2 text-sm ${
+              phaseState === 'ok'
+                ? 'border-mint-700 bg-mint-900/20 text-mint-300'
+                : phaseState === 'bad'
+                  ? phase === 'manual'
+                    ? 'border-amber-800 bg-amber-900/20 text-amber-300'
+                    : 'border-red-800 bg-red-950/50 text-red-300'
+                  : 'border-gray-700 bg-gray-800/60 text-gray-300'
+            }`}
+          >
+            {phaseState === 'busy' && (
+              <span className="inline-flex items-center gap-2">
+                <span className="flex gap-1" aria-hidden="true">
+                  {[1, 2, 3].map((n) => (
+                    <span
+                      key={n}
+                      className={`w-1.5 h-1.5 rounded-full ${n <= phaseStep ? 'bg-mint-400' : 'bg-gray-600'}`}
+                    />
+                  ))}
+                </span>
+              </span>
+            )}{' '}
             {phaseLabel}
             {requestUuid && (
               <p className="text-xs text-gray-500 mt-1 font-mono break-all">request {requestUuid}</p>
+            )}
+            {phaseState !== 'busy' && (
+              <button
+                type="button"
+                onClick={resetForm}
+                className="mt-2 block underline font-semibold hover:opacity-80"
+              >
+                {phaseState === 'ok' ? 'Bridge another' : 'Start over'}
+              </button>
             )}
           </div>
         )}

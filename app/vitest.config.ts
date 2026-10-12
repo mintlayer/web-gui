@@ -32,6 +32,10 @@ export default defineConfig({
         'src/lib/telegram-bot.ts',
         'src/lib/telegram-commands.ts',
         'src/lib/telegram-notifications.ts',
+        // Browser-only EVM provider bridge (window.ethereum / ethers) — no Node runtime
+        'src/lib/evm.ts',
+        // Type-only module — no runtime code
+        'src/lib/bridge-sdk/types.ts',
       ],
       reporter: ['text', 'lcov', 'html'],
       thresholds: { lines: 80, branches: 75 },
