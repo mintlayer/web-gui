@@ -1,17 +1,41 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# If invoked via process substitution (bash <(curl ...)), $0 is /dev/fd/N —
-# inaccessible in any child process spawned by sg/newgrp. Copy to a temp file
-# immediately while the fd is still open, then use that path for re-exec.
+# When run via process substitution (bash <(curl ...)), $0 is /dev/fd/N — a
+# PIPE that bash itself reads incrementally. Any child (cp/cat) opening the
+# same /dev/fd path shares the pipe offset, so copying the file would consume
+# the unread remainder and leave bash at EOF -> silent exit 0. Instead: slurp
+# the remainder into a temp file and exec it. ML_TMP_SELF carries the temp
+# path across the exec and the later `sg docker` re-exec, so the temp script
+# can clean itself up on exit.
 _SELF="$0"
-if [[ "$_SELF" == /dev/fd/* ]] || [[ "$_SELF" == /proc/*/fd/* ]]; then
+if [[ -n "${ML_TMP_SELF:-}" && -f "$ML_TMP_SELF" ]]; then
+  _SELF="$ML_TMP_SELF"
+elif [[ "$_SELF" == /dev/fd/* ]] || [[ "$_SELF" == /proc/*/fd/* ]]; then
   _tmp=$(mktemp /tmp/mintlayer-install-XXXXXX.sh)
-  cp "$_SELF" "$_tmp"
+  # The remainder of the pipe is everything bash has not parsed yet — the
+  # shebang, `set -euo pipefail` and the `_SELF` assignment below are already
+  # consumed and would be missing from the temp file. Re-add them, with _SELF
+  # pre-bound so the trap and the `sg docker` re-exec work regardless of how
+  # this script was invoked.
+  {
+    printf '%s\n' \
+      '#!/usr/bin/env bash' \
+      'set -euo pipefail' \
+      '_SELF="'"$_tmp"'"'
+    cat "$_SELF"
+  } > "$_tmp"
   chmod +x "$_tmp"
-  _SELF="$_tmp"
+  if [[ $(wc -l < "$_tmp") -lt 10 ]]; then
+    printf '%s\n' "ERROR: could not recover the installer from the input pipe." \
+      "Download it first: curl -sSL <installer-url> -o install.sh && bash install.sh" >&2
+    exit 1
+  fi
+  export ML_TMP_SELF="$_tmp"
+  exec bash "$_tmp" "$@"
 fi
-# When re-executed from the temp file (after sg docker), clean it up on exit.
+# When running from the temp file (after the exec above or `sg docker`),
+# clean it up on exit.
 if [[ "$_SELF" == /tmp/mintlayer-install-*.sh ]]; then
   trap 'rm -f "$_SELF"' EXIT
 fi
@@ -237,6 +261,9 @@ services:
   # ─────────────────────────────────────────
   web-gui:
     image: "${ML_WEB_GUI_IMAGE:-mintlayer/web-gui:latest}"
+    # Run as the invoking host user (same as the repo compose) so the
+    # bind-mounted prefs DB and uploads/ stay owned by one uid.
+    user: "${ML_USER_ID:-10001}:${ML_GROUP_ID:-10001}"
     depends_on:
       - wallet-rpc-daemon
     volumes:
@@ -261,11 +288,15 @@ services:
       PINATA_JWT: "${PINATA_JWT:-}"
       IPFS_PROVIDER: "${IPFS_PROVIDER:-}"
       FILEBASE_TOKEN: "${FILEBASE_TOKEN:-}"
-      UI_PASSWORD_HASH: "${UI_PASSWORD_HASH}"
-      UI_TOTP_SECRET: "${UI_TOTP_SECRET}"
       SESSION_SECRET: "${SESSION_SECRET}"
       WALLET_RPC_CMD: "${WALLET_RPC_CMD:-}"
       INDEXER_ENABLED: "${INDEXER_ENABLED:-false}"
+      BITCOIN_ENABLED: "${BITCOIN_ENABLED:-false}"
+      BITCOIN_NETWORK: "${BITCOIN_NETWORK:-}"
+      BITCOIN_WALLET_URL: "http://bdk-wallet:8080"
+      BITCOIN_WALLET_USERNAME: "${BITCOIN_WALLET_HTTP_USERNAME:-}"
+      BITCOIN_WALLET_PASSWORD: "${BITCOIN_WALLET_HTTP_PASSWORD:-}"
+      BITCOIN_EXPLORER_URL: "${BITCOIN_EXPLORER_URL:-}"
       HOST: "0.0.0.0"
       PORT: "4321"
     restart: unless-stopped
@@ -307,6 +338,8 @@ services:
   api-blockchain-scanner-daemon:
     <<: *common
     image: "${ML_API_SCANNER_IMAGE:-mintlayer/api-blockchain-scanner-daemon:latest}"
+    # No baked-in CMD in the runtime image — pass the binary explicitly.
+    command: "/usr/bin/api-blockchain-scanner-daemon"
     depends_on:
       - node-daemon
       - postgres
@@ -327,6 +360,8 @@ services:
 
   api-web-server:
     image: "${ML_API_WEB_SERVER_IMAGE:-mintlayer/api-web-server:latest}"
+    # No baked-in CMD in the runtime image — pass the binary explicitly.
+    command: "/usr/bin/api-web-server"
     depends_on:
       - postgres
       - node-daemon
@@ -378,6 +413,66 @@ services:
       LOG_FILE: "false"
     profiles:
       - duckdns
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────
+  # Optional: Bitcoin stack  (profile: bitcoin)
+  #
+  # Enable by setting BITCOIN_ENABLED=true in .env, generating the BITCOIN_*
+  # RPC credentials, then: docker compose --profile bitcoin up -d
+  # WARNING: mainnet needs ~700 GB (txindex); testnet ~50 GB; pruned ~15-25 GB.
+  # ─────────────────────────────────────────
+  bitcoind:
+    image: "${BITCOIND_IMAGE:-bitcoin/bitcoin:25}"
+    volumes:
+      - "./bitcoin-data:/home/bitcoin/.bitcoin"
+    command:
+      - "-printtoconsole=1"
+      - "-chain=${BITCOIN_CORE_CHAIN:-${BITCOIN_NETWORK:-mainnet}}"
+      - "-rpcbind=0.0.0.0:8332"
+      - "-rpcallowip=0.0.0.0/0"
+      - "-rpcuser=${BITCOIN_RPC_USERNAME}"
+      - "-rpcpassword=${BITCOIN_RPC_PASSWORD}"
+      - "-txindex=${BITCOIN_TXINDEX:-1}"
+      - "-prune=${BITCOIN_PRUNE:-0}"
+      - "-fallbackfee=0.0002"
+    profiles:
+      - bitcoin
+    restart: unless-stopped
+
+  btc-explorer:
+    image: "${BTC_EXPLORER_IMAGE:-mintlayer/web-gui/btc-explorer:latest}"
+    depends_on:
+      - bitcoind
+    environment:
+      BTCEXP_BITCOIND_URI: "bitcoin://${BITCOIN_RPC_USERNAME}:${BITCOIN_RPC_PASSWORD}@bitcoind:8332?timeout=15000"
+      BTCEXP_HOST: "0.0.0.0"
+      BTCEXP_PORT: "3002"
+      BTCEXP_ADDRESS_API: "none"
+    ports:
+      - "127.0.0.1:${BITCOIN_EXPLORER_PORT:-3002}:3002"
+    profiles:
+      - bitcoin
+    restart: unless-stopped
+
+  bdk-wallet:
+    image: "${BDK_WALLET_IMAGE:-mintlayer/web-gui/bdk-wallet:latest}"
+    user: "${ML_USER_ID:-1000}:${ML_GROUP_ID:-1000}"
+    depends_on:
+      - bitcoind
+    volumes:
+      - "./bitcoin-wallet-data:/data"
+    environment:
+      BITCOIN_NETWORK: "${BITCOIN_NETWORK:-mainnet}"
+      BITCOIN_RPC_URL: "http://bitcoind:8332"
+      BITCOIN_RPC_USERNAME: "${BITCOIN_RPC_USERNAME}"
+      BITCOIN_RPC_PASSWORD: "${BITCOIN_RPC_PASSWORD}"
+      WALLET_HTTP_USERNAME: "${BITCOIN_WALLET_HTTP_USERNAME}"
+      WALLET_HTTP_PASSWORD: "${BITCOIN_WALLET_HTTP_PASSWORD}"
+      DATA_DIR: "/data"
+      RUST_LOG: "${RUST_LOG:-info}"
+    profiles:
+      - bitcoin
     restart: unless-stopped
 
 volumes:
@@ -679,13 +774,14 @@ fi
 generate_ui_secrets() {
   printf "${CYAN}│${RESET}\n"
   hint "Hashing password (this may take a moment)..."
-  UI_PASSWORD_HASH=$(python3 -c "
-import hashlib, os, sys
-password = sys.argv[1]
+  # 210k iterations (OWASP floor) + password via env, not argv (process list).
+  UI_PASSWORD_HASH=$(UI_PASSWORD="$UI_PASSWORD" python3 -c "
+import hashlib, os
+password = os.environ['UI_PASSWORD']
 salt = os.urandom(32).hex()
-key = hashlib.pbkdf2_hmac('sha512', password.encode(), salt.encode(), 100000)
-print('pbkdf2:sha512:100000:' + salt + ':' + key.hex(), end='')
-" "$UI_PASSWORD")
+key = hashlib.pbkdf2_hmac('sha512', password.encode(), salt.encode(), 210000)
+print('pbkdf2:sha512:210000:' + salt + ':' + key.hex(), end='')
+")
   ok "Password hashed"
 
   # Generate TOTP secret (20 random bytes → base32)
@@ -1089,7 +1185,7 @@ printf "${CYAN}│${RESET}\n"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Network:"           "${BOLD}${NETWORK}${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Passwords:"  "${BOLD}$([ "$USE_RANDOM_PASSWORDS" == "yes" ] && echo "randomly generated" || echo "custom")${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Web UI auth:"  "${BOLD}password + TOTP 2FA${RESET}"
-printf "${CYAN}│${RESET}  %-22s %s\n" "Web GUI:"    "${BOLD}$([ "$HTTPS_SETUP" == "yes" ] && echo "https://${DOMAIN}" || echo "http://<your-server-ip>:4321")${RESET}"
+printf "${CYAN}│${RESET}  %-22s %s\n" "Web GUI:"    "${BOLD}$([ "$HTTPS_SETUP" == "yes" ] && echo "https://${DOMAIN}" || echo "http://localhost:4321 (server-local only — see SSH tunnel note below)")${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Indexer:"    "${BOLD}$([ "$ENABLE_INDEXER" == "yes" ] && echo "enabled — Token Management + Trading active" || echo "disabled — Token Management + Trading hidden")${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "IPFS storage:" "${BOLD}$([ -n "$IPFS_PROVIDER" ] && echo "$IPFS_PROVIDER" || echo "disabled — configure later in Settings")${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Telegram:"     "${BOLD}$([ -n "$TELEGRAM_BOT_TOKEN" ] && echo "configured" || echo "disabled — configure later in Settings")${RESET}"
@@ -1149,7 +1245,15 @@ ENABLE_HTTPS=$([ "$HTTPS_SETUP" == "yes" ] && echo "true" || echo "false")
 
 WALLET_RPC_CMD="wallet-rpc-daemon ${NETWORK}"
 
-cat > .env <<EOF
+# .env holds SESSION_SECRET + RPC passwords: create it group/world-readonly
+# from the start (umask 077), and harden any pre-existing file too.
+if [[ -f .env ]]; then
+  ENV_BACKUP=".env.bak.$(date +%Y%m%d-%H%M%S)"
+  cp .env "$ENV_BACKUP" && chmod 600 "$ENV_BACKUP"
+  warn "Existing .env detected — old credentials saved to $ENV_BACKUP."
+  warn "Re-running setup REGENERATES the password, 2FA secret and RPC credentials; you will be logged out and must re-scan TOTP."
+fi
+( umask 077 && cat > .env <<EOF
 # Generated by init.sh on $(date)
 # ─────────────────────────────────────────
 
@@ -1190,8 +1294,33 @@ ENABLE_HTTPS=${ENABLE_HTTPS}
 DOMAIN=${DOMAIN}
 DUCKDNS_SUBDOMAIN=${DUCKDNS_SUBDOMAIN}
 DUCKDNS_TOKEN=${DUCKDNS_TOKEN}
-EOF
 
+# ── Optional Bitcoin stack (profile: bitcoin) ────────────────────────────────
+# To enable: set BITCOIN_ENABLED=true, fill in RPC credentials (generate e.g.
+# with `openssl rand -base64 24`), then: docker compose --profile bitcoin up -d
+# mainnet ~700 GB with txindex / testnet ~50 GB / prune keeps ~15-25 GB.
+BITCOIN_ENABLED=false
+BITCOIN_NETWORK=${NETWORK}
+BITCOIN_CORE_CHAIN=
+BITCOIN_RPC_USERNAME=bitcoin_user
+BITCOIN_RPC_PASSWORD=
+BITCOIN_WALLET_HTTP_USERNAME=
+BITCOIN_WALLET_HTTP_PASSWORD=
+BITCOIN_TXINDEX=1
+BITCOIN_PRUNE=0
+BITCOIN_EXPLORER_URL=
+EOF
+)
+chmod 600 .env 2>/dev/null || true
+
+# Persist active compose profiles so later manual `docker compose up -d`
+# invocations keep the optional stacks enabled (the --profile flag below is
+# one-shot; without this, a bare `up -d` silently drops the indexer stack).
+COMPOSE_PROFILES_LIST=""
+[[ "$ENABLE_INDEXER" == "yes" ]] && COMPOSE_PROFILES_LIST="indexer"
+[[ "$HTTPS_SETUP" == "yes" ]] && COMPOSE_PROFILES_LIST="${COMPOSE_PROFILES_LIST:+$COMPOSE_PROFILES_LIST,}https"
+[[ "$HTTPS_SETUP" == "yes" && -n "$DUCKDNS_SUBDOMAIN" ]] && COMPOSE_PROFILES_LIST="$COMPOSE_PROFILES_LIST,duckdns"
+[[ -n "$COMPOSE_PROFILES_LIST" ]] && printf "\nCOMPOSE_PROFILES=%s\n" "$COMPOSE_PROFILES_LIST" >> .env
 ok ".env written"
 
 # ── Non-interactive: persist TOTP secret to a file instead of stdout ─────────
@@ -1219,7 +1348,10 @@ EOF
 fi
 
 # ── Write credentials to SQLite via temporary alpine container ───────────────
-mkdir -p mintlayer-data/prefs
+# Pre-create all bind-mount dirs as the invoking user: docker creates missing
+# bind-mount dirs as root, which the containers (running as ML_USER_ID) then
+# cannot write (uploads/ receives file uploads; prefs/ holds the SQLite DB).
+mkdir -p mintlayer-data/prefs mintlayer-data/plugins mintlayer-data/uploads
 {
   echo "CREATE TABLE IF NOT EXISTS prefs (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
   echo "INSERT OR REPLACE INTO prefs VALUES ('auth.password_hash', '\"${UI_PASSWORD_HASH}\"');"
@@ -1232,7 +1364,11 @@ mkdir -p mintlayer-data/prefs
 } | docker run --rm -i \
     -v "$(pwd)/mintlayer-data/prefs:/prefs" \
     alpine \
-    sh -c 'apk add -q --no-progress sqlite >/dev/null 2>&1 && sqlite3 /prefs/mintlayer_prefs.sqlite'
+    sh -c 'apk add -q --no-progress sqlite >/dev/null 2>&1 && sqlite3 /prefs/mintlayer_prefs.sqlite && chmod 600 /prefs/mintlayer_prefs.sqlite && chmod 700 /prefs'
+# The seeding container runs as root; hand the prefs DB back to the invoking
+# user so only the app can read the TOTP secret / password hash.
+docker run --rm -v "$(pwd)/mintlayer-data/prefs:/prefs" alpine \
+  chown -R "$(id -u):$(id -g)" /prefs 2>/dev/null || true
 ok "Credentials written to mintlayer-data/prefs/mintlayer_prefs.sqlite"
 
 # ── Create data directory ─────────────────────────────────────────────────────
@@ -1371,7 +1507,9 @@ printf "  ${YELLOW}1.${RESET} Create your wallet via the web UI:\n"
 if [[ "$HTTPS_SETUP" == "yes" ]]; then
   printf "     ${CYAN}https://${DOMAIN}/setup${RESET}\n\n"
 else
-  printf "     ${CYAN}http://<your-server-ip>:4321/setup${RESET}\n\n"
+  printf "     The web UI binds to localhost only (no TLS). From your laptop, open an SSH tunnel first:\n\n"
+  printf "       ${CYAN}ssh -L 4321:localhost:4321 <user>@<your-server-ip>${RESET}\n\n"
+  printf "     then browse: ${CYAN}http://localhost:4321/setup${RESET}\n\n"
 fi
 
 

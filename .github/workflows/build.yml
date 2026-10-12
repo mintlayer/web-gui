@@ -2,7 +2,7 @@ name: Build and Package
 
 on:
   push:
-    branches: [main]
+    branches: ["**"] # run tests on feature branches too, not just at PR time
     tags: ["v*"]
   pull_request:
     branches: [main]
@@ -125,6 +125,11 @@ jobs:
 
   deploy-pages:
     needs: build
+    # ONLY deploy the public installers from main. Without this guard the job
+    # runs on every branch push (a skipped `build` still satisfies `needs`),
+    # which would publish whatever the most recently pushed branch contains —
+    # and these installers get piped straight into a shell by users.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       pages: write
