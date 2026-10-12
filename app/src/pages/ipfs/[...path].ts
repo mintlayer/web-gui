@@ -38,6 +38,12 @@ const DEFAULT_GATEWAYS = [
   'https://gateway.pinata.cloud/ipfs',
   'https://dweb.link/ipfs',
   'https://4everland.io/ipfs',
+  // Last resort: the project's own production proxy (R2-backed, same
+  // content-addressed paths). Public gateways now 429 "service worker
+  // only" from many residential networks, so dev environments would
+  // otherwise never see token icons. Same org — no new third party
+  // sees anything, and cached CIDs are immutable.
+  'https://bridge.mintlayer.org/ipfs',
 ];
 
 // SVG is excluded: same-origin SVG can carry script (self-XSS via a
