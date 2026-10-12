@@ -1,9 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { submitWithToast } from '@/lib/toastStore';
 import { watchTx } from '@/lib/txWatcher';
 import { CopyButton } from '@/components/CopyButton';
 import { rpc } from '@/lib/client-rpc';
+import { tokenManage } from '@/lib/token-manage-client';
 import { toHexField } from '@/lib/token-utils';
+import { TotpField } from '@/components/ui/TotpField';
 import { ModalOverlay } from '@/components/ui/ModalOverlay';
 
 type Mode = 'easy' | 'expert';
@@ -64,6 +66,8 @@ export default function IssueNFTModal({ ipfsEnabled, onClose, onIssued }: Props)
   const [error, setError] = useState<string | null>(null);
   const [issuedTokenId, setIssuedTokenId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [totp, setTotp] = useState('');
+  const totpRef = useRef<HTMLInputElement>(null);
 
   // Pre-fill destination address with first unused address on mount
   useEffect(() => {
@@ -138,13 +142,15 @@ export default function IssueNFTModal({ ipfsEnabled, onClose, onIssued }: Props)
           resolvedAdditionalMetaUri = await uploadToIPFS(new File([blob], 'metadata.json', { type: 'application/json' }));
         }
 
-        const res = await rpc<{ token_id: string; tx_id: string }>('token_nft_issue_new', {
+        const r = await tokenManage('token_nft_issue_new', {
           account: 0,
           destination_address: destAddress,
           metadata: {
             media_hash: mediaHash,
-            name: toHexField(name),
-            description: toHexField(onChainDescription),
+            // name/description are plain strings (the API enforces typeof
+            // string); only the *_uri fields are hex-field objects.
+            name,
+            description: onChainDescription || null,
             ticker,
             creator: null,
             icon_uri: iconUri ? toHexField(iconUri) : null,
@@ -152,9 +158,18 @@ export default function IssueNFTModal({ ipfsEnabled, onClose, onIssued }: Props)
             additional_metadata_uri: resolvedAdditionalMetaUri ? toHexField(resolvedAdditionalMetaUri) : null,
           },
           options: {},
-        });
-        newTokenId = res.token_id;
-        return res.tx_id;
+        }, totp);
+        if (!r.ok) {
+          if (r.code_consumed) {
+            setTotp('');
+            window.setTimeout(() => totpRef.current?.focus(), 0);
+            throw new Error(`${r.error} Your code was consumed — wait up to a minute for a fresh one.`);
+          }
+          throw new Error(r.error);
+        }
+        const result = r.result as { token_id: string; tx_id: string };
+        newTokenId = result.token_id;
+        return result.tx_id ?? 'submitted';
       }, watchTx);
       setIssuedTokenId(newTokenId);
       onIssued?.(newTokenId);
@@ -167,7 +182,7 @@ export default function IssueNFTModal({ ipfsEnabled, onClose, onIssued }: Props)
 
   if (issuedTokenId) {
     return (
-      <ModalOverlay onClose={onClose}>
+      <ModalOverlay onClose={onClose} label="NFT issued">
         <div className="px-6 py-8 text-center">
           <div className="w-12 h-12 rounded-full bg-green-900/40 border border-green-700 flex items-center justify-center mx-auto mb-4 text-xl">✓</div>
           <h2 className="text-lg font-semibold text-gray-100 mb-2">NFT Issued!</h2>
@@ -186,7 +201,7 @@ export default function IssueNFTModal({ ipfsEnabled, onClose, onIssued }: Props)
   }
 
   return (
-    <ModalOverlay onClose={onClose}>
+    <ModalOverlay onClose={onClose} label="Mint NFT" dismissible={!submitting}>
       <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800 shrink-0">
         <h2 className="text-base font-semibold text-gray-100">Mint NFT</h2>
         <div className="flex items-center gap-3">
@@ -200,10 +215,11 @@ export default function IssueNFTModal({ ipfsEnabled, onClose, onIssued }: Props)
 
           <div>
             <div className="flex justify-between items-baseline mb-1">
-              <label className="text-xs text-gray-400">Name <span className="text-red-400">*</span></label>
+              <label htmlFor="name" className="text-xs text-gray-400">Name <span className="text-red-400">*</span></label>
               <span className={`text-xs ${name.length >= NAME_MAX ? 'text-red-400' : 'text-gray-600'}`}>{name.length}/{NAME_MAX}</span>
             </div>
             <input
+              id="name"
               value={name}
               onChange={e => setName(sanitize(e.target.value, NAME_MAX))}
               placeholder="MyNFT"
@@ -214,8 +230,9 @@ export default function IssueNFTModal({ ipfsEnabled, onClose, onIssued }: Props)
           </div>
 
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Description <span className="text-red-400">*</span></label>
+            <label htmlFor="description" className="block text-xs text-gray-400 mb-1">Description <span className="text-red-400">*</span></label>
             <textarea
+              id="description"
               value={description}
               onChange={e => setDescription(mode === 'easy' ? e.target.value : sanitize(e.target.value, DESC_MAX))}
               placeholder={mode === 'easy' ? 'Describe your NFT…' : 'DescribeYourNFT'}
@@ -230,8 +247,9 @@ export default function IssueNFTModal({ ipfsEnabled, onClose, onIssued }: Props)
           </div>
 
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Ticker <span className="text-red-400">*</span></label>
+            <label htmlFor="ticker" className="block text-xs text-gray-400 mb-1">Ticker <span className="text-red-400">*</span></label>
             <input
+              id="ticker"
               value={ticker}
               onChange={e => setTicker(e.target.value.toUpperCase())}
               maxLength={5}
@@ -286,8 +304,9 @@ export default function IssueNFTModal({ ipfsEnabled, onClose, onIssued }: Props)
           {mode === 'expert' && (
             <>
               <div>
-                <label className="block text-xs text-gray-400 mb-1">Media hash (SHA-256 hex) <span className="text-red-400">*</span></label>
+                <label htmlFor="media-hash-sha-256-hex" className="block text-xs text-gray-400 mb-1">Media hash (SHA-256 hex) <span className="text-red-400">*</span></label>
                 <input
+                  id="media-hash-sha-256-hex"
                   value={mediaHash}
                   onChange={e => setMediaHash(e.target.value)}
                   placeholder="Auto-filled when you select a file above"
@@ -297,8 +316,9 @@ export default function IssueNFTModal({ ipfsEnabled, onClose, onIssued }: Props)
               </div>
 
               <div>
-                <label className="block text-xs text-gray-400 mb-1">Media URI <span className="text-gray-500">(optional)</span></label>
+                <label htmlFor="media-uri-optional" className="block text-xs text-gray-400 mb-1">Media URI <span className="text-gray-500">(optional)</span></label>
                 <input
+                  id="media-uri-optional"
                   value={mediaUri}
                   onChange={e => setMediaUri(e.target.value)}
                   placeholder="ipfs://… (auto-filled on upload)"
@@ -307,9 +327,10 @@ export default function IssueNFTModal({ ipfsEnabled, onClose, onIssued }: Props)
               </div>
 
               <div>
-                <label className="block text-xs text-gray-400 mb-1">Icon URI <span className="text-gray-500">(optional)</span></label>
+                <label htmlFor="icon-uri-optional" className="block text-xs text-gray-400 mb-1">Icon URI <span className="text-gray-500">(optional)</span></label>
                 <div className="flex gap-2">
                   <input
+                    id="icon-uri-optional"
                     value={iconUri}
                     onChange={e => setIconUri(e.target.value)}
                     placeholder="ipfs://…"
@@ -331,8 +352,9 @@ export default function IssueNFTModal({ ipfsEnabled, onClose, onIssued }: Props)
               </div>
 
               <div>
-                <label className="block text-xs text-gray-400 mb-1">Additional metadata URI <span className="text-gray-500">(optional)</span></label>
+                <label htmlFor="additional-metadata-uri-" className="block text-xs text-gray-400 mb-1">Additional metadata URI <span className="text-gray-500">(optional)</span></label>
                 <input
+                  id="additional-metadata-uri-"
                   value={additionalMetaUri}
                   onChange={e => setAdditionalMetaUri(e.target.value)}
                   placeholder="ipfs://…"
@@ -373,8 +395,9 @@ export default function IssueNFTModal({ ipfsEnabled, onClose, onIssued }: Props)
           )}
 
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Destination address <span className="text-red-400">*</span></label>
+            <label htmlFor="destination-address" className="block text-xs text-gray-400 mb-1">Destination address <span className="text-red-400">*</span></label>
             <input
+              id="destination-address"
               value={destAddress}
               onChange={e => setDestAddress(e.target.value)}
               placeholder="mtc1…"
@@ -385,16 +408,19 @@ export default function IssueNFTModal({ ipfsEnabled, onClose, onIssued }: Props)
           </div>
 
           {error && (
-            <div className="rounded-lg border border-red-700 bg-red-900/30 p-3 text-red-300 text-sm">{error}</div>
+            <div className="rounded-lg border border-red-700 bg-red-900/30 p-3 text-red-300 text-sm" role="alert">{error}</div>
           )}
         </div>
 
         <div className="px-6 pt-3 pb-1 text-xs text-amber-400/80 bg-gray-900 sticky bottom-0 border-t border-gray-800">
           Issuance burns <span className="font-semibold">5 ML</span> from your wallet (Mintlayer network fee, section 7.2).
         </div>
+        <div className="px-6 pt-3 shrink-0 bg-gray-900">
+          <TotpField value={totp} onChange={setTotp} inputRef={totpRef} disabled={submitting} />
+        </div>
         <div className="flex gap-3 px-6 py-4 shrink-0 sticky bottom-0 bg-gray-900">
           <button type="button" onClick={onClose} className={cancelBtn}>Cancel</button>
-          <button type="submit" disabled={submitting || !mediaHash} className={submitBtn}>
+          <button type="submit" disabled={submitting || !mediaHash || totp.length !== 6} className={submitBtn}>
             {submitting ? 'Minting…' : 'Mint NFT'}
           </button>
         </div>

@@ -1,9 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { submitWithToast } from '@/lib/toastStore';
 import { watchTx } from '@/lib/txWatcher';
 import { CopyButton } from '@/components/CopyButton';
 import { rpc } from '@/lib/client-rpc';
+import { tokenManage } from '@/lib/token-manage-client';
 import { toHexField } from '@/lib/token-utils';
+import { TotpField } from '@/components/ui/TotpField';
 import { ModalOverlay } from '@/components/ui/ModalOverlay';
 
 type SupplyType = 'Fixed' | 'Lockable' | 'Unlimited';
@@ -47,6 +49,8 @@ export default function IssueTokenModal({ ipfsEnabled, onClose, onIssued }: Prop
   const [error, setError] = useState<string | null>(null);
   const [issuedTokenId, setIssuedTokenId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [totp, setTotp] = useState('');
+  const totpRef = useRef<HTMLInputElement>(null);
 
   // Pre-fill authority address with first unused address on mount
   useEffect(() => {
@@ -101,7 +105,7 @@ export default function IssueTokenModal({ ipfsEnabled, onClose, onIssued }: Prop
 
       let newTokenId = '';
       const newTxId = await submitWithToast(async () => {
-        const res = await rpc<{ token_id: string; tx_id: string }>('token_issue_new', {
+        const r = await tokenManage('token_issue_new', {
           account: 0,
           destination_address: destAddress,
           metadata: {
@@ -112,9 +116,18 @@ export default function IssueTokenModal({ ipfsEnabled, onClose, onIssued }: Prop
             is_freezable: isFreezable,
           },
           options: {},
-        });
-        newTokenId = res.token_id;
-        return res.tx_id;
+        }, totp);
+        if (!r.ok) {
+          if (r.code_consumed) {
+            setTotp('');
+            window.setTimeout(() => totpRef.current?.focus(), 0);
+            throw new Error(`${r.error} Your code was consumed — wait up to a minute for a fresh one.`);
+          }
+          throw new Error(r.error);
+        }
+        const result = r.result as { token_id: string; tx_id: string };
+        newTokenId = result.token_id;
+        return result.tx_id ?? 'submitted';
       }, watchTx);
       setIssuedTokenId(newTokenId);
       onIssued?.(newTokenId);
@@ -134,7 +147,7 @@ export default function IssueTokenModal({ ipfsEnabled, onClose, onIssued }: Prop
 
   if (issuedTokenId) {
     return (
-      <ModalOverlay onClose={onClose}>
+      <ModalOverlay onClose={onClose} label="Token issued">
         <div className="px-6 py-8 text-center">
           <div className="w-12 h-12 rounded-full bg-green-900/40 border border-green-700 flex items-center justify-center mx-auto mb-4 text-xl">✓</div>
           <h2 className="text-lg font-semibold text-gray-100 mb-2">Token Issued!</h2>
@@ -153,7 +166,7 @@ export default function IssueTokenModal({ ipfsEnabled, onClose, onIssued }: Prop
   }
 
   return (
-    <ModalOverlay onClose={onClose}>
+    <ModalOverlay onClose={onClose} label="Issue fungible token" dismissible={!submitting}>
       <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800 shrink-0">
         <h2 className="text-base font-semibold text-gray-100">Issue Fungible Token</h2>
         <div className="flex items-center gap-3">
@@ -169,8 +182,9 @@ export default function IssueTokenModal({ ipfsEnabled, onClose, onIssued }: Prop
           {mode === 'easy' && (
             <>
               <div>
-                <label className="block text-xs text-gray-400 mb-1">Token name <span className="text-red-400">*</span></label>
+                <label htmlFor="token-name" className="block text-xs text-gray-400 mb-1">Token name <span className="text-red-400">*</span></label>
                 <input
+                  id="token-name"
                   value={name}
                   onChange={e => setName(e.target.value)}
                   placeholder="My Token"
@@ -180,7 +194,7 @@ export default function IssueTokenModal({ ipfsEnabled, onClose, onIssued }: Prop
               </div>
 
               <div>
-                <label className="block text-xs text-gray-400 mb-1">Description</label>
+                <label htmlFor="description" className="block text-xs text-gray-400 mb-1">Description</label>
                 <textarea
                   value={description}
                   onChange={e => setDescription(e.target.value)}
@@ -195,8 +209,9 @@ export default function IssueTokenModal({ ipfsEnabled, onClose, onIssued }: Prop
           {/* ── Shared fields ──────────────────────────────────────────────── */}
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Ticker <span className="text-red-400">*</span></label>
+              <label htmlFor="ticker" className="block text-xs text-gray-400 mb-1">Ticker <span className="text-red-400">*</span></label>
               <input
+                id="ticker"
                 value={ticker}
                 onChange={e => setTicker(e.target.value.toUpperCase())}
                 maxLength={5}
@@ -207,8 +222,9 @@ export default function IssueTokenModal({ ipfsEnabled, onClose, onIssued }: Prop
               <p className="text-xs text-gray-500 mt-1">Up to 5 characters</p>
             </div>
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Decimals <span className="text-red-400">*</span></label>
+              <label htmlFor="decimals" className="block text-xs text-gray-400 mb-1">Decimals <span className="text-red-400">*</span></label>
               <input
+                id="decimals"
                 type="number"
                 min={0}
                 max={18}
@@ -294,9 +310,10 @@ export default function IssueTokenModal({ ipfsEnabled, onClose, onIssued }: Prop
             )
           ) : (
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Metadata URI <span className="text-gray-500">(optional)</span></label>
+              <label htmlFor="metadata-uri-optional" className="block text-xs text-gray-400 mb-1">Metadata URI <span className="text-gray-500">(optional)</span></label>
               <div className="flex gap-2">
                 <input
+                  id="metadata-uri-optional"
                   value={metadataUri}
                   onChange={e => setMetadataUri(e.target.value)}
                   placeholder="ipfs://… or https://…"
@@ -316,8 +333,9 @@ export default function IssueTokenModal({ ipfsEnabled, onClose, onIssued }: Prop
           )}
 
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Authority address <span className="text-red-400">*</span></label>
+            <label htmlFor="authority-address" className="block text-xs text-gray-400 mb-1">Authority address <span className="text-red-400">*</span></label>
             <input
+              id="authority-address"
               value={destAddress}
               onChange={e => setDestAddress(e.target.value)}
               placeholder="mtc1…"
@@ -328,16 +346,19 @@ export default function IssueTokenModal({ ipfsEnabled, onClose, onIssued }: Prop
           </div>
 
           {error && (
-            <div className="rounded-lg border border-red-700 bg-red-900/30 p-3 text-red-300 text-sm">{error}</div>
+            <div className="rounded-lg border border-red-700 bg-red-900/30 p-3 text-red-300 text-sm" role="alert">{error}</div>
           )}
         </div>
 
         <div className="px-6 pt-3 pb-1 text-xs text-amber-400/80 bg-gray-900 sticky bottom-0 border-t border-gray-800">
           Issuance burns <span className="font-semibold">100 ML</span> from your wallet (Mintlayer network fee, section 7.2).
         </div>
+        <div className="px-6 pt-3 shrink-0 bg-gray-900">
+          <TotpField value={totp} onChange={setTotp} inputRef={totpRef} disabled={submitting} />
+        </div>
         <div className="flex gap-3 px-6 py-4 shrink-0 sticky bottom-0 bg-gray-900">
           <button type="button" onClick={onClose} className={cancelBtn}>Cancel</button>
-          <button type="submit" disabled={submitting} className={submitBtn}>
+          <button type="submit" disabled={submitting || totp.length !== 6} className={submitBtn}>
             {submitting ? 'Minting…' : 'Mint Token'}
           </button>
         </div>

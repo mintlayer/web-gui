@@ -1,12 +1,15 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { submitWithToast } from '@/lib/toastStore';
 import { watchTx } from '@/lib/txWatcher';
 import { CopyButton } from '@/components/CopyButton';
 import { TokenIdTooltip } from '@/components/TokenIdTooltip';
 import SafeExternalLink from '@/components/SafeExternalLink';
 import { rpc } from '@/lib/client-rpc';
+import { tokenManage, type TokenManageFailure } from '@/lib/token-manage-client';
 import { toHexField } from '@/lib/token-utils';
+import { TotpField } from '@/components/ui/TotpField';
 import { ModalOverlay } from '@/components/ui/ModalOverlay';
+import TokenIntelSection from '@/components/TokenIntelSection';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -90,12 +93,32 @@ function useAction() {
   return { state, msg, run };
 }
 
+// Shared per-section wiring for the TOTP-gated /api/token-manage endpoint:
+// holds the 2FA code, clears + refocuses the field when a burned code fails.
+function useTotpAction() {
+  const [totp, setTotp] = useState('');
+  const totpRef = useRef<HTMLInputElement>(null);
+
+  const fail = (r: TokenManageFailure): Error => {
+    if (r.code_consumed) {
+      setTotp('');
+      // Defer so the field re-enables before focus lands on it.
+      window.setTimeout(() => totpRef.current?.focus(), 0);
+      return new Error(`${r.error} Your code was consumed — wait up to a minute for a fresh one.`);
+    }
+    return new Error(r.error);
+  };
+
+  return { totp, setTotp, totpRef, fail };
+}
+
 // ── Mint section ───────────────────────────────────────────────────────────────
 
 function MintSection({ tokenId, onRefresh }: { tokenId: string; onRefresh: () => void }) {
   const [amount, setAmount] = useState('');
   const [address, setAddress] = useState('');
   const { state, msg, run } = useAction();
+  const { totp, setTotp, totpRef, fail } = useTotpAction();
 
   useEffect(() => {
     rpc<{ address: string; used: boolean }[]>('address_show', { account: 0, include_change_addresses: false })
@@ -129,13 +152,16 @@ function MintSection({ tokenId, onRefresh }: { tokenId: string; onRefresh: () =>
             />
           </div>
         </div>
-        {msg && <p className={state === 'error' ? errorCls : successCls}>{msg}</p>}
+        {msg && <p className={state === 'error' ? errorCls : successCls} role={state === 'error' ? 'alert' : 'status'}>{msg}</p>}
+        <TotpField value={totp} onChange={setTotp} inputRef={totpRef} disabled={state === 'busy'} />
         <button
-          disabled={state === 'busy' || !amount || !address}
+          disabled={state === 'busy' || !amount || !address || totp.length !== 6}
           onClick={() => run(async () => {
-            const res = await rpc<{ tx_id: string }>('token_mint', { account: 0, token_id: tokenId, address, amount: { decimal: amount }, options: {} });
+            const r = await tokenManage('token_mint', { account: 0, token_id: tokenId, address, amount: { decimal: amount }, options: {} }, totp);
+            if (!r.ok) throw fail(r);
+            setTotp('');
             onRefresh();
-            return res.tx_id;
+            return (r.result as { tx_id?: string }).tx_id ?? 'submitted';
           })}
           className={actionBtn}
         >
@@ -151,6 +177,7 @@ function MintSection({ tokenId, onRefresh }: { tokenId: string; onRefresh: () =>
 function UnmintSection({ tokenId, onRefresh }: { tokenId: string; onRefresh: () => void }) {
   const [amount, setAmount] = useState('');
   const { state, msg, run } = useAction();
+  const { totp, setTotp, totpRef, fail } = useTotpAction();
 
   return (
     <Section title="Unmint tokens">
@@ -165,13 +192,16 @@ function UnmintSection({ tokenId, onRefresh }: { tokenId: string; onRefresh: () 
             className={inputCls}
           />
         </div>
-        {msg && <p className={state === 'error' ? errorCls : successCls}>{msg}</p>}
+        {msg && <p className={state === 'error' ? errorCls : successCls} role={state === 'error' ? 'alert' : 'status'}>{msg}</p>}
+        <TotpField value={totp} onChange={setTotp} inputRef={totpRef} disabled={state === 'busy'} />
         <button
-          disabled={state === 'busy' || !amount}
+          disabled={state === 'busy' || !amount || totp.length !== 6}
           onClick={() => run(async () => {
-            const res = await rpc<{ tx_id: string }>('token_unmint', { account: 0, token_id: tokenId, amount: { decimal: amount }, options: {} });
+            const r = await tokenManage('token_unmint', { account: 0, token_id: tokenId, amount: { decimal: amount }, options: {} }, totp);
+            if (!r.ok) throw fail(r);
+            setTotp('');
             onRefresh();
-            return res.tx_id;
+            return (r.result as { tx_id?: string }).tx_id ?? 'submitted';
           })}
           className={actionBtn}
         >
@@ -187,6 +217,7 @@ function UnmintSection({ tokenId, onRefresh }: { tokenId: string; onRefresh: () 
 function LockSupplySection({ tokenId, onRefresh }: { tokenId: string; onRefresh: () => void }) {
   const [confirm, setConfirm] = useState('');
   const { state, msg, run } = useAction();
+  const { totp, setTotp, totpRef, fail } = useTotpAction();
   const CONFIRM_PHRASE = 'LOCK';
 
   return (
@@ -209,13 +240,16 @@ function LockSupplySection({ tokenId, onRefresh }: { tokenId: string; onRefresh:
             className={inputCls}
           />
         </div>
-        {msg && <p className={state === 'error' ? errorCls : successCls}>{msg}</p>}
+        {msg && <p className={state === 'error' ? errorCls : successCls} role={state === 'error' ? 'alert' : 'status'}>{msg}</p>}
+        <TotpField value={totp} onChange={setTotp} inputRef={totpRef} disabled={state === 'busy'} />
         <button
-          disabled={state === 'busy' || confirm !== CONFIRM_PHRASE}
+          disabled={state === 'busy' || confirm !== CONFIRM_PHRASE || totp.length !== 6}
           onClick={() => run(async () => {
-            const res = await rpc<{ tx_id: string }>('token_lock_supply', { account_index: 0, token_id: tokenId, options: {} });
+            const r = await tokenManage('token_lock_supply', { account_index: 0, token_id: tokenId, options: {} }, totp);
+            if (!r.ok) throw fail(r);
+            setTotp('');
             onRefresh();
-            return res.tx_id;
+            return (r.result as { tx_id?: string }).tx_id ?? 'submitted';
           })}
           className="w-full rounded-lg bg-red-800 hover:bg-red-700 disabled:opacity-40 px-4 py-2 text-sm font-semibold text-white transition-colors"
         >
@@ -231,6 +265,7 @@ function LockSupplySection({ tokenId, onRefresh }: { tokenId: string; onRefresh:
 function FreezeSection({ tokenId, onRefresh }: { tokenId: string; onRefresh: () => void }) {
   const [isUnfreezable, setIsUnfreezable] = useState(true);
   const { state, msg, run } = useAction();
+  const { totp, setTotp, totpRef, fail } = useTotpAction();
 
   return (
     <Section title="Freeze token">
@@ -249,13 +284,16 @@ function FreezeSection({ tokenId, onRefresh }: { tokenId: string; onRefresh: () 
             ? 'You will be able to unfreeze this token in the future.'
             : 'This freeze will be permanent - the token can never be unfrozen.'}
         </p>
-        {msg && <p className={state === 'error' ? errorCls : successCls}>{msg}</p>}
+        {msg && <p className={state === 'error' ? errorCls : successCls} role={state === 'error' ? 'alert' : 'status'}>{msg}</p>}
+        <TotpField value={totp} onChange={setTotp} inputRef={totpRef} disabled={state === 'busy'} />
         <button
-          disabled={state === 'busy'}
+          disabled={state === 'busy' || totp.length !== 6}
           onClick={() => run(async () => {
-            const res = await rpc<{ tx_id: string }>('token_freeze', { account: 0, token_id: tokenId, is_unfreezable: isUnfreezable, options: {} });
+            const r = await tokenManage('token_freeze', { account: 0, token_id: tokenId, is_unfreezable: isUnfreezable, options: {} }, totp);
+            if (!r.ok) throw fail(r);
+            setTotp('');
             onRefresh();
-            return res.tx_id;
+            return (r.result as { tx_id?: string }).tx_id ?? 'submitted';
           })}
           className={actionBtn}
         >
@@ -270,22 +308,28 @@ function FreezeSection({ tokenId, onRefresh }: { tokenId: string; onRefresh: () 
 
 function UnfreezeSection({ tokenId, onRefresh }: { tokenId: string; onRefresh: () => void }) {
   const { state, msg, run } = useAction();
+  const { totp, setTotp, totpRef, fail } = useTotpAction();
 
   return (
     <Section title="Unfreeze token">
       <p className="text-xs text-gray-500 mb-3">Restores all operations on this token.</p>
-      {msg && <p className={`mb-3 ${state === 'error' ? errorCls : successCls}`}>{msg}</p>}
+      <div className="space-y-3">
+      {msg && <p className={`mb-3 ${state === 'error' ? errorCls : successCls}`} role={state === 'error' ? 'alert' : 'status'}>{msg}</p>}
+      <TotpField value={totp} onChange={setTotp} inputRef={totpRef} disabled={state === 'busy'} />
       <button
-        disabled={state === 'busy'}
+        disabled={state === 'busy' || totp.length !== 6}
         onClick={() => run(async () => {
-          const res = await rpc<{ tx_id: string }>('token_unfreeze', { account: 0, token_id: tokenId, options: {} });
+          const r = await tokenManage('token_unfreeze', { account: 0, token_id: tokenId, options: {} }, totp);
+          if (!r.ok) throw fail(r);
+          setTotp('');
           onRefresh();
-          return res.tx_id;
+          return (r.result as { tx_id?: string }).tx_id ?? 'submitted';
         })}
         className={actionBtn}
       >
         {state === 'busy' ? 'Unfreezing…' : 'Unfreeze Token'}
       </button>
+      </div>
     </Section>
   );
 }
@@ -294,13 +338,23 @@ function UnfreezeSection({ tokenId, onRefresh }: { tokenId: string; onRefresh: (
 
 function ChangeAuthoritySection({ tokenId, currentAuthority, onRefresh }: { tokenId: string; currentAuthority: string; onRefresh: () => void }) {
   const [address, setAddress] = useState('');
+  const [confirm, setConfirm] = useState('');
   const { state, msg, run } = useAction();
+  const { totp, setTotp, totpRef, fail } = useTotpAction();
+  const CONFIRM_PHRASE = 'TRANSFER';
 
   return (
     <Section title="Change authority">
       <p className="text-xs text-gray-500 mb-3">
         Current: <span className="font-mono text-gray-300 break-all">{currentAuthority}</span>
       </p>
+      <div className="rounded-lg border border-red-800 bg-red-900/20 px-4 py-3 mb-4">
+        <p className="text-sm font-semibold text-red-400 mb-1">Irreversible action</p>
+        <p className="text-xs text-red-300">
+          The new authority fully controls the token (minting, freezing, lock).
+          A typo in the address permanently locks the token away from you.
+        </p>
+      </div>
       <div className="space-y-3">
         <div>
           <label className="block text-xs text-gray-400 mb-1">New authority address</label>
@@ -311,17 +365,31 @@ function ChangeAuthoritySection({ tokenId, currentAuthority, onRefresh }: { toke
             className={inputCls}
           />
         </div>
-        {msg && <p className={state === 'error' ? errorCls : successCls}>{msg}</p>}
+        <div>
+          <label className="block text-xs text-gray-400 mb-1">
+            Type <span className="font-mono text-gray-300">TRANSFER</span> to confirm
+          </label>
+          <input
+            type="text" value={confirm}
+            onChange={e => setConfirm(e.target.value.toUpperCase())}
+            placeholder="TRANSFER"
+            className={inputCls}
+          />
+        </div>
+        {msg && <p className={state === 'error' ? errorCls : successCls} role={state === 'error' ? 'alert' : 'status'}>{msg}</p>}
+        <TotpField value={totp} onChange={setTotp} inputRef={totpRef} disabled={state === 'busy'} />
         <button
-          disabled={state === 'busy' || !address}
+          disabled={state === 'busy' || !address || confirm !== CONFIRM_PHRASE || totp.length !== 6}
           onClick={() => run(async () => {
-            const res = await rpc<{ tx_id: string }>('token_change_authority', { account: 0, token_id: tokenId, address, options: {} });
+            const r = await tokenManage('token_change_authority', { account: 0, token_id: tokenId, address, options: {} }, totp);
+            if (!r.ok) throw fail(r);
+            setTotp('');
             onRefresh();
-            return res.tx_id;
+            return (r.result as { tx_id?: string }).tx_id ?? 'submitted';
           })}
-          className={actionBtn}
+          className="w-full rounded-lg bg-red-800 hover:bg-red-700 disabled:opacity-40 px-4 py-2 text-sm font-semibold text-white transition-colors"
         >
-          {state === 'busy' ? 'Changing…' : 'Change Authority'}
+          {state === 'busy' ? 'Changing…' : 'Change Authority Permanently'}
         </button>
       </div>
     </Section>
@@ -333,6 +401,7 @@ function ChangeAuthoritySection({ tokenId, currentAuthority, onRefresh }: { toke
 function ChangeMetadataUriSection({ tokenId, currentUri, onRefresh }: { tokenId: string; currentUri: string | null; onRefresh: () => void }) {
   const [uri, setUri] = useState('');
   const { state, msg, run } = useAction();
+  const { totp, setTotp, totpRef, fail } = useTotpAction();
 
   return (
     <Section title="Update metadata URI">
@@ -351,13 +420,16 @@ function ChangeMetadataUriSection({ tokenId, currentUri, onRefresh }: { tokenId:
             className={inputCls}
           />
         </div>
-        {msg && <p className={state === 'error' ? errorCls : successCls}>{msg}</p>}
+        {msg && <p className={state === 'error' ? errorCls : successCls} role={state === 'error' ? 'alert' : 'status'}>{msg}</p>}
+        <TotpField value={totp} onChange={setTotp} inputRef={totpRef} disabled={state === 'busy'} />
         <button
-          disabled={state === 'busy' || !uri}
+          disabled={state === 'busy' || !uri || totp.length !== 6}
           onClick={() => run(async () => {
-            const res = await rpc<{ tx_id: string }>('token_change_metadata_uri', { account: 0, token_id: tokenId, metadata_uri: toHexField(uri), options: {} });
+            const r = await tokenManage('token_change_metadata_uri', { account: 0, token_id: tokenId, metadata_uri: toHexField(uri), options: {} }, totp);
+            if (!r.ok) throw fail(r);
+            setTotp('');
             onRefresh();
-            return res.tx_id;
+            return (r.result as { tx_id?: string }).tx_id ?? 'submitted';
           })}
           className={actionBtn}
         >
@@ -406,7 +478,7 @@ export default function TokenManagePanel({ tokenId, onClose, onRefresh }: Props)
   const decimals = info?.number_of_decimals ?? 0;
 
   return (
-    <ModalOverlay onClose={onClose} maxWidth="max-w-xl" maxHeight="max-h-[92vh]">
+    <ModalOverlay onClose={onClose} label="Token management" maxWidth="max-w-xl" maxHeight="max-h-[92vh]">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800 shrink-0">
           <div>
@@ -474,6 +546,8 @@ export default function TokenManagePanel({ tokenId, onClose, onRefresh }: Props)
               {canUnmint     && <UnmintSection tokenId={tokenId} onRefresh={handleRefresh} />}
               {canLock       && <LockSupplySection tokenId={tokenId} onRefresh={handleRefresh} />}
               {isUnfreezable && <UnfreezeSection tokenId={tokenId} onRefresh={handleRefresh} />}
+
+              <TokenIntelSection tokenId={tokenId} ticker={ticker} />
 
               {/* Advanced / risky operations */}
               {(!isFrozen || isUnfreezable) && (
