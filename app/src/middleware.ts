@@ -9,6 +9,7 @@ import {
 } from '@/lib/auth';
 import { getPref } from '@/lib/prefs-db';
 import { isForbiddenCrossSiteRequest } from '@/lib/csrf';
+import { buildCsp } from '@/lib/csp';
 
 const PUBLIC_PATHS = new Set([
   '/login',
@@ -34,24 +35,16 @@ const SECURITY_HEADERS: Record<string, string> = {
 /**
  * Content-Security-Policy, rolled out report-only first.
  *
- * Enforcement roadmap: replace script-src 'unsafe-inline' with per-request
- * nonces (Astro inline scripts + is:inline blocks) before switching the
- * header to enforcing Content-Security-Policy. The plugin page renders
- * plugin content inside a sandboxed iframe (opaque origin), so the same
- * policy covers it without frame exemptions.
+ * Built in lib/csp.ts: the connect-src list is derived from the bridge
+ * SDK config (bridge API + its wss twin, indexer, CoinGecko) so the
+ * policy follows operator overrides instead of drifting. Enforcement
+ * roadmap: replace script-src 'unsafe-inline' with per-request nonces
+ * (Astro inline scripts + is:inline blocks) before switching the header
+ * to enforcing Content-Security-Policy. The plugin page renders plugin
+ * content inside a sandboxed iframe (opaque origin), so the same policy
+ * covers it without frame exemptions.
  */
-const CSP_REPORT_ONLY =
-  "default-src 'self'; " +
-  "img-src 'self' https: data:; " +
-  "script-src 'self' 'unsafe-inline'; " +
-  "style-src 'self' 'unsafe-inline'; " +
-  "connect-src 'self'; " +
-  "font-src 'self' data:; " +
-  "frame-src 'self'; " +
-  "frame-ancestors 'none'; " +
-  "base-uri 'none'; " +
-  "form-action 'self'; " +
-  "object-src 'none';";
+const CSP_POLICY = buildCsp();
 
 const CSP_ENABLED = process.env.CSP_ENABLED === 'true';
 
@@ -147,9 +140,9 @@ function applySecurityHeaders(response: Response): void {
   // CSP: report-only by default; opt into enforcement with CSP_ENABLED=true.
   if (CSP_ENABLED) {
     if (!response.headers.has('Content-Security-Policy')) {
-      response.headers.set('Content-Security-Policy', CSP_REPORT_ONLY);
+      response.headers.set('Content-Security-Policy', CSP_POLICY);
     }
   } else if (!response.headers.has('Content-Security-Policy-Report-Only')) {
-    response.headers.set('Content-Security-Policy-Report-Only', CSP_REPORT_ONLY);
+    response.headers.set('Content-Security-Policy-Report-Only', CSP_POLICY);
   }
 }
