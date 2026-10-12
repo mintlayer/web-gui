@@ -64,5 +64,12 @@ export function safeImageUri(raw: string): string | null {
   // data:image/... payloads never touch the network; scripts inside an <img>
   // context do not execute. Anything but a strict image data URI is rejected.
   if (/^data:image\/[a-z0-9.!#$&^+\-_.]+[;,]/i.test(trimmed)) return trimmed;
+  // Same-origin gateway paths ('/ipfs/…' from the bridge-sdk metadata
+  // pipeline) only ever hit our own proxy, so they carry no third-party
+  // beacon risk. Protocol-relative '//' and backslash forms are rejected:
+  // they can smuggle a foreign host past the same-origin check.
+  if (trimmed.startsWith('/') && !trimmed.startsWith('//') && !trimmed.includes('\\')) {
+    return trimmed;
+  }
   return safeExternalUri(trimmed);
 }
