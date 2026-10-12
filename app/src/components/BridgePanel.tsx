@@ -153,8 +153,6 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
   const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
-  const [requestUuid, setRequestUuid] = useState<string | null>(null);
-  const [requestStatus, setRequestStatus] = useState<string | null>(null);
   // Tracked (in-flight) bridge — persisted so a refresh restores the card.
   const [tracked, setTracked] = useState<InFlightBridge | null>(() => loadInFlight());
   const [trackedProgress, setTrackedProgress] = useState<BridgeProgress | null>(null);
@@ -396,7 +394,6 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
       try {
         const detail: BridgeRequestDetail = await sdk.getBridgeRequest(uuid);
         const status = String(detail.status ?? 'pending');
-        setRequestStatus(status);
         if (status === 'completed' || status === 'failed' || status === 'manual') {
           stopPolling();
           setPhase(status === 'completed' ? 'done' : status === 'manual' ? 'manual' : 'failed');
@@ -453,7 +450,6 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
       if (next.kind !== 'in-progress') {
         setPhase(next.kind === 'completed' ? 'done' : next.kind === 'manual' ? 'manual' : 'failed');
       }
-      setRequestStatus(next.rawStatus);
       const advanced = next.step > latest.lastStep;
       // First sight of the deposit hash (ML→ETH submits without one) —
       // persisted so the card links it even across refreshes.
@@ -522,14 +518,10 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
     setTracked(null);
     setTrackedProgress(null);
     setTrackedRequest(null);
-    setRequestUuid(null);
-    setRequestStatus(null);
   }
 
   function resetForm() {
     setPhase('idle');
-    setRequestUuid(null);
-    setRequestStatus(null);
     setAmount('');
     setReceiver('');
     setReceiverSuggestion(null);
@@ -649,7 +641,6 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
           receiver_address: receiver.trim(),
           deposit_transactions: [{ transaction_hash: txHash }],
         });
-        setRequestUuid(res.bridge_request_uuid);
         trackRequest(res.bridge_request_uuid, txHash);
       } else {
         // ── Mintlayer → Ethereum ──
@@ -703,7 +694,6 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
             { raw_transaction: signed.raw_transaction, intent: signed.intent },
           ],
         });
-        setRequestUuid(res.bridge_request_uuid);
         trackRequest(res.bridge_request_uuid, '');
       }
     } catch (err) {

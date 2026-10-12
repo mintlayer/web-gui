@@ -70,6 +70,10 @@ export default function BridgeTokenPicker({ assets, value, onChange, metadata, d
     );
   }, [assets, query]);
 
+  // The highlight index must stay inside the filtered list — typing can
+  // shrink it while a higher index is active.
+  const activeIdx = Math.min(active, Math.max(filtered.length - 1, 0));
+
   useEffect(() => {
     if (!open) return;
     setActive(0);
@@ -106,7 +110,7 @@ export default function BridgeTokenPicker({ assets, value, onChange, metadata, d
       setActive((i) => Math.max(i - 1, 0));
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      const hit = filtered[active];
+      const hit = filtered[activeIdx];
       if (hit) pick(hit.ticker);
     } else if (e.key === 'Escape') {
       e.preventDefault();
@@ -148,7 +152,7 @@ export default function BridgeTokenPicker({ assets, value, onChange, metadata, d
             role="combobox"
             aria-expanded="true"
             aria-controls={listId}
-            aria-activedescendant={filtered[active] ? `${listId}-opt-${active}` : undefined}
+            aria-activedescendant={filtered[activeIdx] ? `${listId}-opt-${activeIdx}` : undefined}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search by name or tag…"
@@ -162,7 +166,7 @@ export default function BridgeTokenPicker({ assets, value, onChange, metadata, d
                   onMouseEnter={() => setActive(idx)}
                   onClick={() => pick(a.ticker)}
                   className={`flex w-full min-h-[44px] items-center gap-2 rounded-md px-2 py-2 text-left text-sm ${
-                    idx === active ? 'bg-mint-900/40 text-mint-200' : 'text-gray-200'
+                    idx === activeIdx ? 'bg-mint-900/40 text-mint-200' : 'text-gray-200'
                   }`}
                 >
                   <PickerIcon ticker={a.ticker} metadata={metadata} />
