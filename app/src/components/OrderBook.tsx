@@ -143,6 +143,7 @@ function BuySellPanel({
   tokenBalance,
   onCreated,
   onPairRefresh,
+  prefill,
 }: {
   selectedTokenId: string | null;
   ticker: string;
@@ -152,6 +153,8 @@ function BuySellPanel({
   tokenBalance: string | null;
   onCreated: () => void;
   onPairRefresh: () => void;
+  /** Order-book rows never execute here — a click prefills this form. */
+  prefill: { side: "buy" | "sell"; price: string; amount: string } | null;
 }) {
   const [side, setSide]     = useState<"buy" | "sell">("buy");
   const [type, setType]     = useState<"limit" | "market">("limit");
@@ -163,6 +166,17 @@ function BuySellPanel({
   const [error, setError]   = useState<string | null>(null);
   const [totp, setTotp]     = useState("");
   const totpRef             = useRef<HTMLInputElement>(null);
+
+  // A click on an order-book row drops its price/size into this form as a
+  // limit order. The object identity changes per click, so repeated
+  // clicks on the SAME row re-apply (and overwrite any edits).
+  useEffect(() => {
+    if (!prefill) return;
+    setSide(prefill.side);
+    setType("limit");
+    setPrice(prefill.price);
+    setAmount(prefill.amount);
+  }, [prefill]);
 
   const effectiveTokenId = selectedTokenId ?? tokenId;
   const effectiveTicker  = selectedTokenId ? ticker : (tokenId ? tokenId.slice(0, 8) + "…" : "TOKEN");
@@ -575,22 +589,14 @@ function PairBookRow({
   order,
   side,
   ticker,
-  onFilled,
-  totp,
-  onTotpConsumed,
+  onTake,
 }: {
   order: OrderInfo;
   side: "ask" | "bid";
   ticker: string;
-  onFilled: () => void;
-  totp: string;               // shared section-level 2FA code
-  onTotpConsumed: () => void; // clear + refocus after burn
+  /** Never executes: hands the price/size to the place-order form. */
+  onTake: (price: string, amount: string, takeSide: "buy" | "sell") => void;
 }) {
-  const [fillAmount, setFillAmount] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const needsTotp = totp.length !== 6;
-
   const data = order.existing_order_data;
   if (!data || data.is_frozen || order.is_marked_as_concluded_in_wallet) return null;
 
@@ -599,66 +605,23 @@ function PairBookRow({
   const tokenQty  = side === "ask" ? data.give_balance.decimal : data.ask_balance.decimal;
   const mlQty     = side === "ask" ? data.ask_balance.decimal  : data.give_balance.decimal;
   const price     = calcPrice(mlQty, tokenQty);
-  const fillLabel = side === "ask" ? "ML" : ticker;
-
-  const handleFill = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      await submitWithToast(
-        async () => {
-          const r = await stakeTrade({
-            action: "order_fill",
-            params: {
-              account: 0,
-              order_id: order.order_id,
-              fill_amount_in_ask_currency: { decimal: fillAmount },
-              output_address: null,
-              options: {},
-            },
-          }, totp);
-          if (!r.ok) {
-            if (r.code_consumed) onTotpConsumed();
-            throw new Error(r.error);
-          }
-          onTotpConsumed(); // burned - clear the field
-          return r.results[0]?.tx_id as string ?? "submitted";
-        },
-        watchTx,
-      );
-      setFillAmount("");
-      onFilled();
-    } catch (err) {
-      setError(friendlyError(err));
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Taking an ask = you buy the token; taking a bid = you sell it.
+  const takeSide  = side === "ask" ? "buy" : "sell";
 
   return (
     <tr className="hover:bg-gray-800/40 transition-colors">
-      <td className="px-3 py-2.5 font-mono text-sm text-gray-200">{price}</td>
+      <td className={`px-3 py-2.5 font-mono text-sm ${side === "ask" ? "text-red-300" : "text-mint-300"}`}>{price}</td>
       <td className="px-3 py-2.5 font-mono text-sm text-gray-300">{tokenQty}</td>
       <td className="px-3 py-2.5 font-mono text-sm text-gray-400">{mlQty}</td>
       <td className="px-3 py-2.5">
-        <div className="flex items-center gap-1.5">
-          <input
-            type="number" min="0" step="any" placeholder={fillLabel}
-            value={fillAmount} onChange={e => setFillAmount(e.target.value)}
-            disabled={loading}
-            className="w-24 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder:text-gray-600
-                       px-2 py-1 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-mint-600 disabled:opacity-50"
-          />
-          <button
-            onClick={handleFill} disabled={loading || !fillAmount || needsTotp}
-            title={needsTotp ? "Enter your 2FA code to fill" : undefined}
-            className="rounded-lg bg-mint-700 hover:bg-mint-600 px-2.5 py-1 text-xs font-medium text-white
-                       transition-colors disabled:opacity-40"
-          >
-            {loading ? "…" : "Fill"}
-          </button>
-        </div>
-        {error && <p className="text-xs text-red-400 mt-0.5 break-all" role="alert">{error}</p>}
+        <button
+          onClick={() => onTake(price, tokenQty, takeSide)}
+          title={`Pre-fill the order form to ${takeSide} at ${price}`}
+          className="rounded-lg bg-gray-800 hover:bg-mint-700 border border-gray-700 px-2.5 py-1.5 text-xs font-medium text-gray-200
+                     transition-colors"
+        >
+          Fill form
+        </button>
       </td>
     </tr>
   );
@@ -746,18 +709,14 @@ function PairBookPanel({
   side,
   ticker,
   colorClass,
-  onFilled,
-  totp,
-  onTotpConsumed,
+  onTake,
 }: {
   title: string;
   orders: OrderInfo[];
   side: "ask" | "bid";
   ticker: string;
   colorClass: string;
-  onFilled: () => void;
-  totp: string;
-  onTotpConsumed: () => void;
+  onTake: (price: string, amount: string, takeSide: "buy" | "sell") => void;
 }) {
   return (
     <div className="rounded-xl border border-gray-800 overflow-x-auto">
@@ -773,13 +732,12 @@ function PairBookPanel({
               <th className="px-3 py-2">Price (ML/{ticker})</th>
               <th className="px-3 py-2">{ticker} amount</th>
               <th className="px-3 py-2">ML total</th>
-              <th className="px-3 py-2">Fill</th>
+              <th className="px-3 py-2">Take</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-800/60">
             {orders.map(o => (
-              <PairBookRow key={o.order_id} order={o} side={side} ticker={ticker} onFilled={onFilled}
-                totp={totp} onTotpConsumed={onTotpConsumed} />
+              <PairBookRow key={o.order_id} order={o} side={side} ticker={ticker} onTake={onTake} />
             ))}
           </tbody>
         </table>
@@ -824,11 +782,17 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
   // Shared 2FA codes: filling order-book rows and concluding own orders both
   // move funds and burn a code server-side. One field per section keeps the
   // rows uncluttered.
-  const [fillTotp, setFillTotp] = useState("");
-  const fillTotpRef             = useRef<HTMLInputElement>(null);
+  // Order-book rows never execute — a click on a row hands its price/size
+  // to the place-order form below.
+  const [bookPrefill, setBookPrefill] = useState<{
+    side: "buy" | "sell"; price: string; amount: string;
+  } | null>(null);
+  const takeFromBook = (price: string, amount: string, side: "buy" | "sell") => {
+    setBookPrefill({ side, price, amount });
+    document.getElementById("place-order")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
   const [concludeTotp, setConcludeTotp] = useState("");
   const concludeTotpRef         = useRef<HTMLInputElement>(null);
-  const consumeFillTotp    = () => { setFillTotp("");    setTimeout(() => fillTotpRef.current?.focus(), 0); };
   const consumeConcludeTotp = () => { setConcludeTotp(""); setTimeout(() => concludeTotpRef.current?.focus(), 0); };
 
   useEffect(() => {
@@ -1109,9 +1073,9 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
             {!pairLoading && (
               <div className="space-y-3">
                 <DepthStrip asks={pairAsks} bids={pairBids} ticker={selectedTicker} />
-                <TotpField value={fillTotp} onChange={setFillTotp} inputRef={fillTotpRef} />
                 <p className="text-xs text-gray-500 -mt-1">
-                  Filling an order moves funds and needs your 2FA code.
+                  "Fill form" pre-fills the order form below with that price and size — nothing is
+                  submitted from the book itself.
                 </p>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   <PairBookPanel
@@ -1120,9 +1084,7 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
                     side="ask"
                     ticker={selectedTicker}
                     colorClass="text-red-400"
-                    onFilled={() => loadPairOrders(selectedTokenId)}
-                    totp={fillTotp}
-                    onTotpConsumed={consumeFillTotp}
+                    onTake={takeFromBook}
                   />
                   <PairBookPanel
                     title={`Bids - ${selectedTicker} Buy Orders`}
@@ -1130,9 +1092,7 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
                     side="bid"
                     ticker={selectedTicker}
                     colorClass="text-green-400"
-                    onFilled={() => loadPairOrders(selectedTokenId)}
-                    totp={fillTotp}
-                    onTotpConsumed={consumeFillTotp}
+                    onTake={takeFromBook}
                   />
                 </div>
               </div>
@@ -1143,7 +1103,7 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
 
       {/* ── Buy / Sell ── */}
       <section>
-        <h2 className="text-base font-semibold text-gray-200 mb-3">Place Order</h2>
+        <h2 id="place-order" className="text-base font-semibold text-gray-200 mb-3 scroll-mt-4">Place Order</h2>
         <div className="rounded-xl bg-gray-900 border border-gray-800 p-6">
           <BuySellPanel
             selectedTokenId={selectedTokenId}
@@ -1154,6 +1114,7 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
             tokenBalance={tokenBalance}
             onCreated={refreshOwn}
             onPairRefresh={() => selectedTokenId && loadPairOrders(selectedTokenId)}
+            prefill={bookPrefill}
           />
         </div>
       </section>
