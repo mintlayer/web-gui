@@ -32,6 +32,23 @@ describe('GET /api/prefs', () => {
     expect(body).toMatchObject({ ok: true, value: ['tokenA', 'tokenB'] });
   });
 
+  it('drops invalid entries from stored values on read', async () => {
+    vi.mocked(getPref).mockReturnValue([
+      { tokenId: 'good1', ticker: 'G1' },
+      { tokenId: 42 },
+      'legacy-string-id',
+      null,
+      { tokenId: 'good2', ticker: '' },
+    ]);
+    const res = await GET(makeCtx());
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.value).toEqual([
+      { tokenId: 'good1', ticker: 'G1' },
+      'legacy-string-id',
+    ]);
+  });
+
   it('returns empty array when nothing stored', async () => {
     vi.mocked(getPref).mockReturnValue(null);
     const res = await GET(makeCtx());
@@ -80,5 +97,39 @@ describe('POST /api/prefs', () => {
     } as Parameters<typeof POST>[0];
     const res = await POST(ctx);
     expect(res.status).toBe(500);
+  });
+
+  it('accepts {tokenId, ticker} entries and passes them through', async () => {
+    const entries = [{ tokenId: 'tmlabc123', ticker: 'ABC' }];
+    const res = await POST(makeCtx(entries));
+    expect(res.status).toBe(200);
+    expect(setPref).toHaveBeenCalledWith('ml_favourite_tokens', entries);
+  });
+
+  it('rejects malformed entries with 400', async () => {
+    for (const bad of [[42], [{ tokenId: 'x' }], [{ ticker: 'NOTOKENID' }], [{ tokenId: 'ok', ticker: '' }], [{ tokenId: 'ok', ticker: 9 }]]) {
+      const res = await POST(makeCtx(bad));
+      expect(res.status).toBe(400);
+    }
+    expect(setPref).not.toHaveBeenCalled();
+  });
+
+  it('rejects arrays beyond the cap with 400', async () => {
+    const big = Array.from({ length: 1001 }, (_, i) => `token${i}`);
+    const res = await POST(makeCtx(big));
+    expect(res.status).toBe(400);
+    expect(setPref).not.toHaveBeenCalled();
+  });
+
+  it('rejects absurd declared body sizes with 413 before parsing', async () => {
+    const ctx = {
+      request: new Request('http://localhost/api/prefs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': '99999999' },
+        body: '[]',
+      }),
+    } as Parameters<typeof POST>[0];
+    const res = await POST(ctx);
+    expect(res.status).toBe(413);
   });
 });

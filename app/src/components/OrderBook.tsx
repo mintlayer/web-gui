@@ -6,6 +6,7 @@ import { submitWithToast } from "@/lib/toastStore";
 import { CopyButton } from "@/components/CopyButton";
 import type { OrderInfo, TokenCurrency } from "@/lib/wallet-rpc";
 import { rpc } from '@/lib/client-rpc';
+import { getTokensInfoByIds } from '@/lib/token-info-client';
 import { stakeTrade } from '@/lib/stake-trade-client';
 import { TotpField } from '@/components/ui/TotpField';
 import { aggregateLevels, fmtQty } from '@/components/orderBookDepth';
@@ -812,22 +813,15 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
 
       // Resolve types and tickers for all favourites.
       // NFTs are filtered out - the order book only supports fungible token pairs.
-      // node_get_tokens_info does not preserve input order, so call one at a time.
       const allIds = favs.map(f => f.tokenId);
       if (allIds.length === 0) { setFavourites(favs); return; }
 
       try {
-        const results = await Promise.all(
-          allIds.map(id =>
-            rpc<[{ type: string; content: { token_ticker?: { text: string | null }; metadata?: { ticker?: { text: string | null }; name?: { text: string | null } } } } | null]>(
-              "node_get_tokens_info", { token_ids: [id] }
-            ).then(([info]) => ({ id, info: info ?? null }))
-            .catch(() => ({ id, info: null as null }))
-          )
-        );
+        // Batched calls, aligned by each result's own token_id.
+        const infoMap = await getTokensInfoByIds(allIds);
         const tickerUpdates = new Map<string, string>();
         const nftIds = new Set<string>();
-        results.forEach(({ id, info }) => {
+        infoMap.forEach((info, id) => {
           if (!info) return;
           if (info.type !== "FungibleToken") { nftIds.add(id); return; }
           const ticker = info.content.token_ticker?.text ?? null;
@@ -882,16 +876,10 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
 
     unknownIds.forEach(id => resolvedTokenIds.current.add(id));
 
-    Promise.all(
-      unknownIds.map(id =>
-        rpc<[{ type: string; content: { token_ticker?: { text: string | null }; metadata?: { ticker?: { text: string | null }; name?: { text: string | null } } } } | null]>(
-          'node_get_tokens_info', { token_ids: [id] }
-        ).then(([info]) => ({ id, info: info ?? null }))
-        .catch(() => ({ id, info: null as null }))
-      )
-    ).then(results => {
+    // Batched calls, aligned by each result's own token_id.
+    getTokensInfoByIds(unknownIds).then(infoMap => {
       const newMap = new Map<string, string>();
-      results.forEach(({ id, info }) => {
+      infoMap.forEach((info, id) => {
         if (!info) return;
         const ticker = info.type === 'FungibleToken'
           ? (info.content.token_ticker?.text ?? null)
