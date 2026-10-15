@@ -4,7 +4,7 @@ import { hexToText } from '@/lib/token-utils';
 import { safeImageUri } from '@/lib/safe-uri';
 import { CopyButton } from '@/components/CopyButton';
 import { TokenIdTooltip } from '@/components/TokenIdTooltip';
-import { rpc } from '@/lib/client-rpc';
+import { getTokensInfoByIds } from '@/lib/token-info-client';
 
 interface SearchResult {
   tokenId: string;
@@ -15,6 +15,18 @@ interface FavouriteEntry {
   tokenId: string;
   ticker: string;
 }
+
+interface ExplorerTokenRow {
+  tokenId: string;
+  ticker: string;
+  displayName: string | null;
+  categories: string[];
+  circulatingSupply: string;
+  decimals: number;
+}
+
+/** Hard cap mirrored by the server (server allows 1000, we stay tidy). */
+const FAVOURITES_CAP = 500;
 
 interface Props {
   network: string;
@@ -147,6 +159,16 @@ export default function TokenSearch({ network }: Props) {
   const [favInfos, setFavInfos] = useState<Map<string, TokenInfo | null>>(new Map());
   const [favLoading, setFavLoading] = useState(false);
 
+  // Verified-token bulk import state
+  const [vtOpen, setVtOpen] = useState(false);
+  const [vtRows, setVtRows] = useState<ExplorerTokenRow[] | null>(null);
+  const [vtLoading, setVtLoading] = useState(false);
+  const [vtError, setVtError] = useState<string | null>(null);
+  const [vtSelected, setVtSelected] = useState<Set<string>>(new Set());
+  const [vtImporting, setVtImporting] = useState(false);
+  const [vtNote, setVtNote] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
   const explorerBase = network === 'testnet'
     ? 'https://lovelace.explorer.mintlayer.org'
     : 'https://explorer.mintlayer.org';
@@ -173,17 +195,8 @@ export default function TokenSearch({ network }: Props) {
     if (ids.length === 0) return;
     setFavLoading(true);
     try {
-      // node_get_tokens_info does not preserve input order - call one at a time so
-      // each result is guaranteed to correspond to the correct token ID.
-      const results = await Promise.all(
-        ids.map(id =>
-          rpc<(TokenInfo | null)[]>('node_get_tokens_info', { token_ids: [id] })
-            .then(([info]) => ({ id, info: info ?? null }))
-        )
-      );
-      const map = new Map<string, TokenInfo | null>();
-      results.forEach(({ id, info }) => map.set(id, info));
-      setFavInfos(map);
+      // Batched calls, aligned by each result's own token_id.
+      setFavInfos(await getTokensInfoByIds(ids));
     } catch {
       // silently fail
     } finally {
@@ -191,35 +204,48 @@ export default function TokenSearch({ network }: Props) {
     }
   }
 
-  function toggleFavourite(tokenId: string, ticker: string) {
-    setFavourites(prev => {
-      const alreadyPinned = prev.some(f => f.tokenId === tokenId);
-      const next = alreadyPinned
-        ? prev.filter(f => f.tokenId !== tokenId)
-        : [...prev, { tokenId, ticker }];
-      fetch('/api/prefs', {
+  async function toggleFavourite(tokenId: string, ticker: string) {
+    const alreadyPinned = favourites.some(f => f.tokenId === tokenId);
+    let next: FavouriteEntry[];
+    if (alreadyPinned) {
+      next = favourites.filter(f => f.tokenId !== tokenId);
+    } else {
+      if (favourites.length >= FAVOURITES_CAP) {
+        setSaveError(`Your list is at its cap (${FAVOURITES_CAP}) — unpin something first.`);
+        return;
+      }
+      next = [...favourites, { tokenId, ticker }];
+    }
+    // Persist first, then commit — the UI never claims a state the store
+    // doesn't hold, and a later import can't overwrite a failed toggle.
+    try {
+      const res = await fetch('/api/prefs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(next),
-      }).catch(() => {});
-
-      if (!alreadyPinned) {
-        // Fetch fresh info for newly pinned token if not already cached
-        setFavInfos(current => {
-          if (!current.has(tokenId)) {
-            const existing = results.find(r => r.tokenId === tokenId);
-            if (existing) {
-              const updated = new Map(current);
-              updated.set(tokenId, existing.info);
-              return updated;
-            }
+      });
+      const data = await res.json() as { ok: boolean; error?: string };
+      if (!data.ok) throw new Error(data.error ?? 'Saving failed');
+    } catch (err) {
+      setSaveError(`Could not save your list: ${(err as Error).message}`);
+      return;
+    }
+    setSaveError(null);
+    setFavourites(next);
+    if (!alreadyPinned) {
+      // Fetch fresh info for newly pinned token if not already cached
+      setFavInfos(current => {
+        if (!current.has(tokenId)) {
+          const existing = results.find(r => r.tokenId === tokenId);
+          if (existing) {
+            const updated = new Map(current);
+            updated.set(tokenId, existing.info);
+            return updated;
           }
-          return current;
-        });
-      }
-
-      return next;
-    });
+        }
+        return current;
+      });
+    }
   }
 
   async function handleSearch(e: React.FormEvent) {
@@ -236,7 +262,7 @@ export default function TokenSearch({ network }: Props) {
       let tokenIds: string[] = [];
 
       if (looksLikeTokenId(q)) {
-        tokenIds = [q];
+        tokenIds = [q.slice(0, 128)];
       } else {
         if (!indexerAvailable) {
           setError('Ticker search requires the indexer. Paste a full token ID to look up directly.');
@@ -249,22 +275,19 @@ export default function TokenSearch({ network }: Props) {
         tokenIds = data.result ?? [];
       }
 
-      // Deduplicate
-      tokenIds = [...new Set(tokenIds)];
+      // Deduplicate and drop non-id junk before it reaches the RPC layer.
+      tokenIds = [...new Set(tokenIds)].filter(
+        id => typeof id === 'string' && id.length > 0 && id.length <= 128,
+      );
 
       if (tokenIds.length === 0) {
         setLoading(false);
         return;
       }
 
-      // node_get_tokens_info does not preserve input order - call one at a time.
-      const infoResults = await Promise.all(
-        tokenIds.map(id =>
-          rpc<(TokenInfo | null)[]>('node_get_tokens_info', { token_ids: [id] })
-            .then(([info]) => ({ id, info: info ?? null }))
-        )
-      );
-      setResults(infoResults.map(({ id, info }) => ({ tokenId: id, info })));
+      // Batched calls, aligned by each result's own token_id.
+      const infoMap = await getTokensInfoByIds(tokenIds);
+      setResults(tokenIds.map(id => ({ tokenId: id, info: infoMap.get(id) ?? null })));
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -274,8 +297,162 @@ export default function TokenSearch({ network }: Props) {
 
   const favSet = new Set(favourites.map(f => f.tokenId));
 
+  async function loadVerified() {
+    setVtOpen(true);
+    setVtLoading(true);
+    setVtError(null);
+    setVtNote(null);
+    try {
+      const res = await fetch('/api/explorer-tokens');
+      const data = await res.json() as { ok: boolean; tokens?: ExplorerTokenRow[]; error?: string };
+      if (!data.ok) throw new Error(data.error ?? 'Could not load the verified token list');
+      setVtRows(data.tokens ?? []);
+      setVtSelected(new Set());
+    } catch (err) {
+      setVtError((err as Error).message);
+    } finally {
+      setVtLoading(false);
+    }
+  }
+
+  async function importVerified() {
+    if (!vtRows) return;
+    const picked = vtRows.filter(r => vtSelected.has(r.tokenId));
+    if (picked.length === 0) return;
+    setVtImporting(true);
+    setVtNote(null);
+    try {
+      const existing = new Set(favourites.map(f => f.tokenId));
+      const additions = picked.filter(r => !existing.has(r.tokenId));
+      const room = Math.max(0, FAVOURITES_CAP - favourites.length);
+      const accepted = additions.slice(0, room);
+      if (accepted.length === 0) {
+        setVtNote('Nothing to import — these tokens are already in your list.');
+        return;
+      }
+      const next: FavouriteEntry[] = [
+        ...favourites,
+        ...accepted.map(r => ({ tokenId: r.tokenId, ticker: r.ticker })),
+      ];
+      const res = await fetch('/api/prefs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(next),
+      });
+      const data = await res.json() as { ok: boolean; error?: string };
+      if (!data.ok) throw new Error(data.error ?? 'Saving failed');
+      setFavourites(next);
+      fetchFavInfos(next.map(f => f.tokenId));
+      setVtNote(additions.length > accepted.length
+        ? `Imported ${accepted.length} tokens — the list cap was reached.`
+        : `Imported ${accepted.length} token${accepted.length === 1 ? '' : 's'}.`);
+      setVtSelected(new Set());
+    } catch (err) {
+      setVtError((err as Error).message);
+    } finally {
+      setVtImporting(false);
+    }
+  }
+
+  function toggleVtRow(tokenId: string) {
+    setVtSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(tokenId)) next.delete(tokenId);
+      else next.add(tokenId);
+      return next;
+    });
+  }
+
+  function toggleVtAll() {
+    if (!vtRows) return;
+    setVtSelected(prev => (prev.size === vtRows.length ? new Set<string>() : new Set(vtRows.map(r => r.tokenId))));
+  }
+
   return (
     <div>
+      {/* ── Verified-token bulk import ───────────────────────────────── */}
+      <div className="mb-4 rounded-lg border border-gray-800 bg-gray-900/60 p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => (vtOpen ? setVtOpen(false) : void loadVerified())}
+            disabled={vtLoading}
+            className="rounded-lg bg-gray-800 hover:bg-gray-700 px-3 py-1.5 text-sm font-medium text-gray-200
+                       transition-colors disabled:opacity-40"
+          >
+            {vtLoading ? 'Loading…' : vtOpen ? 'Hide verified tokens' : 'Browse verified tokens'}
+          </button>
+          <span className="text-xs text-gray-500">
+            From the Mintlayer explorer's verified list — always check a token before trading it.
+          </span>
+        </div>
+
+        {vtError && <p className="mt-2 text-xs text-red-300">{vtError}</p>}
+        {saveError && <p className="mt-2 text-xs text-red-300">{saveError}</p>}
+        {vtNote && <p className="mt-2 text-xs text-mint-300">{vtNote}</p>}
+
+        {vtOpen && vtRows !== null && (
+          vtRows.length === 0 ? (
+            <p className="mt-2 text-xs text-gray-500">No verified tokens published yet.</p>
+          ) : (
+            <>
+              <div className="mt-2 flex items-center gap-3">
+                <label className="flex items-center gap-2 text-xs text-gray-400">
+                  <input
+                    type="checkbox"
+                    className="accent-mint-600"
+                    checked={vtSelected.size === vtRows.length}
+                    onChange={toggleVtAll}
+                  />
+                  Select all ({vtRows.length})
+                </label>
+                <button
+                  type="button"
+                  onClick={() => void importVerified()}
+                  disabled={vtImporting || vtSelected.size === 0}
+                  className="ml-auto rounded-lg bg-mint-700 hover:bg-mint-600 px-3 py-1.5 text-xs font-semibold text-white
+                             transition-colors disabled:opacity-40"
+                >
+                  {vtImporting ? 'Importing…' : `Import selected (${vtSelected.size})`}
+                </button>
+              </div>
+              <ul className="mt-1 max-h-72 overflow-y-auto divide-y divide-gray-800">
+                {vtRows.map(r => {
+                  const checked = vtSelected.has(r.tokenId);
+                  const already = favSet.has(r.tokenId);
+                  return (
+                    <li key={r.tokenId}>
+                      <label className="flex min-h-[40px] cursor-pointer items-center gap-3 px-1 py-1.5 text-sm">
+                        <input
+                          type="checkbox"
+                          className="accent-mint-600"
+                          checked={checked}
+                          onChange={() => toggleVtRow(r.tokenId)}
+                        />
+                        <span className="font-semibold text-gray-100">{r.ticker}</span>
+                        {r.displayName && r.displayName !== r.ticker && (
+                          <span className="truncate text-gray-400">{r.displayName}</span>
+                        )}
+                        {already && (
+                          <span className="rounded border border-yellow-700 px-1 text-[10px] uppercase tracking-wide text-yellow-500">
+                            listed
+                          </span>
+                        )}
+                        {r.categories.length > 0 && (
+                          <span className="ml-auto shrink-0 text-[11px] text-gray-500">
+                            {r.categories.slice(0, 3).join(' · ')}
+                          </span>
+                        )}
+                      </label>
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
+          )
+        )}
+      </div>
+
       {/* ── Search form ────────────────────────────────────────────────────── */}
       <form onSubmit={handleSearch} className="flex gap-2">
         <input
