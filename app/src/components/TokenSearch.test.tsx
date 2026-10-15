@@ -91,4 +91,27 @@ describe('TokenSearch verified-token import', () => {
     await user.click(screen.getByRole('button', { name: 'Browse verified tokens' }));
     expect(await screen.findByText('Token list is unavailable')).toBeInTheDocument();
   });
+
+  it('shows the stored ticker for favourites while on-chain info is unavailable', async () => {
+    const user = userEvent.setup();
+    const favouriteId = 'tmlcccccccccccccccccccccccccccccccccccccccccc3';
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (url === '/api/indexer-status') return Promise.resolve(jsonResponse({ up: true }));
+      if (url === '/api/explorer-tokens') return Promise.resolve(jsonResponse({ ok: true, tokens: [] }));
+      if (url === '/api/prefs') {
+        if (init?.method === 'POST') return Promise.resolve(jsonResponse({ ok: true }));
+        return Promise.resolve(
+          jsonResponse({ ok: true, value: [{ tokenId: favouriteId, ticker: 'OLDFAV' }] }),
+        );
+      }
+      return Promise.reject(new Error(`unexpected fetch ${url}`));
+    });
+    // Token info lookup fails entirely (wallet daemon down).
+    const { rpc } = await import('@/lib/client-rpc');
+    (rpc as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('daemon down'));
+
+    render(<TokenSearch network="mainnet" />);
+    expect(await screen.findByText('OLDFAV')).toBeInTheDocument();
+    expect(screen.queryByText('???')).not.toBeInTheDocument();
+  });
 });

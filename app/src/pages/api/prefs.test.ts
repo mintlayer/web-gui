@@ -24,12 +24,18 @@ beforeEach(() => {
 });
 
 describe('GET /api/prefs', () => {
-  it('returns stored favourites', async () => {
+  it('returns stored favourites (legacy strings normalized to objects)', async () => {
     vi.mocked(getPref).mockReturnValue(['tokenA', 'tokenB']);
     const res = await GET(makeCtx());
     const body = await res.json();
     expect(res.status).toBe(200);
-    expect(body).toMatchObject({ ok: true, value: ['tokenA', 'tokenB'] });
+    expect(body).toMatchObject({
+      ok: true,
+      value: [
+        { tokenId: 'tokenA', ticker: 'tokenA…' },
+        { tokenId: 'tokenB', ticker: 'tokenB…' },
+      ],
+    });
   });
 
   it('drops invalid entries from stored values on read', async () => {
@@ -45,7 +51,7 @@ describe('GET /api/prefs', () => {
     expect(res.status).toBe(200);
     expect(body.value).toEqual([
       { tokenId: 'good1', ticker: 'G1' },
-      'legacy-string-id',
+      { tokenId: 'legacy-string-id', ticker: 'legacy-s…' },
     ]);
   });
 
@@ -66,12 +72,15 @@ describe('GET /api/prefs', () => {
 });
 
 describe('POST /api/prefs', () => {
-  it('saves an array of tokens', async () => {
+  it('saves an array of tokens (legacy strings normalized to objects)', async () => {
     const res = await POST(makeCtx(['tok1', 'tok2']));
     const body = await res.json();
     expect(res.status).toBe(200);
     expect(body.ok).toBe(true);
-    expect(setPref).toHaveBeenCalledWith('ml_favourite_tokens', ['tok1', 'tok2']);
+    expect(setPref).toHaveBeenCalledWith('ml_favourite_tokens', [
+      { tokenId: 'tok1', ticker: 'tok1…' },
+      { tokenId: 'tok2', ticker: 'tok2…' },
+    ]);
   });
 
   it('returns 400 when body is not an array', async () => {
@@ -107,7 +116,7 @@ describe('POST /api/prefs', () => {
   });
 
   it('rejects malformed entries with 400', async () => {
-    for (const bad of [[42], [{ tokenId: 'x' }], [{ ticker: 'NOTOKENID' }], [{ tokenId: 'ok', ticker: '' }], [{ tokenId: 'ok', ticker: 9 }]]) {
+    for (const bad of [[42], [{ tokenId: 'x' }], [{ ticker: 'NOTOKENID' }], [{ tokenId: 'ok', ticker: '' }], [{ tokenId: 'ok', ticker: 9 }], [{ tokenId: 'ok', ticker: 'AB\u202ECBA' }], [{ tokenId: 'ok', ticker: 'a\u0000b' }]]) {
       const res = await POST(makeCtx(bad));
       expect(res.status).toBe(400);
     }

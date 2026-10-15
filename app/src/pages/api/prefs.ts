@@ -10,17 +10,22 @@ function isId(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 128;
 }
 
+/** Tickers are rendered verbatim — reject control and bidi-override characters. */
+const TICKER_BAD = /[\u0000-\u001F\u007F-\u009F\u200E\u200F\u202A-\u202E\u2066-\u2069]/;
+
 /**
- * Validates one favourite entry. Accepts the current `{tokenId, ticker}`
- * shape and the legacy plain-string shape; anything else is rejected so
+ * Validates one favourite entry and normalizes it to the `{tokenId, ticker}`
+ * object shape. Accepts the current object shape and the legacy plain-string
+ * shape (ticker unknown → short-id placeholder); anything else is rejected so
  * garbage can't be written into the shared store.
  */
-function asFavouriteEntry(value: unknown): unknown | null {
-  if (isId(value)) return value;
+function asFavouriteEntry(value: unknown): { tokenId: string; ticker: string } | null {
+  if (isId(value)) return { tokenId: value, ticker: `${value.slice(0, 8)}…` };
   if (typeof value !== 'object' || value === null) return null;
   const e = value as Record<string, unknown>;
   if (!isId(e.tokenId)) return null;
   if (typeof e.ticker !== 'string' || e.ticker.length === 0 || e.ticker.length > 32) return null;
+  if (TICKER_BAD.test(e.ticker)) return null;
   return { tokenId: e.tokenId, ticker: e.ticker };
 }
 
@@ -30,7 +35,9 @@ export const GET: APIRoute = () => {
     // Defense-in-depth: serve only entries that pass the same validation
     // as POST (row may predate the validation or be hand-edited).
     const value = Array.isArray(stored)
-      ? stored.filter((e) => asFavouriteEntry(e) !== null)
+      ? stored
+          .map(asFavouriteEntry)
+          .filter((e): e is { tokenId: string; ticker: string } => e !== null)
       : [];
     return json({ ok: true, value });
   } catch (err) {

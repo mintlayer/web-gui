@@ -64,11 +64,13 @@ interface TokenCardProps {
   explorerBase: string;
   isFavourite: boolean;
   onToggleFavourite: (tokenId: string, ticker: string) => void;
+  /** Stored ticker shown while on-chain info is unavailable (daemon down). */
+  fallbackTicker?: string;
 }
 
-function TokenCard({ tokenId, info, explorerBase, isFavourite, onToggleFavourite }: TokenCardProps) {
+function TokenCard({ tokenId, info, explorerBase, isFavourite, onToggleFavourite, fallbackTicker }: TokenCardProps) {
   const isNFT = info?.type === 'NonFungibleToken';
-  const ticker = !info ? '???' :
+  const ticker = !info ? (fallbackTicker || '???') :
     isNFT ? (hexToText(info.content.metadata.ticker) ?? hexToText(info.content.metadata.name) ?? 'NFT') :
     (hexToText(info.content.token_ticker) ?? '???');
   const frozen = !isNFT && info?.type === 'FungibleToken' && info.content.frozen?.type === 'Frozen';
@@ -214,7 +216,7 @@ export default function TokenSearch({ network }: Props) {
         setSaveError(`Your list is at its cap (${FAVOURITES_CAP}) — unpin something first.`);
         return;
       }
-      next = [...favourites, { tokenId, ticker }];
+      next = [...favourites, { tokenId, ticker: ticker === '???' ? `${tokenId.slice(0, 8)}…` : ticker }];
     }
     // Persist first, then commit — the UI never claims a state the store
     // doesn't hold, and a later import can't overwrite a failed toggle.
@@ -526,6 +528,7 @@ export default function TokenSearch({ network }: Props) {
                   explorerBase={explorerBase}
                   isFavourite={true}
                   onToggleFavourite={toggleFavourite}
+                  fallbackTicker={ticker}
                 />
               );
             })}
