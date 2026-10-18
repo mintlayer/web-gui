@@ -29,7 +29,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
   const newSecret = generateTotpSecret();
   setPref('auth.totp_secret', newSecret);
 
-  const label = encodeURIComponent('Mintlayer GUI-X');
+  const label = encodeURIComponent('Mintlayer Nexus');
   const issuer = encodeURIComponent('Mintlayer');
   const uri = `otpauth://totp/${label}?secret=${newSecret}&issuer=${issuer}`;
 

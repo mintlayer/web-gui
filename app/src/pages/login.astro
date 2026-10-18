@@ -152,7 +152,7 @@ if (Astro.request.method === 'POST' && !unconfigured) {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Mintlayer GUI-X - Sign In</title>
+    <title>Mintlayer Nexus - Sign In</title>
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
   </head>
 
@@ -162,7 +162,7 @@ if (Astro.request.method === 'POST' && !unconfigured) {
       <!-- Logo / branding -->
       <div class="flex flex-col items-center mb-8 gap-3">
         <img src="/mintlayer-logo.svg" alt="Mintlayer" class="h-7 brightness-0 invert" />
-        <span class="text-mint-400 text-xl font-semibold tracking-tight">Mintlayer GUI-X</span>
+        <span class="text-mint-400 text-xl font-semibold tracking-tight">Mintlayer Nexus</span>
         <p class="text-gray-500 text-sm">Sign in to your wallet</p>
       </div>
 
@@ -215,7 +215,7 @@ if (Astro.request.method === 'POST' && !unconfigured) {
         >
           <p class="text-xs text-gray-500">Scan this QR code with your authenticator app, then enter the 6-digit code to finish setup.</p>
           <div class="flex flex-col items-center gap-3">
-            <TotpQrCode client:load uri={`otpauth://totp/${encodeURIComponent('Mintlayer GUI-X')}?secret=${pendingSecret}&issuer=${encodeURIComponent('Mintlayer')}`} />
+            <TotpQrCode client:load uri={`otpauth://totp/${encodeURIComponent('Mintlayer Nexus')}?secret=${pendingSecret}&issuer=${encodeURIComponent('Mintlayer')}`} />
             <div class="bg-gray-800 rounded-lg p-3 space-y-1 w-full">
               <p class="text-xs text-gray-400">Secret key (manual entry):</p>
               <p class="font-mono text-xs text-gray-200 break-all">{pendingSecret}</p>

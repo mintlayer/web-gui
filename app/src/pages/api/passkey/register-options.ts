@@ -38,7 +38,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
   const existingCreds = getCredentials();
 
   const options = await generateRegistrationOptions({
-    rpName: 'Mintlayer GUI-X',
+    rpName: 'Mintlayer Nexus',
     rpID: rpId,
     userName: 'wallet',
     userDisplayName: 'Mintlayer Wallet',

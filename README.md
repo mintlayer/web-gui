@@ -1,4 +1,4 @@
-# Mintlayer Web GUI
+# Mintlayer Nexus
 
 A Docker Compose stack that runs a full Mintlayer node, a headless wallet, and an Astro-based web interface for wallet management.
 
