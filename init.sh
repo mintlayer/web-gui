@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Mintlayer Web GUI — interactive setup
+# Mintlayer Nexus — interactive setup
 # Inspired by the Astro create CLI style
 # ─────────────────────────────────────────────────────────────────────────────
 
