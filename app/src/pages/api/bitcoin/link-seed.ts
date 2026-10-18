@@ -1,6 +1,10 @@
 import type { APIRoute } from 'astro';
 import { json } from '@/lib/api-utils';
-import { isBitcoinEnabled, createBitcoinWalletFromSeedWithRetry } from '@/lib/bitcoin-wallet';
+import {
+  isBitcoinEnabled,
+  createBitcoinWalletFromSeedWithRetry,
+  getBitcoinStatus,
+} from '@/lib/bitcoin-wallet';
 import { requireStepUp, totpFromBody } from '@/lib/step-up';
 import {
   walletShowSeedPhrase,
@@ -43,6 +47,24 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
   const password = typeof body.password === 'string' ? body.password : '';
   if (password === '') {
     return json({ ok: false, error: 'Your Mintlayer wallet password is required' }, 400);
+  }
+
+  // A pruned node can't serve the full history this restore needs — fail
+  // fast BEFORE unlocking private keys for a scan that would miss coins.
+  try {
+    const status = await getBitcoinStatus();
+    if (status.node.pruned) {
+      return json(
+        {
+          ok: false,
+          error:
+            'This Bitcoin node keeps only recent blocks (pruned mode), so it cannot scan the full history your seed may need. Switch to a full node (BITCOIN_PRUNE=0, BITCOIN_TXINDEX=1, then resync) and try again.',
+        },
+        409,
+      );
+    }
+  } catch {
+    // Status probe failed — the sidecar's own guard still applies later.
   }
 
   let seed = '';

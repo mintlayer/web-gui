@@ -60,7 +60,7 @@ describe('GET /api/bitcoin/overview', () => {
   it('aggregates status, address, balance and transactions', async () => {
     const statusPayload = {
       ok: true, network: "mainnet" as const, walletExists: true, walletLoaded: true,
-      node: { reachable: true, blocks: 1, headers: 1, synced: true, initialBlockDownload: false },
+      node: { reachable: true, blocks: 1, headers: 1, synced: true, initialBlockDownload: false, pruned: false, pruneHeight: null, txIndex: true },
       balance: { confirmed: '1', trustedPending: '0', untrustedPending: '0', immature: '0' },
     };
     vi.mocked(getBitcoinStatus).mockResolvedValue(statusPayload);
