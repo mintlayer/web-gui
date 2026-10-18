@@ -186,7 +186,13 @@ How it works:
 - Mainnet chain data is roughly **700 GB** with the default `txindex=1`. The first sync can
   take days. Use `BITCOIN_NETWORK=testnet` (or `regtest`) to try it out cheaply.
 - The BTC wallet is a **hot wallet** — keep only spending amounts on it.
-- Pruning (`BITCOIN_PRUNE`) is incompatible with the wallet's history sync; leave it off.
+- **Storage modes** — `./init.sh` asks; the default is pruned:
+  - **Full** (`BITCOIN_PRUNE=0`, `BITCOIN_TXINDEX=1`, ~700 GB): complete history — restoring
+    any old seed rescans everything.
+  - **Pruned** (`BITCOIN_PRUNE=550`, `BITCOIN_TXINDEX=0`, ~15–25 GB): keeps only recent
+    blocks. Wallets created from now work normally (balance, receive, send); **restoring an
+    old seed is refused** — a pruned node cannot rescan history it no longer stores, and a
+    partial scan would silently miss coins. Switching back to full requires a full resync.
 - Bitcoin Core is pinned to **25.x**: the BDK rpc backend cannot parse the `warnings`
   format used by Core 26+. Override only if you know what you are doing (`BITCOIND_IMAGE`).
 

@@ -17,6 +17,7 @@ const lockPrivateKeys = vi.fn();
 const unlockPrivateKeys = vi.fn();
 const showSeedPhrase = vi.fn();
 const createFromSeed = vi.fn();
+const getBitcoinStatus = vi.fn();
 
 vi.mock('@/lib/wallet-rpc', () => ({
   walletLockPrivateKeys: (...a: unknown[]) => lockPrivateKeys(...(a as [])),
@@ -29,6 +30,7 @@ vi.mock('@/lib/wallet-rpc', () => ({
 vi.mock('@/lib/bitcoin-wallet', () => ({
   isBitcoinEnabled: vi.fn(() => true),
   createBitcoinWalletFromSeedWithRetry: (...a: unknown[]) => createFromSeed(...(a as [])),
+  getBitcoinStatus: (...a: unknown[]) => getBitcoinStatus(...(a as [])),
 }));
 
 function req(body: unknown): Parameters<typeof POST>[0] {
@@ -50,6 +52,30 @@ describe('POST /api/bitcoin/link-seed', () => {
     lockPrivateKeys.mockResolvedValue(undefined);
     showSeedPhrase.mockResolvedValue({ seed_phrase: SEED, passphrase: null });
     createFromSeed.mockResolvedValue({ ok: true, created: true, network: 'mainnet' });
+    getBitcoinStatus.mockResolvedValue({
+      ok: true,
+      node: { reachable: true, pruned: false, pruneHeight: null, txIndex: true, blocks: 1, headers: 1, synced: true, initialBlockDownload: false },
+    });
+  });
+
+  it('refuses before unlocking keys when the node is pruned', async () => {
+    getBitcoinStatus.mockResolvedValue({
+      ok: true,
+      node: { reachable: true, pruned: true, pruneHeight: 840000, txIndex: null, blocks: 900000, headers: 900000, synced: true, initialBlockDownload: false },
+    });
+    const res = await POST(req({ password: 'hunter2', totp_code: '123456' }));
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/pruned/i);
+    expect(unlockPrivateKeys).not.toHaveBeenCalled();
+    expect(showSeedPhrase).not.toHaveBeenCalled();
+  });
+
+  it('proceeds when the node-status probe fails (sidecar still guards)', async () => {
+    getBitcoinStatus.mockRejectedValue(new Error('sidecar down'));
+    const res = await POST(req({ password: 'hunter2', totp_code: '123456' }));
+    expect(res.status).toBe(200);
+    expect(unlockPrivateKeys).toHaveBeenCalled();
   });
 
   it('links: unlocks, reveals, derives the wallet, re-locks', async () => {

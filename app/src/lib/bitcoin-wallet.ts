@@ -63,6 +63,11 @@ export interface BitcoinNodeInfo {
   headers: number;
   synced: boolean;
   initialBlockDownload: boolean;
+  /** True when the node discards old blocks — full-history restores are impossible. */
+  pruned: boolean;
+  /** First available block on a pruned node; null on a full node. */
+  pruneHeight: number | null;
+  txIndex: boolean | null;
 }
 
 export interface BitcoinStatus {
