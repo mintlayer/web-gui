@@ -353,6 +353,14 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
         {overview.status && (
           <span className="uppercase tracking-wider text-gray-500">{overview.status.network}</span>
         )}
+        {node?.reachable && node.pruned && (
+          <span
+            title={`Pruned node: keeps blocks from #${(node.pruneHeight ?? 0).toLocaleString()} onward. Creating a wallet works normally, but restoring an old seed needs a full node.`}
+            className="rounded border border-gray-700 px-1.5 py-0.5 text-[10px] text-gray-400"
+          >
+            pruned node
+          </span>
+        )}
         <button onClick={refresh} disabled={busy} className="ml-auto text-mint-400 hover:text-mint-300 disabled:opacity-50">
           Refresh
         </button>
