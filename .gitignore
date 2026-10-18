@@ -41,5 +41,5 @@ Thumbs.db
 
 # Bitcoin (optional, profile: bitcoin)
 bitcoin-data/
-bitcoin-wallet-data/
+bitcoin-wallet-data*/
 bdk-wallet/target/

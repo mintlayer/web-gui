@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Mintlayer Web GUI — interactive setup
+# Mintlayer Nexus — interactive setup
 # Inspired by the Astro create CLI style
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -341,7 +341,7 @@ UI_TOTP_SECRET=$(node -e "
 SESSION_SECRET=$(openssl rand -hex 32)
 
 # Construct the otpauth URI
-TOTP_URI="otpauth://totp/Mintlayer%20GUI-X?secret=${UI_TOTP_SECRET}&issuer=Mintlayer"
+TOTP_URI="otpauth://totp/Mintlayer%20Nexus?secret=${UI_TOTP_SECRET}&issuer=Mintlayer"
 
 printf "${CYAN}│${RESET}\n"
 ok "TOTP secret generated"

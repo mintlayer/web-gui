@@ -84,7 +84,7 @@ export async function handleUpdate(
 
 async function cmdHelp(botToken: string, chatId: string): Promise<void> {
   await sendTelegramMessage(botToken, chatId, [
-    '🤖 <b>Mintlayer GUI-X Bot</b>',
+    '🤖 <b>Mintlayer Nexus Bot</b>',
     '',
     '<b>Read-only commands:</b>',
     '/balance - Current wallet balance',

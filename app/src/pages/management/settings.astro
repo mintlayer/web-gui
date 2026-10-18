@@ -59,7 +59,7 @@ if (Astro.request.method === 'POST') {
       } else {
         const newSecret = generateTotpSecret();
         setPref('auth.totp_secret', newSecret);
-        const label = encodeURIComponent('Mintlayer GUI-X');
+        const label = encodeURIComponent('Mintlayer Nexus');
         const issuer = encodeURIComponent('Mintlayer');
         const uri = `otpauth://totp/${label}?secret=${newSecret}&issuer=${issuer}`;
         result = { action: 'success', section, message: 'New 2FA secret generated. Scan the QR code below.', extra: { secret: newSecret, uri } };
@@ -150,7 +150,7 @@ if (Astro.request.method === 'POST') {
           setPref('telegram.bot_token', botToken);
           setPref('telegram.chat_id',   chatId);
           try {
-            await sendTelegramMessage(botToken, chatId, '✅ Test message from <b>Mintlayer GUI-X</b> - Telegram notifications are working.');
+            await sendTelegramMessage(botToken, chatId, '✅ Test message from <b>Mintlayer Nexus</b> - Telegram notifications are working.');
             result = { action: 'success', section, message: 'Settings saved and test message delivered. The bot answers /help within about a minute.' };
           } catch (err) {
             result = { action: 'error', section, message: `Saved — the new settings are live, but the test message could not be delivered: ${(err as Error).message}` };
