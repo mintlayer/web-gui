@@ -456,6 +456,26 @@ async fn create_wallet(
         req.scan_from.unwrap_or(0)
     };
 
+    // A pruned node cannot serve blocks below its prune window, so a
+    // full-history restore would silently miss coins. Refuse instead.
+    if created_at == 0 {
+        match node_rpc(&state, "getblockchaininfo", json!([])).await {
+            Ok(info) => {
+                if info.get("pruned").and_then(|b| b.as_bool()).unwrap_or(false) {
+                    return (
+                        axum::http::StatusCode::CONFLICT,
+                        Json(json!({
+                            "ok": false,
+                            "error": "This Bitcoin node keeps only recent blocks (pruned mode), so it cannot scan the full history an old seed may need. Switch to a full node (BITCOIN_PRUNE=0, BITCOIN_TXINDEX=1, then resync) before restoring this seed.",
+                        })),
+                    )
+                        .into_response();
+                }
+            }
+            Err(_) => { /* unreachable node: let the sync attempt surface it */ }
+        }
+    }
+
     if let Err(e) = save_seed(&state.seed_path(), &mnemonic, state.config.network, created_at) {
         return internal_error(e.context("persisting seed"));
     }
@@ -485,6 +505,21 @@ async fn sync(State(state): State<Arc<AppState>>) -> Response {
     }
     let st = Arc::clone(&state);
     tokio::spawn(async move {
+        // A full-history restore (sync horizon 0) on a pruned node would
+        // silently miss coins. Better no balance than a wrong one: refuse
+        // the scan until the node can actually serve the whole history.
+        let horizon = *st.sync_start_time.lock().unwrap_or_else(|p| p.into_inner());
+        if horizon == 0 {
+            if let Ok(info) = node_rpc(&st, "getblockchaininfo", json!([])).await {
+                if info.get("pruned").and_then(|b| b.as_bool()).unwrap_or(false) {
+                    error!(
+                        "wallet restore needs the full chain but the node is pruned - sync refused; switch to a full node (BITCOIN_PRUNE=0, BITCOIN_TXINDEX=1) and resync"
+                    );
+                    st.syncing.store(false, Ordering::SeqCst);
+                    return;
+                }
+            }
+        }
         let res = spawn_blocking(move || -> Result<()> {
             let start_time = *st.sync_start_time.lock().unwrap_or_else(|p| p.into_inner());
             let chain = RpcBlockchain::from_config(&st.config.rpc_config(start_time))?;
@@ -508,16 +543,7 @@ async fn sync(State(state): State<Arc<AppState>>) -> Response {
 /// GET /status - node + wallet overview for the Settings page.
 async fn status(State(state): State<Arc<AppState>>) -> Response {
     let chain = node_rpc(&state, "getblockchaininfo", json!([])).await;
-    let (blocks, headers, ibd) = match &chain {
-        Ok(info) => (
-            info.get("blocks").and_then(|b| b.as_u64()).unwrap_or(0),
-            info.get("headers").and_then(|b| b.as_u64()).unwrap_or(0),
-            info.get("initialblockdownload")
-                .and_then(|b| b.as_bool())
-                .unwrap_or(false),
-        ),
-        Err(_) => (0, 0, false),
-    };
+    let node_json = chain_node_json(chain.as_ref().ok());
 
     let wallet_exists = state.seed_path().exists();
     let wallet = state.wallet.lock().await;
@@ -537,16 +563,37 @@ async fn status(State(state): State<Arc<AppState>>) -> Response {
         "network": network_name(state.config.network),
         "walletExists": wallet_exists,
         "walletLoaded": wallet_loaded,
-        "node": {
-            "reachable": chain.is_ok(),
-            "blocks": blocks,
-            "headers": headers,
-            "synced": !ibd && blocks == headers,
-            "initialBlockDownload": ibd,
-        },
+        "node": node_json,
         "balance": balance,
     }))
     .into_response()
+}
+
+/// The `node` object of /status: reachability + sync progress + whether the
+/// node is pruned (which decides if full-history seed restores are possible).
+fn chain_node_json(chain: Option<&serde_json::Value>) -> serde_json::Value {
+    let (reachable, blocks, headers, ibd, pruned, prune_height, txindex) = match chain {
+        Some(info) => (
+            true,
+            info.get("blocks").and_then(|b| b.as_u64()).unwrap_or(0),
+            info.get("headers").and_then(|b| b.as_u64()).unwrap_or(0),
+            info.get("initialblockdownload").and_then(|b| b.as_bool()).unwrap_or(false),
+            info.get("pruned").and_then(|b| b.as_bool()).unwrap_or(false),
+            info.get("pruneheight").and_then(|b| b.as_u64()),
+            info.get("txindex").and_then(|b| b.as_bool()),
+        ),
+        None => (false, 0, 0, false, false, None, None),
+    };
+    json!({
+        "reachable": reachable,
+        "blocks": blocks,
+        "headers": headers,
+        "synced": reachable && !ibd && blocks == headers,
+        "initialBlockDownload": ibd,
+        "pruned": pruned,
+        "pruneHeight": prune_height,
+        "txindex": txindex,
+    })
 }
 
 /// GET /balance - totals in satoshis (strings).
@@ -859,5 +906,47 @@ mod tests {
         assert_eq!(s, axum::http::StatusCode::BAD_REQUEST);
         assert_eq!(m, "insufficient funds");
         assert_eq!(classify_send_error("NoSpaceLeft { path: \"/data/wallet.sqlite\" }"), None);
+    }
+}
+
+#[cfg(test)]
+mod chain_info_tests {
+    use super::chain_node_json;
+    use serde_json::json;
+
+    #[test]
+    fn full_node_shape() {
+        let info = json!({
+            "blocks": 900_000u64, "headers": 900_000u64,
+            "initialblockdownload": false, "pruned": false,
+            "pruneheight": serde_json::Value::Null, "txindex": true,
+        });
+        let node = chain_node_json(Some(&info));
+        assert_eq!(node["reachable"], true);
+        assert_eq!(node["synced"], true);
+        assert_eq!(node["pruned"], false);
+        assert_eq!(node["txindex"], true);
+        assert!(node["pruneHeight"].is_null());
+    }
+
+    #[test]
+    fn pruned_node_shape() {
+        let info = json!({
+            "blocks": 900_000u64, "headers": 900_001u64,
+            "initialblockdownload": true, "pruned": true, "pruneheight": 840_000u64,
+        });
+        let node = chain_node_json(Some(&info));
+        assert_eq!(node["pruned"], true);
+        assert_eq!(node["pruneHeight"], 840_000u64);
+        assert_eq!(node["synced"], false);
+        assert!(node["txindex"].is_null());
+    }
+
+    #[test]
+    fn unreachable_node_shape() {
+        let node = chain_node_json(None);
+        assert_eq!(node["reachable"], false);
+        assert_eq!(node["pruned"], false);
+        assert_eq!(node["synced"], false);
     }
 }
