@@ -44,7 +44,12 @@ log() { printf '[feature-enabler] %s\n' "$*"; }
 
 compose() {
     # shellcheck disable=SC2086
+    # --env-file pins interpolation to the same file the toggles rewrite, so
+    # the service flags the enabler writes are the ones compose reads (the
+    # default $PROJECT_DIR/.env only exists in installer deployments; dev
+    # stacks point ENV_FILE at .env.dev via ENV_FILE_HOST).
     docker compose \
+        --env-file "$ENV_FILE" \
         $(for f in $(printf '%s' "$COMPOSE_FILES" | tr ':' ' '); do printf ' -f %s/%s' "$PROJECT_DIR" "$f"; done) \
         --project-directory "$PROJECT_DIR" \
         "$@"
@@ -254,7 +259,10 @@ apply_request() {
             set_env_key "$ENV_FILE" BITCOIN_PRUNE "$prune_flag"
             set_env_key "$ENV_FILE" BITCOIN_TXINDEX "$txindex_flag"
             log "enabled bitcoin network=$network pruned=$pruned, starting containers"
-            compose --profile bitcoin up -d
+            # Explicit service lists: a profile-wide `up -d` would also
+            # recreate any other service whose config-hash changed — including
+            # this sidecar itself (killing the request mid-flight) and web-gui.
+            compose --profile bitcoin up -d bitcoind btc-explorer bdk-wallet
             compose up -d web-gui
             ;;
         disable:bitcoin)
@@ -267,7 +275,8 @@ apply_request() {
             [ -f "$ENV_FILE" ] || { log "env file missing: $ENV_FILE"; return 1; }
             set_env_key "$ENV_FILE" INDEXER_ENABLED true
             log "enabling indexer, starting containers"
-            compose --profile indexer up -d
+            # Explicit service list — see the bitcoin branch above.
+            compose --profile indexer up -d postgres api-blockchain-scanner-daemon api-web-server
             compose up -d web-gui
             ;;
         disable:indexer)
@@ -371,10 +380,17 @@ main_loop() {
 
 # A crash mid-apply strands "<service>.req.lock" (invisible to both the scan
 # glob and the web side's pending check). On startup, hand them back for a
-# fresh pass — every action is idempotent, so a retry converges.
+# fresh pass — every action is idempotent, so a retry converges. A newer
+# request queued while the sidecar was down wins: the stranded lock is
+# archived instead, otherwise the recovery would clobber it.
 recover_stale_locks() {
     for l in "$REQUESTS_DIR"/*.req.lock; do
         [ -e "$l" ] || return 0
+        if [ -e "${l%.lock}" ]; then
+            log "stale lock $(basename "$l") loses to a newer request; archiving"
+            mv "$l" "$l.expired"
+            continue
+        fi
         log "recovering interrupted request: $(basename "$l")"
         mv "$l" "${l%.lock}"
     done
