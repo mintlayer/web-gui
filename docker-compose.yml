@@ -97,6 +97,10 @@ services:
       - "./mintlayer-data/prefs:/app/prefs"
       # Installed plugins — persists across restarts
       - "./mintlayer-data/plugins:/app/plugins"
+      # Optional-service enable/disable requests handed to the feature-enabler
+      # sidecar (see its service below). The app writes <service>.req files;
+      # the agent consumes them and writes <service>.result status back.
+      - "feature-requests:/config/feature-requests"
       # Public part of Caddy's local CA (root.crt only — never the PKI keys).
       # The caddy container exports the root into this volume; see its
       # command wrapper below.
@@ -156,8 +160,11 @@ services:
       - "-rpcallowip=0.0.0.0/0"
       - "-rpcuser=${BITCOIN_RPC_USERNAME}"
       - "-rpcpassword=${BITCOIN_RPC_PASSWORD}"
-      # txindex is required by the BDK wallet to resolve historical
-      # transactions; pruning is incompatible with the wallet history sync.
+      # Full node (BITCOIN_PRUNE=0, BITCOIN_TXINDEX=1): complete history —
+      # restoring an old seed rescans everything. Pruned mode (BITCOIN_PRUNE=550,
+      # BITCOIN_TXINDEX=0) serves fresh wallets normally (balance/receive/send)
+      # but cannot rescan history it no longer stores: restores of old seeds are
+      # refused by the bdk-wallet sidecar instead of silently missing coins.
       - "-txindex=${BITCOIN_TXINDEX:-1}"
       - "-prune=${BITCOIN_PRUNE:-0}"
       - "-fallbackfee=0.0002"
@@ -243,6 +250,39 @@ services:
       WATCHTOWER_NOTIFICATION_URL: "${WATCHTOWER_NOTIFICATION_URL:-}"
     profiles:
       - watchtower
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────
+  # Optional services enabler — lets the Settings page start/stop the bitcoin
+  # and indexer profiles without exposing the Docker socket to the web app.
+  # The web-gui drops a validated <service>.req request into the shared
+  # feature-requests volume; this agent applies one of a FIXED set of compose
+  # actions (enable/disable bitcoin/indexer) and writes <service>.result.
+  # It needs the Docker socket (like watchtower). The project directory is
+  # mounted READ-ONLY at its real host path (PROJECT_DIR_HOST, written by
+  # init.sh/dev-env) so compose resolves the project name and every relative
+  # bind mount exactly like a host-run compose would; only .env is writable
+  # (nested rw mount) for the single-line flag updates. It never reads
+  # secrets from .env into logs and never runs anything from the request
+  # files. Disable this service if you prefer CLI-only management
+  # (docker compose --profile bitcoin up -d).
+  # ─────────────────────────────────────────
+  feature-enabler:
+    image: "docker:27-cli"
+    entrypoint: ["/enabler.sh"]
+    command: ["--watch"]
+    volumes:
+      - "${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock"
+      - "./feature-enabler/enabler.sh:/enabler.sh:ro"
+      - ".:${PROJECT_DIR_HOST:?}"
+      - "./.env:${PROJECT_DIR_HOST:?}/.env"
+      - "feature-requests:/requests"
+    environment:
+      PROJECT_DIR: "${PROJECT_DIR_HOST:?}"
+      ENV_FILE: "${PROJECT_DIR_HOST:?}/.env"
+      COMPOSE_FILES: "${COMPOSE_FILES:-docker-compose.yml}"
+      REQUESTS_DIR: "/requests"
+      POLL_SECS: "${FEATURE_ENABLER_POLL_SECS:-5}"
     restart: unless-stopped
 
   # ─────────────────────────────────────────
@@ -383,3 +423,4 @@ volumes:
   caddy-data:
   caddy-config:
   ca-public:
+  feature-requests:

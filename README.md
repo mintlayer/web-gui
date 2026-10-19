@@ -173,6 +173,14 @@ Adds a Bitcoin Core node and a built-in BTC wallet (balance, receive, send) to t
 docker compose --profile bitcoin up -d      # or: make bitcoin
 ```
 
+You can also start/stop both optional stacks (Bitcoin and indexer) from the web UI under
+**Settings → Optional services** (2FA-protected): the UI writes a request to a shared volume
+and the `feature-enabler` sidecar applies a fixed set of compose actions and recreates the web
+container. It is the only container besides watchtower with a Docker socket; remove the
+`feature-enabler` service from `docker-compose.yml` if you prefer CLI-only management. Dev
+stacks must set `COMPOSE_FILES=docker-compose.yml:docker-compose.dev.yml` so the enabler
+applies the same file set the stack runs with (see `env.dev.example`).
+
 How it works:
 
 - **`bitcoind`** provides chain data and broadcasts transactions. It needs no host ports.
