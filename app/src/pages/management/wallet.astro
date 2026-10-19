@@ -61,6 +61,9 @@ let actionError: string | null = null;
 let isLocked: boolean | null = null;
 let isStaking = false;
 let lookaheadSize: number = getPref<number>('wallet.lookahead_size') ?? 20;
+// Advanced cards (file backup, key lock, lookahead, seed import) only render
+// when this preference is on — see the toggle next to the page title.
+let advancedUi = getPref<boolean>('ml_advanced_ui') === true;
 
 // Load wallet info and staking status
 try {
@@ -76,6 +79,14 @@ try {
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
   const action = (form.get('action') as string | null) ?? '';
+
+  // Handled outside the try below on purpose: the toggle works even when the
+  // wallet daemon is unreachable, and no RPC action matches this name.
+  if (action === 'toggle_advanced') {
+    advancedUi = !advancedUi;
+    setPref('ml_advanced_ui', advancedUi);
+    return Astro.redirect('/management/wallet', 303);
+  }
 
   try {
     if (action === 'show_seed') {
@@ -170,7 +181,25 @@ Astro.response.headers.set('Cache-Control', 'no-store');
 ---
 
 <ManagementLayout title="Wallet" activeTab="wallet">
-  <h1 class="text-2xl font-bold text-gray-100 mb-6">Wallet</h1>
+  <div class="flex items-center justify-between gap-4 mb-6">
+    <h1 class="text-2xl font-bold text-gray-100">Wallet</h1>
+    <form method="POST" class="flex items-center gap-2">
+      <button
+        type="submit"
+        name="action"
+        value="toggle_advanced"
+        aria-pressed={advancedUi ? 'true' : 'false'}
+        title="Show advanced wallet management"
+        class={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+          advancedUi
+            ? 'border-mint-600 bg-mint-950/50 text-mint-300 hover:bg-mint-900/50'
+            : 'border-gray-700 text-gray-400 hover:bg-gray-800 hover:text-gray-200'
+        }`}
+      >
+        Advanced
+      </button>
+    </form>
+  </div>
 
   <!-- Wallet info -->
   {infoError && (
@@ -325,6 +354,7 @@ Astro.response.headers.set('Cache-Control', 'no-store');
     </div>
 
     <!-- Wallet file backup -->
+    {advancedUi && (
     <div class="rounded-xl border border-gray-800 bg-gray-900 p-5">
       <h2 class="text-sm font-medium text-gray-200 mb-1">Wallet File Backup</h2>
       <p class="text-xs text-gray-500 mb-3">
@@ -350,6 +380,7 @@ Astro.response.headers.set('Cache-Control', 'no-store');
         Download backup
       </a>
     </div>
+    )}
 
     <!-- Wallet session: close / reopen -->
     <div class="rounded-xl border border-gray-800 bg-gray-900 p-5">
@@ -380,6 +411,7 @@ Astro.response.headers.set('Cache-Control', 'no-store');
     </div>
 
     <!-- Lock / unlock private keys -->
+    {advancedUi && (
     <div class="rounded-xl border border-gray-800 bg-gray-900 p-5">
       <h2 class="text-sm font-medium text-gray-200 mb-1">Private Keys</h2>
       <p class="text-xs text-gray-500 mb-4">
@@ -424,8 +456,10 @@ Astro.response.headers.set('Cache-Control', 'no-store');
         </form>
       )}
     </div>
+    )}
 
     <!-- Set lookahead size -->
+    {advancedUi && (
     <div class="rounded-xl border border-gray-800 bg-gray-900 p-5">
       <h2 class="text-sm font-medium text-gray-200 mb-1">Lookahead Size</h2>
       <p class="text-xs text-gray-500 mb-4">
@@ -450,9 +484,11 @@ Astro.response.headers.set('Cache-Control', 'no-store');
         </button>
       </form>
     </div>
+    )}
   </div>
 
   <!-- Import from Seed — full-width danger section -->
+  {advancedUi && (
   <div class="mt-6 rounded-xl border border-red-800 bg-gray-900 p-5">
     <h2 class="text-sm font-medium text-red-400 mb-3 flex items-center gap-2">
       <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -549,6 +585,7 @@ Astro.response.headers.set('Cache-Control', 'no-store');
       </button>
     </form>
   </div>
+  )}
 </ManagementLayout>
 
 <script>
