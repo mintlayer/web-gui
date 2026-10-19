@@ -852,6 +852,13 @@ ML_API_WEB_SERVER_IMAGE=ghcr.io/mintlayer/web-gui/api-web-server:${IMAGE_TAG}
 # compose up' runs start the same set as the installer did (without this,
 # the indexer/bitcoin/watchtower/web services silently vanish on the next run).
 COMPOSE_PROFILES=${COMPOSE_PROFILES_LINE}
+
+# Absolute path of this install directory. The feature-enabler sidecar mounts
+# the project at the SAME path inside its container and passes it to
+# 'docker compose --project-directory' — identical paths keep the compose
+# project name and every relative bind mount resolving to this directory on
+# the host (a mismatched path would build a phantom duplicate stack).
+PROJECT_DIR_HOST=$(pwd)
 EOF
 )
 chmod 600 .env 2>/dev/null || true

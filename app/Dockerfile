@@ -48,6 +48,13 @@ COPY --from=builder --chown=app:app /app/package.json   ./package.json
 COPY --from=builder --chown=app:app /app/scripts        ./scripts
 COPY --from=prod-deps --chown=app:app /app/node_modules ./node_modules
 
+# Writable request drop-box for the feature-enabler sidecar. The named volume
+# copies this directory's ownership on first use — without it the volume would
+# initialize root-owned and the app could not write its request files.
+USER root
+RUN install -d -o app -g app /config/feature-requests
+USER app
+
 ENV HOST=0.0.0.0
 ENV PORT=4321
 EXPOSE 4321

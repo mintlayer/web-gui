@@ -9,6 +9,7 @@ import { getCredentials, saveCredentials, isValidRpId, getRpId } from '@/lib/pas
 import { resolveMcpSettings } from '@/lib/mcp-settings';
 import { resolvePasswordChange, applyPasswordChange } from '@/lib/password-change';
 import { isBitcoinEnabled } from '@/lib/bitcoin-wallet';
+import { isFeatureEnablerAvailable, isRequestPending, readFeatureResult } from '@/lib/feature-requests';
 import { ROOT_CA_PATH, DOWNLOAD_FILENAME } from '@/lib/https-ca';
 
 type ActionResult =
@@ -248,6 +249,12 @@ const passkeysSupported = isValidRpId(passkeyRpId);
 // Bitcoin section (only when the optional profile is enabled)
 const bitcoinEnabled = isBitcoinEnabled();
 const bitcoinShowUi = bitcoinEnabled && getPref<boolean>('bitcoin.show_ui') !== false;
+const featureEnablerAvailable = await isFeatureEnablerAvailable();
+const indexerEnabled = process.env.INDEXER_ENABLED === 'true';
+const bitcoinServicePending = await isRequestPending('bitcoin');
+const indexerServicePending = await isRequestPending('indexer');
+const bitcoinServiceResult = await readFeatureResult('bitcoin');
+const indexerServiceResult = await readFeatureResult('indexer');
 
 // HTTPS (LAN access via Caddy's local CA). The CA root appears only after
 // the caddy container has started at least once (it generates the root on
@@ -620,6 +627,376 @@ if (localCaPem) {
         }
 
         select.addEventListener('change', updateFields);
+      </script>
+    </section>
+
+    <!-- ── Optional services ─────────────────────────────────────────────────── -->
+    <section class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+      <h2 id="optional-services" class="text-lg font-semibold text-gray-100 mb-1">Optional services</h2>
+      <p class="text-sm text-gray-500 mb-5">
+        Start or stop the Bitcoin and Indexer services from this interface. Service data is kept on
+        the host and survives restarts; the interface itself restarts when a change is applied.
+      </p>
+
+      {!featureEnablerAvailable && (
+        <div class="mb-1 px-3 py-2 rounded-lg border border-gray-700 bg-gray-800/40 text-gray-400 text-sm">
+          Service control is not available in this deployment. Manage services from the host with
+          <code class="font-mono text-xs">docker compose --profile bitcoin up -d</code> and
+          <code class="font-mono text-xs">docker compose --profile indexer up -d</code>.
+        </div>
+      )}
+
+      {featureEnablerAvailable && (
+        <div class="space-y-4" data-testid="service-controls">
+          <div class="rounded-lg border border-gray-800 bg-gray-800/40 p-4" data-service="bitcoin">
+            <div class="flex items-start justify-between gap-4 mb-3">
+              <div>
+                <h3 class="text-sm font-medium text-gray-100">Bitcoin</h3>
+                <p class="text-xs text-gray-500 mt-0.5">A Bitcoin node with a wallet derived from your Mintlayer seed.</p>
+              </div>
+              <span
+                class={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${
+                  bitcoinEnabled ? 'border-emerald-800 bg-emerald-950/50 text-emerald-300' : 'border-gray-700 bg-gray-800 text-gray-400'
+                }`}
+              >
+                {bitcoinEnabled ? 'Enabled' : 'Disabled'}
+              </span>
+            </div>
+            <div
+              id="svc-bitcoin-note"
+              class={`text-xs mb-3 ${!bitcoinServicePending && bitcoinServiceResult && !bitcoinServiceResult.ok ? 'text-red-400' : 'text-gray-400'}`}
+            >
+              {bitcoinServicePending && 'A start/stop request is being applied — reload this page in a minute.'}
+              {!bitcoinServicePending && bitcoinServiceResult && !bitcoinServiceResult.ok && bitcoinServiceResult.error}
+            </div>
+            {!bitcoinEnabled && (
+              <div>
+                <button id="svc-bitcoin-toggle" type="button" data-testid="enable-bitcoin"
+                  class="py-1.5 px-3 rounded-lg border border-mint-600 text-mint-300 hover:bg-mint-950/50 text-sm font-medium transition-colors"
+                >
+                  Enable Bitcoin…
+                </button>
+                <form id="svc-bitcoin-form" data-action="enable" class="hidden mt-3 space-y-3 max-w-md" novalidate>
+                  <div>
+                    <label class="block text-xs text-gray-400 mb-1" for="svc-bitcoin-network">Network</label>
+                    <select
+                      id="svc-bitcoin-network"
+                      class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 text-sm focus:outline-none focus:ring-2 focus:ring-mint-600 focus:border-transparent transition"
+                    >
+                      <option value="mainnet">mainnet</option>
+                      <option value="testnet">testnet</option>
+                      <option value="regtest">regtest</option>
+                    </select>
+                  </div>
+                  <label class="flex items-center gap-3 cursor-pointer group">
+                    <input
+                      id="svc-bitcoin-pruned" type="checkbox" checked
+                      class="w-4 h-4 rounded border-gray-600 bg-gray-800 text-mint-600
+                             focus:ring-mint-500 focus:ring-offset-gray-900"
+                    />
+                    <span class="text-sm text-gray-300 group-hover:text-gray-100 transition-colors">
+                      Pruned node — keeps only recent blocks (~55 GB instead of ~700 GB).
+                      Wallets created from now work normally; restoring an old seed needs a full node.
+                    </span>
+                  </label>
+                  <p class="text-xs text-yellow-500/90">
+                    The initial download copies the whole blockchain and can run for hours to days.
+                    Make sure the host has enough disk space.
+                  </p>
+                  <div>
+                    <label class="block text-xs text-gray-400 mb-1" for="svc-bitcoin-totp">2FA code</label>
+                    <input
+                      id="svc-bitcoin-totp" name="totp_code" type="text" required
+                      inputmode="numeric" maxlength="6" pattern="[0-9]{6}" placeholder="000000"
+                      autocomplete="one-time-code"
+                      class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 text-sm
+                             placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-mint-600 focus:border-transparent
+                             tracking-[0.4em] text-center font-mono transition"
+                    />
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <button type="submit"
+                      class="py-2 px-4 rounded-lg bg-mint-600 hover:bg-mint-700 text-white text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-mint-500 focus:ring-offset-2 focus:ring-offset-gray-900"
+                    >
+                      Start Bitcoin
+                    </button>
+                    <button type="button"
+                      class="py-2 px-4 rounded-lg border border-gray-700 text-gray-300 hover:bg-gray-800 text-sm transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+            {bitcoinEnabled && (
+              <div>
+                <button id="svc-bitcoin-toggle" type="button" data-testid="disable-bitcoin"
+                  class="py-1.5 px-3 rounded-lg border border-gray-700 text-gray-300 hover:bg-gray-800 hover:text-red-300 text-sm font-medium transition-colors"
+                >
+                  Stop Bitcoin…
+                </button>
+                <form id="svc-bitcoin-form" data-action="disable" class="hidden mt-3 space-y-3 max-w-md" novalidate>
+                  <p class="text-xs text-yellow-500/90">
+                    The Bitcoin node and its wallet stop. Wallet data stays on disk; the Bitcoin page
+                    leaves the sidebar until the service is started again.
+                  </p>
+                  <div>
+                    <label class="block text-xs text-gray-400 mb-1" for="svc-bitcoin-totp-disable">2FA code</label>
+                    <input
+                      id="svc-bitcoin-totp-disable" name="totp_code" type="text" required
+                      inputmode="numeric" maxlength="6" pattern="[0-9]{6}" placeholder="000000"
+                      autocomplete="one-time-code"
+                      class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 text-sm
+                             placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-mint-600 focus:border-transparent
+                             tracking-[0.4em] text-center font-mono transition"
+                    />
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <button type="submit"
+                      class="py-2 px-4 rounded-lg bg-red-800 hover:bg-red-700 text-white text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-red-600 focus:ring-offset-2 focus:ring-offset-gray-900"
+                    >
+                      Stop Bitcoin
+                    </button>
+                    <button type="button"
+                      class="py-2 px-4 rounded-lg border border-gray-700 text-gray-300 hover:bg-gray-800 text-sm transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+          </div>
+
+          <div class="rounded-lg border border-gray-800 bg-gray-800/40 p-4" data-service="indexer">
+            <div class="flex items-start justify-between gap-4 mb-3">
+              <div>
+                <h3 class="text-sm font-medium text-gray-100">Indexer</h3>
+                <p class="text-xs text-gray-500 mt-0.5">Fast lookups of addresses, tokens and pools for the Trading and Token pages.</p>
+              </div>
+              <span
+                class={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${
+                  indexerEnabled ? 'border-emerald-800 bg-emerald-950/50 text-emerald-300' : 'border-gray-700 bg-gray-800 text-gray-400'
+                }`}
+              >
+                {indexerEnabled ? 'Enabled' : 'Disabled'}
+              </span>
+            </div>
+            <div
+              id="svc-indexer-note"
+              class={`text-xs mb-3 ${!indexerServicePending && indexerServiceResult && !indexerServiceResult.ok ? 'text-red-400' : 'text-gray-400'}`}
+            >
+              {indexerServicePending && 'A start/stop request is being applied — reload this page in a minute.'}
+              {!indexerServicePending && indexerServiceResult && !indexerServiceResult.ok && indexerServiceResult.error}
+            </div>
+            {!indexerEnabled && (
+              <div>
+                <button id="svc-indexer-toggle" type="button" data-testid="enable-indexer"
+                  class="py-1.5 px-3 rounded-lg border border-mint-600 text-mint-300 hover:bg-mint-950/50 text-sm font-medium transition-colors"
+                >
+                  Enable Indexer…
+                </button>
+                <form id="svc-indexer-form" data-action="enable" class="hidden mt-3 space-y-3 max-w-md" novalidate>
+                  <p class="text-xs text-yellow-500/90">
+                    The indexer builds its own copy of chain data and follows the network from then
+                    on. The first build can take a while and uses disk space.
+                  </p>
+                  <div>
+                    <label class="block text-xs text-gray-400 mb-1" for="svc-indexer-totp">2FA code</label>
+                    <input
+                      id="svc-indexer-totp" name="totp_code" type="text" required
+                      inputmode="numeric" maxlength="6" pattern="[0-9]{6}" placeholder="000000"
+                      autocomplete="one-time-code"
+                      class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 text-sm
+                             placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-mint-600 focus:border-transparent
+                             tracking-[0.4em] text-center font-mono transition"
+                    />
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <button type="submit"
+                      class="py-2 px-4 rounded-lg bg-mint-600 hover:bg-mint-700 text-white text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-mint-500 focus:ring-offset-2 focus:ring-offset-gray-900"
+                    >
+                      Start Indexer
+                    </button>
+                    <button type="button"
+                      class="py-2 px-4 rounded-lg border border-gray-700 text-gray-300 hover:bg-gray-800 text-sm transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+            {indexerEnabled && (
+              <div>
+                <button id="svc-indexer-toggle" type="button" data-testid="disable-indexer"
+                  class="py-1.5 px-3 rounded-lg border border-gray-700 text-gray-300 hover:bg-gray-800 hover:text-red-300 text-sm font-medium transition-colors"
+                >
+                  Stop Indexer…
+                </button>
+                <form id="svc-indexer-form" data-action="disable" class="hidden mt-3 space-y-3 max-w-md" novalidate>
+                  <p class="text-xs text-yellow-500/90">
+                    The indexer stops and pages that rely on live lookups lose fresh data until it is
+                    started again. Its database is kept on disk.
+                  </p>
+                  <div>
+                    <label class="block text-xs text-gray-400 mb-1" for="svc-indexer-totp-disable">2FA code</label>
+                    <input
+                      id="svc-indexer-totp-disable" name="totp_code" type="text" required
+                      inputmode="numeric" maxlength="6" pattern="[0-9]{6}" placeholder="000000"
+                      autocomplete="one-time-code"
+                      class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 text-sm
+                             placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-mint-600 focus:border-transparent
+                             tracking-[0.4em] text-center font-mono transition"
+                    />
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <button type="submit"
+                      class="py-2 px-4 rounded-lg bg-red-800 hover:bg-red-700 text-white text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-red-600 focus:ring-offset-2 focus:ring-offset-gray-900"
+                    >
+                      Stop Indexer
+                    </button>
+                    <button type="button"
+                      class="py-2 px-4 rounded-lg border border-gray-700 text-gray-300 hover:bg-gray-800 text-sm transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      <script>
+        type FeatureStatus = {
+          ok: boolean;
+          available: boolean;
+          services: Record<
+            string,
+            { enabled: boolean; pending: boolean; lastResult: { ok: boolean; error?: string; at: number | null } | null }
+          >;
+        };
+
+        const POLL_MS = 4000;
+        const POLL_MAX_MS = 12 * 60 * 1000;
+
+        function setNote(svc: string, text: string, tone: 'info' | 'error') {
+          const el = document.getElementById(`svc-${svc}-note`);
+          if (!el) return;
+          el.textContent = text;
+          el.className = `text-xs mb-3 ${tone === 'error' ? 'text-red-400' : 'text-gray-400'}`;
+        }
+
+        async function postFeatureRequest(
+          svc: string,
+          action: 'enable' | 'disable',
+          totp: string
+        ): Promise<{ ok: boolean; error?: string }> {
+          const body: Record<string, unknown> = { service: svc, totp_code: totp };
+          if (svc === 'bitcoin' && action === 'enable') {
+            const network = document.getElementById('svc-bitcoin-network') as HTMLSelectElement | null;
+            const pruned = document.getElementById('svc-bitcoin-pruned') as HTMLInputElement | null;
+            body.network = network?.value ?? 'mainnet';
+            body.pruned = pruned?.checked ?? true;
+          }
+          try {
+            const res = await fetch(`/api/features/${action}`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify(body),
+            });
+            if (res.status === 202) return { ok: true };
+            let message = `Request failed (${res.status})`;
+            try {
+              const data = await res.json();
+              if (data && typeof data.error === 'string') message = data.error;
+            } catch {
+              /* keep default message */
+            }
+            return { ok: false, error: message };
+          } catch {
+            return { ok: false, error: 'Network error while sending the request.' };
+          }
+        }
+
+        function watchRequest(svc: string) {
+          const startedAt = Date.now();
+          let failures = 0;
+          const timer = window.setInterval(async () => {
+            if (Date.now() - startedAt > POLL_MAX_MS) {
+              window.clearInterval(timer);
+              setNote(svc, 'Still applying — reload this page to check the current state.', 'info');
+              return;
+            }
+            try {
+              const res = await fetch('/api/features/status');
+              failures = 0;
+              const data = (await res.json()) as FeatureStatus;
+              const state = data.services?.[svc];
+              if (!state) return;
+              if (state.pending) {
+                setNote(svc, 'Applying — containers are starting. This can take several minutes.', 'info');
+                return;
+              }
+              // A result older than this request (minus clock-skew slack) means
+              // the sidecar has not reported yet — keep waiting, do not reload.
+              const fresh = state.lastResult && state.lastResult.at !== null && state.lastResult.at >= startedAt - 60_000;
+              if (!fresh) {
+                setNote(svc, 'Applying — the interface restarts when it finishes. Reload this page in a minute if nothing happens.', 'info');
+                return;
+              }
+              window.clearInterval(timer);
+              if (!state.lastResult.ok) {
+                setNote(svc, state.lastResult.error ?? 'The last request failed.', 'error');
+                document.getElementById(`svc-${svc}-toggle`)?.removeAttribute('disabled');
+                return;
+              }
+              window.location.reload();
+            } catch {
+              failures += 1;
+              if (failures >= 3) {
+                window.clearInterval(timer);
+                setNote(svc, 'The interface is restarting with the new settings — reload this page in a minute.', 'info');
+              }
+            }
+          }, POLL_MS);
+        }
+
+        for (const svc of ['bitcoin', 'indexer'] as const) {
+          const toggle = document.getElementById(`svc-${svc}-toggle`) as HTMLButtonElement | null;
+          const form = document.getElementById(`svc-${svc}-form`) as HTMLFormElement | null;
+          if (!toggle || !form) continue;
+
+          toggle.addEventListener('click', () => form.classList.toggle('hidden'));
+          const cancel = form.querySelector<HTMLButtonElement>('button[type="button"]');
+          cancel?.addEventListener('click', () => form.classList.add('hidden'));
+
+          form.addEventListener('submit', async (ev) => {
+            ev.preventDefault();
+            const action = form.dataset.action === 'disable' ? 'disable' : 'enable';
+            const totpInput = form.querySelector<HTMLInputElement>('input[name="totp_code"]');
+            const totp = (totpInput?.value ?? '').trim();
+            if (!/^[0-9]{6}$/.test(totp)) {
+              setNote(svc, 'Enter your 6-digit 2FA code.', 'error');
+              return;
+            }
+            toggle.disabled = true;
+            form.classList.add('hidden');
+            setNote(svc, 'Sending request…', 'info');
+            const outcome = await postFeatureRequest(svc, action, totp);
+            if (!outcome.ok) {
+              setNote(svc, outcome.error ?? 'Request failed.', 'error');
+              toggle.disabled = false;
+              if (totpInput) totpInput.value = '';
+              return;
+            }
+            setNote(svc, 'Request accepted — applying. This can take several minutes.', 'info');
+            watchRequest(svc);
+          });
+        }
       </script>
     </section>
 

@@ -38,6 +38,9 @@ jobs:
           SESSION_SECRET: 'ci-test-secret-that-is-at-least-32-chars-long'
           WALLET_RPC_URL: 'http://127.0.0.1:19999'
 
+      - name: Run feature-enabler shell tests
+        run: npm run test:enabler
+
       - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@v7
