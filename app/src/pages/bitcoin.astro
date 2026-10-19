@@ -7,6 +7,8 @@ import { getPref } from '@/lib/prefs-db';
 const enabled = isBitcoinEnabled();
 // Server-side hide switch (Settings → Bitcoin). Defaults to visible.
 const hiddenByPref = getPref<boolean>('bitcoin.show_ui') === false;
+// Advanced cards (restore from a different seed / independent wallet).
+const advancedUi = getPref<boolean>('ml_advanced_ui') === true;
 
 if (!enabled || hiddenByPref) {
   return Astro.redirect('/');
@@ -19,5 +21,5 @@ const explorerUrl = getBitcoinExplorerUrl();
   <p class="text-sm text-gray-500 mb-6">
     Send and receive BTC alongside your Mintlayer wallet. Backed by your own Bitcoin node.
   </p>
-  <BitcoinWallet client:only="react" explorerUrl={explorerUrl} />
+  <BitcoinWallet client:only="react" explorerUrl={explorerUrl} advancedUi={advancedUi} />
 </Layout>

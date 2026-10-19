@@ -62,7 +62,7 @@ const primaryBtn = 'rounded-lg bg-mint-700 hover:bg-mint-600 px-4 py-2 text-sm f
 const totpInput = `${input} max-w-[8rem] tracking-[0.3em] text-center`;
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | null }) {
+export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { explorerUrl?: string | null; advancedUi?: boolean }) {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -75,6 +75,9 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
   const [setupTotp, setSetupTotp] = useState('');
   const [restoreOpen, setRestoreOpen] = useState(false);
   const [restoreSeed, setRestoreSeed] = useState('');
+  // Destructive-action gate: the submit stays disabled until the user types
+  // the confirmation phrase — restoring replaces the current BTC wallet.
+  const [restoreConfirm, setRestoreConfirm] = useState('');
   const [setupError, setSetupError] = useState<string | null>(null);
 
   // Link to the Mintlayer seed (server-side reveal — words never transit the browser)
@@ -140,6 +143,7 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
       setRestoreOpen(false);
       setRestoreSeed('');
       setSetupTotp('');
+      setRestoreConfirm('');
       // Restores return no mnemonic — only a fresh generate shows the backup step.
       setNewMnemonic(res.mnemonic ?? null);
       await refresh();
@@ -178,6 +182,8 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
 
   function submitRestore(e: React.FormEvent) {
     e.preventDefault();
+    // Mirror of the disabled-attr gate — requestSubmit() from script bypasses it.
+    if (restoreConfirm !== 'I UNDERSTAND') return;
     const seed = cleanSeed(restoreSeed);
     const words = seed.split(/\s+/).filter(Boolean);
     if (words.length !== 12 && words.length !== 24) {
@@ -193,6 +199,7 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
       if (e.key === 'Escape') {
         setRestoreOpen(false);
         setSetupError(null);
+        setRestoreConfirm('');
         // Shared with the create flow below — clear so a burned code from the
         // modal never lingers in the inline create form.
         setSetupTotp('');
@@ -447,13 +454,14 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
           </p>
         </div>
 
+        {advancedUi && (
         <div className={card}>
           <h2 className="text-base font-semibold text-gray-100 mb-2">Or restore from a different seed</h2>
           <p className="text-sm text-gray-400 mb-4">
             Use a <span className="text-gray-200 font-medium">different 12 or 24-word seed phrase</span> for the BTC wallet.
             The words are then stored by the BTC sidecar on this machine.
           </p>
-          <button onClick={() => { setRestoreOpen(true); setSetupError(null); }} disabled={busy} className={`${primaryBtn} mb-4`}>
+          <button onClick={() => { setRestoreOpen(true); setSetupError(null); setRestoreConfirm(''); }} disabled={busy} className={`${primaryBtn} mb-4`}>
             Restore from seed
           </button>
           <div className="rounded-lg border border-yellow-700/50 bg-yellow-900/10 px-3 py-2.5">
@@ -468,6 +476,7 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
           </div>
           {setupError && <p className="mt-2 text-sm text-red-400">{setupError}</p>}
         </div>
+        )}
         </div>
       )}
 
@@ -498,6 +507,7 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
               setRestoreOpen(false);
               setSetupError(null);
               setSetupTotp('');
+              setRestoreConfirm('');
             }
           }}
         >
@@ -536,14 +546,28 @@ export default function BitcoinWallet({ explorerUrl }: { explorerUrl?: string | 
                   className={totpInput}
                 />
               </div>
+              <div>
+                <label htmlFor="btc-restore-confirm" className="block text-xs text-gray-400 mb-1">
+                  Type <span className="font-mono font-semibold text-red-400">I UNDERSTAND</span> — restoring replaces the current BTC wallet
+                </label>
+                <input
+                  id="btc-restore-confirm"
+                  value={restoreConfirm}
+                  onChange={(e) => setRestoreConfirm(e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="I UNDERSTAND"
+                  className={input}
+                />
+              </div>
               {setupError && <p className="text-sm text-red-400">{setupError}</p>}
               <div className="flex gap-2 pt-1">
-                <button type="submit" disabled={busy} className={primaryBtn}>
+                <button type="submit" disabled={busy || restoreConfirm !== 'I UNDERSTAND'} className={primaryBtn}>
                   {busy ? 'Restoring…' : 'Restore wallet'}
                 </button>
                 <button
                   type="button"
-                  onClick={() => { setRestoreOpen(false); setSetupError(null); }}
+                  onClick={() => { setRestoreOpen(false); setSetupError(null); setRestoreConfirm(''); }}
                   disabled={busy}
                   className="rounded-lg border border-gray-700 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 transition-colors disabled:opacity-50"
                 >
