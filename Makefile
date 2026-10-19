@@ -68,6 +68,7 @@ dev-env:
 		printf 'SESSION_SECRET=%s\n' "$$secret" >> .env.dev; \
 		printf 'ML_USER_ID=%s\nML_GROUP_ID=%s\n' "$$(id -u)" "$$(id -g)" >> .env.dev; \
 		printf 'PROJECT_DIR_HOST=%s\n' "$$PWD" >> .env.dev; \
+		printf 'ENV_FILE_HOST=%s/.env.dev\n' "$$PWD" >> .env.dev; \
 		echo "Generated .env.dev with dev credentials and a fresh SESSION_SECRET."; \
 	fi
 	@mkdir -p mintlayer-data/prefs && chmod 0777 mintlayer-data/prefs

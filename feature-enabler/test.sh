@@ -53,6 +53,7 @@ envhas BITCOIN_PRUNE 550 || fail "BITCOIN_PRUNE not pruned-default (case 1)"
 envhas BITCOIN_TXINDEX 0 || fail "BITCOIN_TXINDEX not pruned-default (case 1)"
 grep -q 'up -d' "$DOCKER_LOG" || fail "compose up not called (case 1)"
 grep -q -- '--profile bitcoin' "$DOCKER_LOG" || fail "profile flag missing (case 1)"
+grep -q -- 'up -d bitcoind btc-explorer bdk-wallet' "$DOCKER_LOG" || fail "explicit bitcoin service list missing (case 1)"
 grep -q '"ok":true' "$REQ/bitcoin.result" || fail "ok result missing (case 1)"
 [ ! -e "$REQ/bitcoin.req" ] && [ ! -e "$REQ/bitcoin.req.lock" ] || fail "request not consumed (case 1)"
 grep -q 'SESSION_SECRET=secret-do-not-touch' "$PROJ/.env" || fail ".env secrets damaged (case 1)"
@@ -103,6 +104,7 @@ req indexer.req '{"action":"enable","service":"indexer"}'
 run_enabler || fail "enabler exited non-zero (case 6)"
 envhas INDEXER_ENABLED true || fail "INDEXER_ENABLED not set (case 6)"
 grep -q -- '--profile indexer' "$DOCKER_LOG" || fail "indexer profile missing (case 6)"
+grep -q -- 'up -d postgres api-blockchain-scanner-daemon api-web-server' "$DOCKER_LOG" || fail "explicit indexer service list missing (case 6)"
 : > "$DOCKER_LOG"
 req indexer.req '{"action":"disable","service":"indexer"}'
 run_enabler || fail "enabler exited non-zero (case 7)"
@@ -146,6 +148,19 @@ run_enabler || fail "enabler exited non-zero (case 11)"
 [ -e "$REQ/bitcoin.req.lock" ] && fail "stale lock not recovered (case 11)"
 grep -q '"ok":true' "$REQ/bitcoin.result" || fail "recovered request not applied (case 11)"
 pass "stale lock recovered and applied"
+
+# 11. a request queued while the sidecar was down beats a stranded lock: the
+# lock is archived, the newer request is the one applied
+: > "$DOCKER_LOG"
+rm -f "$REQ/bitcoin.result"
+printf '%s\n' '{"action":"enable","service":"bitcoin","network":"mainnet"}' > "$REQ/bitcoin.req.lock"
+printf '%s\n' '{"action":"disable","service":"bitcoin"}' > "$REQ/bitcoin.req"
+run_enabler || fail "enabler exited non-zero (case 11b)"
+[ -e "$REQ/bitcoin.req.lock" ] && fail "stale lock not archived (case 11b)"
+[ -e "$REQ/bitcoin.req.lock.expired" ] || fail "stale lock not archived as expired (case 11b)"
+[ -e "$REQ/bitcoin.req" ] && fail "newer request clobbered by stale lock (case 11b)"
+grep -q 'stop bitcoin' "$DOCKER_LOG" || fail "newer disable request not applied (case 11b)"
+pass "newer request wins over stranded lock"
 
 # 11. non-regular files in the watch dir are removed, not followed
 : > "$DOCKER_LOG"
