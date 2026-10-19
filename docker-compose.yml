@@ -275,11 +275,11 @@ services:
       - "${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock"
       - "./feature-enabler/enabler.sh:/enabler.sh:ro"
       - ".:${PROJECT_DIR_HOST:?}:ro"
-      - "./.env:${PROJECT_DIR_HOST:?}/.env"
+      - "${ENV_FILE_HOST:-${PROJECT_DIR_HOST:?}/.env}:${ENV_FILE_HOST:-${PROJECT_DIR_HOST:?}/.env}"
       - "feature-requests:/requests"
     environment:
       PROJECT_DIR: "${PROJECT_DIR_HOST:?}"
-      ENV_FILE: "${PROJECT_DIR_HOST:?}/.env"
+      ENV_FILE: "${ENV_FILE_HOST:-${PROJECT_DIR_HOST:?}/.env}"
       COMPOSE_FILES: "${COMPOSE_FILES:-docker-compose.yml}"
       REQUESTS_DIR: "/requests"
       POLL_SECS: "${FEATURE_ENABLER_POLL_SECS:-5}"

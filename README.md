@@ -178,8 +178,10 @@ You can also start/stop both optional stacks (Bitcoin and indexer) from the web 
 and the `feature-enabler` sidecar applies a fixed set of compose actions and recreates the web
 container. It is the only container besides watchtower with a Docker socket; remove the
 `feature-enabler` service from `docker-compose.yml` if you prefer CLI-only management. Dev
-stacks must set `COMPOSE_FILES=docker-compose.yml:docker-compose.dev.yml` so the enabler
-applies the same file set the stack runs with (see `env.dev.example`).
+stacks must set `COMPOSE_FILES=docker-compose.yml:docker-compose.dev.yml` and
+`ENV_FILE_HOST=<absolute path to .env.dev>` so the enabler applies the same files and
+reads the same variables the stack runs with (see `env.dev.example`; `make dev-env` writes
+both).
 
 How it works:
 

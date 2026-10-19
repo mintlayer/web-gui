@@ -49,10 +49,13 @@ COPY --from=builder --chown=app:app /app/scripts        ./scripts
 COPY --from=prod-deps --chown=app:app /app/node_modules ./node_modules
 
 # Writable request drop-box for the feature-enabler sidecar. The named volume
-# copies this directory's ownership on first use — without it the volume would
-# initialize root-owned and the app could not write its request files.
+# copies this directory's mode on first use — without it the volume would
+# initialize root-owned 0755 and the app could not write its request files.
+# World-writable because compose lets the operator run the container as any
+# uid (ML_USER_ID), so build-time ownership can never be guaranteed to match;
+# the files themselves land 0600 and the sidecar reads them as root.
 USER root
-RUN install -d -o app -g app /config/feature-requests
+RUN install -d -m 0777 /config/feature-requests
 USER app
 
 ENV HOST=0.0.0.0
