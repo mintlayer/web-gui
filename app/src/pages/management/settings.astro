@@ -10,6 +10,7 @@ import { resolveMcpSettings } from '@/lib/mcp-settings';
 import { resolvePasswordChange, applyPasswordChange } from '@/lib/password-change';
 import { isBitcoinEnabled } from '@/lib/bitcoin-wallet';
 import { isFeatureEnablerAvailable, isRequestPending, readFeatureResult } from '@/lib/feature-requests';
+import pkg from '../../../package.json';
 import { ROOT_CA_PATH, DOWNLOAD_FILENAME } from '@/lib/https-ca';
 
 type ActionResult =
@@ -255,6 +256,9 @@ const bitcoinServicePending = await isRequestPending('bitcoin');
 const indexerServicePending = await isRequestPending('indexer');
 const bitcoinServiceResult = await readFeatureResult('bitcoin');
 const indexerServiceResult = await readFeatureResult('indexer');
+const webGuiServicePending = await isRequestPending('web-gui');
+const webGuiServiceResult = await readFeatureResult('web-gui');
+const pkgVersion = pkg.version;
 
 // HTTPS (LAN access via Caddy's local CA). The CA root appears only after
 // the caddy container has started at least once (it generates the root on
@@ -627,6 +631,304 @@ if (localCaPem) {
         }
 
         select.addEventListener('change', updateFields);
+      </script>
+    </section>
+
+    <!-- ── Updates ───────────────────────────────────────────────────────────── -->
+    <section class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+      <h2 id="updates" class="text-lg font-semibold text-gray-100 mb-1">Updates</h2>
+      <p class="text-sm text-gray-500 mb-5">
+        Running Mintlayer Nexus <span class="font-mono text-gray-400">v{pkgVersion}</span>. Checks
+        happen from this instance against public release metadata only — no wallet or usage data
+        leaves the host. An upgrade pulls every container image before changing any setting and
+        restarts the stack; the interface is briefly unreachable at the end.
+      </p>
+
+      <div class="space-y-4 max-w-2xl">
+        <div class="rounded-lg border border-gray-800 bg-gray-800/40 p-4">
+          <div class="flex items-start justify-between gap-4 mb-2">
+            <div>
+              <h3 class="text-sm font-medium text-gray-100">Latest release</h3>
+              <p id="update-state" class="text-xs text-gray-500 mt-0.5" data-testid="update-state">Checking for updates…</p>
+            </div>
+            <button
+              id="update-upgrade-toggle" type="button" disabled
+              class="shrink-0 py-1.5 px-3 rounded-lg bg-mint-600 hover:bg-mint-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-medium transition-colors"
+              data-testid="upgrade-toggle"
+            >Upgrade…</button>
+          </div>
+          <p id="update-note" class="text-xs text-gray-400 mb-1"></p>
+          <form id="update-upgrade-form" class="hidden mt-3 space-y-3 max-w-md" novalidate>
+            <div>
+              <label class="block text-xs text-gray-400 mb-1" for="update-totp">2FA code</label>
+              <input
+                id="update-totp" name="totp_code" type="text" inputmode="numeric" autocomplete="one-time-code"
+                maxlength="6" placeholder="••••••"
+                class="w-full tracking-[0.4em] text-center bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-gray-100 placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-mint-600 focus:border-transparent transition"
+              />
+            </div>
+            <div class="flex items-center gap-2">
+              <button type="submit" class="py-1.5 px-3 rounded-lg bg-mint-600 hover:bg-mint-700 text-white text-xs font-medium transition-colors">Queue upgrade</button>
+              <button type="button" data-cancel class="py-1.5 px-3 rounded-lg border border-gray-700 hover:bg-gray-800 text-gray-300 text-xs font-medium transition-colors">Cancel</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="rounded-lg border border-gray-800 bg-gray-800/40 p-4">
+          <div class="flex items-start justify-between gap-4 mb-2">
+            <div>
+              <h3 class="text-sm font-medium text-gray-100">Automatic installs</h3>
+              <p class="text-xs text-gray-500 mt-0.5">When on, a newer release is applied on its own the next time this page checks. Off by default.</p>
+            </div>
+            <button
+              id="auto-toggle" type="button" aria-pressed="false"
+              class="shrink-0 py-1.5 px-3 rounded-lg border border-gray-700 hover:bg-gray-800 text-gray-300 text-xs font-medium transition-colors"
+              data-testid="auto-update-toggle"
+            >Off</button>
+          </div>
+          <form id="auto-form" class="hidden mt-3 space-y-3 max-w-md" novalidate>
+            <p class="text-xs text-amber-400/90 bg-amber-950/40 border border-amber-900/50 rounded-lg px-3 py-2">
+              Auto-install restarts the whole stack without anyone at the keyboard. Turning it on
+              requires a fresh 2FA code.
+            </p>
+            <label class="flex items-center gap-2 text-xs text-gray-400">
+              <input id="auto-prereleases" type="checkbox" class="accent-mint-600" />
+              Include pre-release versions (rc, beta)
+            </label>
+            <div>
+              <label class="block text-xs text-gray-400 mb-1" for="auto-totp">2FA code</label>
+              <input
+                id="auto-totp" name="totp_code" type="text" inputmode="numeric" autocomplete="one-time-code"
+                maxlength="6" placeholder="••••••"
+                class="w-full tracking-[0.4em] text-center bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-gray-100 placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-mint-600 focus:border-transparent transition"
+              />
+            </div>
+            <div class="flex items-center gap-2">
+              <button type="submit" class="py-1.5 px-3 rounded-lg bg-mint-600 hover:bg-mint-700 text-white text-xs font-medium transition-colors">Save</button>
+              <button type="button" data-cancel class="py-1.5 px-3 rounded-lg border border-gray-700 hover:bg-gray-800 text-gray-300 text-xs font-medium transition-colors">Cancel</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="rounded-lg border border-gray-800 bg-gray-800/40 p-4">
+          <div class="flex items-start justify-between gap-4 mb-2">
+            <div>
+              <h3 class="text-sm font-medium text-gray-100">Roll back</h3>
+              <p class="text-xs text-gray-500 mt-0.5">Restores the image versions saved before the last upgrade. Does nothing when no upgrade has run from here yet.</p>
+            </div>
+            <button
+              id="rollback-toggle" type="button"
+              class="shrink-0 py-1.5 px-3 rounded-lg border border-gray-700 hover:bg-gray-800 text-gray-300 text-xs font-medium transition-colors"
+              data-testid="rollback-toggle"
+            >Roll back…</button>
+          </div>
+          <p id="rollback-note" class="text-xs text-gray-400"></p>
+          <form id="rollback-form" class="hidden mt-3 space-y-3 max-w-md" novalidate>
+            <div>
+              <label class="block text-xs text-gray-400 mb-1" for="rollback-totp">2FA code</label>
+              <input
+                id="rollback-totp" name="totp_code" type="text" inputmode="numeric" autocomplete="one-time-code"
+                maxlength="6" placeholder="••••••"
+                class="w-full tracking-[0.4em] text-center bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-gray-100 placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-mint-600 focus:border-transparent transition"
+              />
+            </div>
+            <div class="flex items-center gap-2">
+              <button type="submit" class="py-1.5 px-3 rounded-lg bg-red-800 hover:bg-red-700 text-white text-xs font-medium transition-colors">Queue rollback</button>
+              <button type="button" data-cancel class="py-1.5 px-3 rounded-lg border border-gray-700 hover:bg-gray-800 text-gray-300 text-xs font-medium transition-colors">Cancel</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <script>
+        // Update card wiring. The upgrade POST needs the tag the user is
+        // moving to; it comes from the update-check response, never from
+        // free-text input.
+        (function () {
+          const stateEl = document.getElementById('update-state');
+          const noteEl = document.getElementById('update-note');
+          const upgradeToggle = document.getElementById('update-upgrade-toggle') as HTMLButtonElement | null;
+          const upgradeForm = document.getElementById('update-upgrade-form') as HTMLFormElement | null;
+          const autoToggle = document.getElementById('auto-toggle') as HTMLButtonElement | null;
+          const autoForm = document.getElementById('auto-form') as HTMLFormElement | null;
+          const rollbackToggle = document.getElementById('rollback-toggle') as HTMLButtonElement | null;
+          const rollbackForm = document.getElementById('rollback-form') as HTMLFormElement | null;
+          const rollbackNote = document.getElementById('rollback-note');
+          let latestTag = '';
+          let latestBitcoind: string | undefined;
+
+          function setNote(el: HTMLElement | null, text: string, tone: 'info' | 'error') {
+            if (!el) return;
+            el.textContent = text;
+            el.className = `text-xs ${tone === 'error' ? 'text-red-400' : 'text-gray-400'}`;
+          }
+
+          async function postJson(url: string, body: Record<string, unknown>): Promise<{ ok: boolean; error?: string }> {
+            try {
+              const res = await fetch(url, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(body),
+              });
+              if (res.ok) return { ok: true };
+              let message = `Request failed (${res.status})`;
+              try {
+                const data = await res.json();
+                if (data && typeof data.error === 'string') message = data.error;
+              } catch { /* keep default */ }
+              return { ok: false, error: message };
+            } catch {
+              return { ok: false, error: 'Network error while sending the request.' };
+            }
+          }
+
+          function watchWebGui(startedAt: number, onDone: () => void) {
+            let failures = 0;
+            const timer = window.setInterval(async () => {
+              if (Date.now() - startedAt > 12 * 60 * 1000) {
+                window.clearInterval(timer);
+                onDone();
+                return;
+              }
+              try {
+                const res = await fetch('/api/features/status');
+                const data = await res.json();
+                const state = data.services?.['web-gui'];
+                if (!state) return;
+                if (state.pending) return;
+                const fresh = state.lastResult && state.lastResult.at !== null && state.lastResult.at >= startedAt - 60_000;
+                if (!fresh) return;
+                window.clearInterval(timer);
+                onDone();
+                if (!state.lastResult.ok) {
+                  setNote(rollbackNote, state.lastResult.error ?? 'The last request failed.', 'error');
+                  setNote(noteEl, state.lastResult.error ?? 'The last request failed.', 'error');
+                }
+              } catch {
+                failures += 1;
+                if (failures >= 3) {
+                  // The enabler replaced this very container — a reload lands
+                  // on the new version.
+                  window.clearInterval(timer);
+                  setNote(noteEl, 'Applying — the interface restarts. Reload in a minute.', 'info');
+                }
+              }
+            }, 4000);
+          }
+
+          upgradeToggle?.addEventListener('click', () => upgradeForm?.classList.toggle('hidden'));
+          rollbackToggle?.addEventListener('click', () => rollbackForm?.classList.toggle('hidden'));
+          autoToggle?.addEventListener('click', () => autoForm?.classList.toggle('hidden'));
+          for (const form of [upgradeForm, autoForm, rollbackForm]) {
+            form?.querySelector('[data-cancel]')?.addEventListener('click', () => form.classList.add('hidden'));
+          }
+
+          upgradeForm?.addEventListener('submit', async (ev) => {
+            ev.preventDefault();
+            const totp = (document.getElementById('update-totp') as HTMLInputElement | null)?.value.trim() ?? '';
+            if (!/^[0-9]{6}$/.test(totp)) { setNote(noteEl, 'Enter your 6-digit 2FA code.', 'error'); return; }
+            if (!latestTag) { setNote(noteEl, 'No release tag available.', 'error'); return; }
+            upgradeToggle!.disabled = true;
+            upgradeForm.classList.add('hidden');
+            const r = await postJson('/api/features/upgrade', {
+              totp_code: totp,
+              tag: latestTag,
+              ...(latestBitcoind ? { bitcoind: latestBitcoind } : {}),
+            });
+            if (!r.ok) {
+              setNote(noteEl, r.error ?? 'Could not queue the upgrade.', 'error');
+              upgradeToggle!.disabled = false;
+              return;
+            }
+            setNote(noteEl, 'Queued — pulling images, then restarting. The interface goes down briefly at the end.', 'info');
+            watchWebGui(Date.now(), () => window.location.reload());
+          });
+
+          rollbackForm?.addEventListener('submit', async (ev) => {
+            ev.preventDefault();
+            const totp = (document.getElementById('rollback-totp') as HTMLInputElement | null)?.value.trim() ?? '';
+            if (!/^[0-9]{6}$/.test(totp)) { setNote(rollbackNote, 'Enter your 6-digit 2FA code.', 'error'); return; }
+            rollbackToggle!.disabled = true;
+            rollbackForm.classList.add('hidden');
+            const r = await postJson('/api/features/rollback', { totp_code: totp });
+            if (!r.ok) {
+              setNote(rollbackNote, r.error ?? 'Could not queue the rollback.', 'error');
+              rollbackToggle!.disabled = false;
+              return;
+            }
+            setNote(rollbackNote, 'Queued — restoring previous images, then restarting.', 'info');
+            watchWebGui(Date.now(), () => window.location.reload());
+          });
+
+          autoForm?.addEventListener('submit', async (ev) => {
+            ev.preventDefault();
+            const totp = (document.getElementById('auto-totp') as HTMLInputElement | null)?.value.trim() ?? '';
+            if (!/^[0-9]{6}$/.test(totp)) { setNote(noteEl, 'Enter your 6-digit 2FA code.', 'error'); return; }
+            const turnOn = autoToggle!.getAttribute('aria-pressed') !== 'true';
+            const includePrereleases = (document.getElementById('auto-prereleases') as HTMLInputElement | null)?.checked === true;
+            const r = await postJson('/api/update-check', {
+              auto_install: turnOn,
+              include_prereleases: includePrereleases,
+              totp_code: totp,
+            });
+            if (!r.ok) {
+              setNote(noteEl, r.error ?? 'Could not change the setting.', 'error');
+              return;
+            }
+            (document.getElementById('auto-totp') as HTMLInputElement).value = '';
+            autoForm.classList.add('hidden');
+            applyAutoState(turnOn, includePrereleases);
+          });
+
+          function applyAutoState(on: boolean, includePrereleases: boolean) {
+            if (!autoToggle) return;
+            autoToggle.textContent = on ? 'On' : 'Off';
+            autoToggle.setAttribute('aria-pressed', on ? 'true' : 'false');
+            autoToggle.className = `shrink-0 py-1.5 px-3 rounded-lg text-xs font-medium transition-colors ${
+              on ? 'bg-mint-600 hover:bg-mint-700 text-white' : 'border border-gray-700 hover:bg-gray-800 text-gray-300'
+            }`;
+            const pre = document.getElementById('auto-prereleases') as HTMLInputElement | null;
+            if (pre) pre.checked = includePrereleases;
+          }
+
+          (async () => {
+            try {
+              const res = await fetch('/api/update-check');
+              const data = await res.json();
+              const u = data.update ?? {};
+              applyAutoState(data.autoInstall === true, data.includePrereleases === true);
+              if (u.available === true && u.latest) {
+                latestTag = u.latest.tag;
+                latestBitcoind = u.latest.bitcoind ?? undefined;
+                stateEl!.textContent = `Update available: ${u.latest.tag}`;
+                if (u.latest.url) {
+                  const link = document.createElement('a');
+                  link.href = u.latest.url;
+                  link.target = '_blank';
+                  link.rel = 'noopener noreferrer';
+                  link.className = 'underline hover:text-gray-300 ml-1';
+                  link.textContent = 'release notes';
+                  stateEl!.appendChild(link);
+                }
+                if (latestBitcoind) {
+                  const extra = document.createElement('span');
+                  extra.className = 'ml-1';
+                  extra.textContent = `· ships Bitcoin Core ${latestBitcoind}`;
+                  stateEl!.appendChild(extra);
+                }
+                upgradeToggle!.disabled = false;
+              } else if (u.current) {
+                stateEl!.textContent = u.error
+                  ? `Running v${u.current} — could not reach the release feed.`
+                  : `Up to date (v${u.current}).`;
+              } else {
+                stateEl!.textContent = 'Could not reach the release feed.';
+              }
+            } catch {
+              stateEl!.textContent = 'Could not reach the release feed.';
+            }
+          })();
+        })();
       </script>
     </section>
 

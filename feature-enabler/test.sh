@@ -155,4 +155,136 @@ run_enabler || fail "enabler exited non-zero (case 12)"
 [ -s "$DOCKER_LOG" ] && fail "docker called on directory request (case 12)"
 pass "non-regular request ignored"
 
+# 12. upgrade web-gui: pulls first, then flips pins, saves PREVIOUS_*, moves core
+: > "$DOCKER_LOG"
+cat > "$PROJ/.env" << EOF
+NETWORK=mainnet
+SESSION_SECRET=secret-do-not-touch
+WEB_GUI_IMAGE=ghcr.io/mintlayer/web-gui/web-gui:v1.0.0-rc2
+ML_NODE_DAEMON_IMAGE=ghcr.io/mintlayer/web-gui/node-daemon:v1.0.0-rc2
+EOF
+req web-gui.req '{"action":"upgrade","service":"web-gui","tag":"v1.0.0-rc3","bitcoind":"26"}'
+run_enabler || fail "enabler exited non-zero (case 13)"
+grep -q '"ok":true' "$REQ/web-gui.result" || fail "upgrade result not ok (case 13)"
+pulls=$(grep -c '^pull ghcr.io/' "$DOCKER_LOG")
+[ "$pulls" -eq 7 ] || fail "expected 7 pulls, got $pulls (case 13)"
+grep -q '^pull bitcoin/bitcoin:26$' "$DOCKER_LOG" || fail "declared core not pulled (case 13)"
+grep -q '^WEB_GUI_IMAGE=ghcr.io/mintlayer/web-gui/web-gui:v1.0.0-rc3$' "$PROJ/.env" || fail "web pin not updated (case 13)"
+grep -q '^PREVIOUS_WEB_GUI_IMAGE=ghcr.io/mintlayer/web-gui/web-gui:v1.0.0-rc2$' "$PROJ/.env" || fail "previous web pin not saved (case 13)"
+grep -q '^BITCOIND_IMAGE=bitcoin/bitcoin:26$' "$PROJ/.env" || fail "core pin not set (case 13)"
+grep -q '^MANAGED_BITCOIND_IMAGE=bitcoin/bitcoin:26$' "$PROJ/.env" || fail "managed core mirror not set (case 13)"
+grep -q 'up -d web-gui' "$DOCKER_LOG" || fail "web-gui not recreated (case 13)"
+grep -q 'SESSION_SECRET=secret-do-not-touch' "$PROJ/.env" || fail ".env secrets damaged (case 13)"
+pass "upgrade pulls first, pins moved, core bumped"
+
+# 13. upgrade with a failed pull changes nothing
+: > "$DOCKER_LOG"
+touch "$WORK/fail"
+export DOCKER_FAIL="$WORK/fail"
+req web-gui.req '{"action":"upgrade","service":"web-gui","tag":"v1.0.0-rc4"}'
+run_enabler || fail "enabler exited non-zero (case 14)"
+grep -q '"ok":false' "$REQ/web-gui.result" || fail "failed pull not reported (case 14)"
+grep -q ':v1.0.0-rc3' "$PROJ/.env" || fail "env changed despite failed pull (case 14)"
+unset DOCKER_FAIL
+pass "failed pull aborts before env write"
+
+# 14. user-pinned core is respected
+: > "$DOCKER_LOG"
+# update the pin in place (a real .env never carries duplicate keys)
+sed -i 's|^BITCOIND_IMAGE=.*|BITCOIND_IMAGE=bitcoin/bitcoin:27|' "$PROJ/.env"
+req web-gui.req '{"action":"upgrade","service":"web-gui","tag":"v1.0.0-rc4","bitcoind":"28"}'
+run_enabler || fail "enabler exited non-zero (case 15)"
+grep -q '^BITCOIND_IMAGE=bitcoin/bitcoin:27$' "$PROJ/.env" || fail "user core pin overwritten (case 15)"
+grep -q '^MANAGED_BITCOIND_IMAGE=bitcoin/bitcoin:26$' "$PROJ/.env" || fail "managed mirror clobbered (case 15)"
+pass "user-pinned core respected"
+
+# 15. rollback restores the previous pins and clears the anchors
+: > "$DOCKER_LOG"
+req web-gui.req '{"action":"rollback","service":"web-gui"}'
+run_enabler || fail "enabler exited non-zero (case 16)"
+grep -q '"ok":true' "$REQ/web-gui.result" || fail "rollback result not ok (case 16)"
+grep -q '^WEB_GUI_IMAGE=ghcr.io/mintlayer/web-gui/web-gui:v1.0.0-rc3$' "$PROJ/.env" || fail "rollback did not restore web pin (case 16)"
+grep -q '^PREVIOUS_WEB_GUI_IMAGE=' "$PROJ/.env" && fail "rollback left stale anchor (case 16)"
+grep -q '^BITCOIND_IMAGE=bitcoin/bitcoin:27$' "$PROJ/.env" || fail "rollback lost user core pin (case 16)"
+grep -q '^PREVIOUS_BITCOIN_IMAGE=' "$PROJ/.env" && fail "rollback left core anchor (case 16)"
+pass "rollback restores pins and clears anchors"
+
+# 16. rollback without a previous version fails honestly
+: > "$DOCKER_LOG"
+req web-gui.req '{"action":"rollback","service":"web-gui"}'
+run_enabler || fail "enabler exited non-zero (case 17)"
+grep -q '"ok":false' "$REQ/web-gui.result" || fail "empty rollback not rejected (case 17)"
+grep -q 'docker' "$DOCKER_LOG" && fail "docker called without previous pins (case 17)"
+pass "rollback without previous fails honestly"
+
+# 17. upgrade/rollback only restart services this install actually runs
+: > "$DOCKER_LOG"
+cat > "$PROJ/.env" << EOF
+NETWORK=mainnet
+SESSION_SECRET=secret-do-not-touch
+WEB_GUI_IMAGE=ghcr.io/mintlayer/web-gui/web-gui:v1.0.0-rc2
+EOF
+req web-gui.req '{"action":"upgrade","service":"web-gui","tag":"v1.0.0-rc3"}'
+run_enabler || fail "enabler exited non-zero (case 18)"
+up_line=$(grep 'up -d node-daemon' "$DOCKER_LOG" | tail -1)
+[ -n "$up_line" ] || fail "daemon up line missing (case 18)"
+case "$up_line" in
+    *bdk-wallet*|*btc-explorer*|*bitcoind*|*api-blockchain-scanner*) fail "disabled stacks in up list (case 18): $up_line" ;;
+esac
+printf 'BITCOIN_ENABLED=true\nINDEXER_ENABLED=true\n' >> "$PROJ/.env"
+: > "$DOCKER_LOG"
+req web-gui.req '{"action":"upgrade","service":"web-gui","tag":"v1.0.0-rc4"}'
+run_enabler || fail "enabler exited non-zero (case 18b)"
+up_line=$(grep 'up -d node-daemon' "$DOCKER_LOG" | tail -1)
+for svc in bitcoind bdk-wallet btc-explorer api-blockchain-scanner-daemon api-web-server; do
+    case "$up_line" in *" $svc"*) ;; *) fail "enabled $svc missing from up list (case 18b)" ;; esac
+done
+pass "up list follows enabled flags"
+
+# 18. re-running the same upgrade is a no-op that keeps the rollback anchor
+: > "$DOCKER_LOG"
+cp "$PROJ/.env" "$WORK/env.before.18"
+req web-gui.req '{"action":"upgrade","service":"web-gui","tag":"v1.0.0-rc4"}'
+run_enabler || fail "enabler exited non-zero (case 19)"
+grep -q '"ok":true' "$REQ/web-gui.result" || fail "same-target rerun not ok (case 19)"
+pulls=$(grep -c '^pull ghcr.io/' "$DOCKER_LOG")
+[ "$pulls" -eq 0 ] || fail "same-target rerun pulled $pulls images (case 19)"
+grep -q 'up -d' "$DOCKER_LOG" && fail "same-target rerun restarted services (case 19)"
+diff -q "$PROJ/.env" "$WORK/env.before.18" >/dev/null || fail "same-target rerun rewrote .env (case 19)"
+pass "same-target upgrade is a clean no-op"
+
+# 19. a declared core version that survives extraction but breaks policy is rejected
+: > "$DOCKER_LOG"
+req web-gui.req '{"action":"upgrade","service":"web-gui","tag":"v1.0.0-rc5","bitcoind":"26.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0"}'
+run_enabler || fail "enabler exited non-zero (case 20)"
+grep -q '"ok":false' "$REQ/web-gui.result" || fail "invalid bitcoind not rejected (case 20)"
+grep -q 'invalid bitcoind' "$REQ/web-gui.result" || fail "invalid bitcoind reason (case 20)"
+[ -s "$DOCKER_LOG" ] && fail "docker called with invalid bitcoind (case 20)"
+pass "invalid declared core version rejects"
+
+# 19b. shell metacharacters in the payload never reach docker (extraction
+# drops them, the request proceeds without a core bump)
+: > "$DOCKER_LOG"
+req web-gui.req '{"action":"upgrade","service":"web-gui","tag":"v1.0.0-rc5","bitcoind":"26; touch /tmp/pwned"}'
+run_enabler || fail "enabler exited non-zero (case 20b)"
+rm -f /tmp/pwned
+grep -q 'pull bitcoin' "$DOCKER_LOG" && fail "core pulled from hostile payload (case 20b)"
+! grep -q 'touch\|;' "$DOCKER_LOG" || fail "metacharacters reached docker (case 20b)"
+pass "hostile core payload degrades safely"
+
+# 20. digest-pinned images abort with a clear message
+: > "$DOCKER_LOG"
+cat > "$PROJ/.env" << EOF
+NETWORK=mainnet
+SESSION_SECRET=secret-do-not-touch
+WEB_GUI_IMAGE=ghcr.io/mintlayer/web-gui/web-gui@sha256:0000000000000000000000000000000000000000000000000000000000000000
+EOF
+req web-gui.req '{"action":"upgrade","service":"web-gui","tag":"v1.0.0-rc6"}'
+run_enabler || fail "enabler exited non-zero (case 21)"
+grep -q '"ok":false' "$REQ/web-gui.result" || fail "digest pin not rejected (case 21)"
+grep -q 'digest-pinned' "$REQ/web-gui.result" || fail "digest pin reason (case 21)"
+[ -s "$DOCKER_LOG" ] && fail "docker called on digest-pinned install (case 21)"
+grep -q 'SESSION_SECRET=secret-do-not-touch' "$PROJ/.env" || fail ".env secrets damaged (case 21)"
+pass "digest-pinned image aborts upgrade"
+
 printf 'ALL ENABLER TESTS PASSED\n'

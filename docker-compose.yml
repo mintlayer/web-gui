@@ -274,7 +274,7 @@ services:
     volumes:
       - "${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock"
       - "./feature-enabler/enabler.sh:/enabler.sh:ro"
-      - ".:${PROJECT_DIR_HOST:?}"
+      - ".:${PROJECT_DIR_HOST:?}:ro"
       - "./.env:${PROJECT_DIR_HOST:?}/.env"
       - "feature-requests:/requests"
     environment:
