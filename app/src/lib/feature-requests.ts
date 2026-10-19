@@ -15,19 +15,37 @@ import { join } from 'node:path';
  * its absence means "manage from the host CLI instead".
  */
 
-export const FEATURE_SERVICES = ['bitcoin', 'indexer'] as const;
+export const FEATURE_SERVICES = ['bitcoin', 'indexer', 'web-gui'] as const;
 export type FeatureService = (typeof FEATURE_SERVICES)[number];
 
 export const BITCOIN_NETWORKS = ['mainnet', 'testnet', 'regtest'] as const;
 export type BitcoinNetwork = (typeof BITCOIN_NETWORKS)[number];
 
+/** Actions are per service: profiles enable/disable, the app upgrades/rolls back. */
+export const SERVICE_ACTIONS = {
+  bitcoin: ['enable', 'disable'],
+  indexer: ['enable', 'disable'],
+  'web-gui': ['upgrade', 'rollback'],
+} as const satisfies Record<FeatureService, readonly string[]>;
+
+export type FeatureAction = 'enable' | 'disable' | 'upgrade' | 'rollback';
+
+/** Release tag as accepted by the enabler: v-prefixed, shell-safe charset. */
+export const RELEASE_TAG_RE = /^v[0-9][A-Za-z0-9.\-]*$/;
+/** Bitcoin Core version declared by a release (`bitcoind: X` marker). */
+export const BITCOIND_VERSION_RE = /^[0-9][A-Za-z0-9._-]{0,31}$/;
+
 export interface FeatureRequest {
-  action: 'enable' | 'disable';
+  action: FeatureAction;
   service: FeatureService;
   /** bitcoin only */
   network?: BitcoinNetwork;
   /** bitcoin only — pruned mode (default true, matches setup) */
   pruned?: boolean;
+  /** web-gui upgrade only — the release tag to move every image to */
+  tag?: string;
+  /** web-gui upgrade only — Bitcoin Core version declared by that release */
+  bitcoind?: string;
 }
 
 export interface FeatureResult {
@@ -82,8 +100,28 @@ export async function isRequestPending(service: FeatureService): Promise<boolean
  * exists, closing the check-then-write race between concurrent requests.
  */
 export async function queueFeatureRequest(req: FeatureRequest): Promise<boolean> {
-  if (req.action !== 'enable' && req.action !== 'disable') throw new Error('invalid action');
   if (!isFeatureService(req.service)) throw new Error('invalid service');
+  const allowed = SERVICE_ACTIONS[req.service];
+  if (!(allowed as readonly string[]).includes(req.action)) {
+    throw new Error('invalid action for service');
+  }
+  // Defense-in-depth: the sidecar re-validates, but malformed values must
+  // never reach the request file at all.
+  if (req.service === 'web-gui' && req.action === 'upgrade') {
+    // Length caps match the enabler's own limits (tag ≤40, version ≤32) so an
+    // over-long value from a bad release fails HERE — degrading to "skip this
+    // release / this core bump" — instead of being written and rejected by the
+    // sidecar, which would brick auto-install with a permanent failure.
+    if (typeof req.tag !== 'string' || !RELEASE_TAG_RE.test(req.tag) || req.tag.length > 40) {
+      throw new Error('invalid release tag');
+    }
+    if (
+      req.bitcoind !== undefined &&
+      (typeof req.bitcoind !== 'string' || !BITCOIND_VERSION_RE.test(req.bitcoind) || req.bitcoind.length > 32)
+    ) {
+      throw new Error('invalid bitcoind version');
+    }
+  }
   const dir = requestsDir();
   await mkdir(dir, { recursive: true });
   // Compact JSON, fixed field order, enum-validated values only — the sidecar
@@ -93,6 +131,9 @@ export async function queueFeatureRequest(req: FeatureRequest): Promise<boolean>
     service: req.service,
     ...(req.service === 'bitcoin' && req.action === 'enable'
       ? { network: req.network ?? 'mainnet', pruned: req.pruned !== false }
+      : {}),
+    ...(req.service === 'web-gui' && req.action === 'upgrade'
+      ? { tag: req.tag, ...(req.bitcoind ? { bitcoind: req.bitcoind } : {}) }
       : {}),
   });
   // Unique tmp name: a fixed name would let a concurrent second request

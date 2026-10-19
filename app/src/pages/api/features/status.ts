@@ -25,8 +25,10 @@ export const GET: APIRoute = async () => {
     { enabled: boolean; pending: boolean; lastResult: Awaited<ReturnType<typeof readFeatureResult>> }
   > = {};
   for (const service of FEATURE_SERVICES as readonly FeatureService[]) {
+    // web-gui is this very process: it is always "enabled"; the update card
+    // covers its state instead.
     const enabled =
-      service === 'bitcoin' ? isBitcoinEnabled() : process.env.INDEXER_ENABLED === 'true';
+      service === 'web-gui' ? true : service === 'bitcoin' ? isBitcoinEnabled() : process.env.INDEXER_ENABLED === 'true';
     services[service] = {
       enabled,
       pending: await isRequestPending(service),

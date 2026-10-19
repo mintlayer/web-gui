@@ -3,9 +3,12 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { POST as ENABLE } from '../pages/api/features/enable';
+import { POST as UPGRADE } from '../pages/api/features/upgrade';
+import { POST as ROLLBACK } from '../pages/api/features/rollback';
 import { POST as DISABLE } from '../pages/api/features/disable';
 import { GET as STATUS } from '../pages/api/features/status';
 import { queueFeatureRequest } from './feature-requests';
+import { requireStepUp } from '@/lib/step-up';
 
 /**
  * API contract for the optional-services enable/disable/status routes
@@ -181,5 +184,63 @@ describe('GET /api/features/status', () => {
     const res = await STATUS(req('/api/features/status', null, 'GET'));
     const body = (await res.json()) as { available: boolean };
     expect(body.available).toBe(false);
+  });
+});
+
+describe('POST /api/features/upgrade', () => {
+  it('queues an upgrade with the declared tag and bitcoind version', async () => {
+    const res = await UPGRADE(req('/api/features/upgrade', { tag: 'v1.0.0-rc3', bitcoind: '26.0' }));
+    expect(res.status).toBe(202);
+    const stored = await readReq('web-gui.req');
+    expect(stored).toEqual({ action: 'upgrade', service: 'web-gui', tag: 'v1.0.0-rc3', bitcoind: '26.0' });
+  });
+
+  it('queues without a bitcoind field when the release declares none', async () => {
+    const res = await UPGRADE(req('/api/features/upgrade', { tag: 'v1.0.0-rc3' }));
+    expect(res.status).toBe(202);
+    expect(await readReq('web-gui.req')).toEqual({ action: 'upgrade', service: 'web-gui', tag: 'v1.0.0-rc3' });
+  });
+
+  it('rejects missing, unversioned or oversized tags before step-up', async () => {
+    for (const tag of ['', '1.0.0', 'v', 'v' + 'x'.repeat(45), undefined]) {
+      const res = await UPGRADE(req('/api/features/upgrade', { tag }));
+      expect(res.status).toBe(400);
+    }
+    expect(requireStepUp).not.toHaveBeenCalled();
+    await expect(readReq('web-gui.req')).rejects.toThrow();
+  });
+
+  it('rejects malformed bitcoind versions', async () => {
+    const res = await UPGRADE(req('/api/features/upgrade', { tag: 'v1.0.0-rc3', bitcoind: '26; rm -rf' }));
+    expect(res.status).toBe(400);
+  });
+
+  it('refuses a second queued upgrade', async () => {
+    expect((await UPGRADE(req('/api/features/upgrade', { tag: 'v1.0.0-rc3' }))).status).toBe(202);
+    expect((await UPGRADE(req('/api/features/upgrade', { tag: 'v1.0.0-rc3' }))).status).toBe(409);
+  });
+});
+
+describe('POST /api/features/rollback', () => {
+  it('queues a rollback request', async () => {
+    const res = await ROLLBACK(req('/api/features/rollback', {}));
+    expect(res.status).toBe(202);
+    expect(await readReq('web-gui.req')).toEqual({ action: 'rollback', service: 'web-gui' });
+  });
+
+  it('refuses when an upgrade is already queued', async () => {
+    expect((await UPGRADE(req('/api/features/upgrade', { tag: 'v1.0.0-rc3' }))).status).toBe(202);
+    expect((await ROLLBACK(req('/api/features/rollback', {}))).status).toBe(409);
+  });
+});
+
+describe('GET /api/features/status (web-gui service)', () => {
+  it('reports the running app as enabled with pending and result state', async () => {
+    await queueFeatureRequest({ action: 'upgrade', service: 'web-gui', tag: 'v1.0.0-rc3' });
+    const res = await STATUS(req('/api/features/status', undefined, 'GET'));
+    const data = await res.json();
+    expect(res.status).toBe(200);
+    expect(data.services['web-gui'].enabled).toBe(true);
+    expect(data.services['web-gui'].pending).toBe(true);
   });
 });
