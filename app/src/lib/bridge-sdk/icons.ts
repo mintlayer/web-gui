@@ -6,7 +6,7 @@ export { toGatewayUrl };
 
 /**
  * Resolves a token's display icon URL from its on-chain metadata.
- * Thin convenience wrapper over resolveTokenMetadata — the icon is the
+ * Thin convenience wrapper over resolveTokenMetadata - the icon is the
  * one sanitized field of the same metadata document.
  * Returns null when any step is missing or fails.
  */

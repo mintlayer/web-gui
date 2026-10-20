@@ -1,5 +1,5 @@
 /**
- * Tests for the /api/explorer-tokens route (kept outside src/pages —
+ * Tests for the /api/explorer-tokens route (kept outside src/pages -
  * colocated tests there compile into phantom endpoints).
  */
 
@@ -35,7 +35,7 @@ function row(overrides: Record<string, unknown> = {}) {
 
 const ENV_KEYS = ['NETWORK', 'EXPLORER_TOKENS_API_BASE'] as const;
 
-/** The route only reads the Request body/none — cast past APIContext. */
+/** The route only reads the Request body/none - cast past APIContext. */
 function call(req: Request): ReturnType<typeof GET> {
   return GET(req as unknown as Parameters<typeof GET>[0]);
 }

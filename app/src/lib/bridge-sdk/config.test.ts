@@ -5,7 +5,7 @@
  * `env` is captured from `import.meta.env` at module-evaluation time, and in
  * vitest that object is snapshotted from the worker's environment at spawn.
  * `vi.stubEnv` only writes `process.env` (verified against vitest 3.2.7
- * sources), so a *set* PUBLIC_* value cannot be simulated at runtime here —
+ * sources), so a *set* PUBLIC_* value cannot be simulated at runtime here -
  * that operand is exercised in deployments/builds that define the var. In the
  * plain test environment it is `undefined`, so these tests drive every line
  * through the `process.env` override and the `||`/`??` chain resolving to the
@@ -27,7 +27,7 @@ describe('getServerBridgeApiUrl', () => {
     vi.stubEnv('BRIDGE_API_URL', '  https://internal.example/api/v1/  ');
     vi.resetModules();
     const { getServerBridgeApiUrl } = await import('@/lib/bridge-sdk/config');
-    // the server-side override wins and is trimmed — surrounding whitespace
+    // the server-side override wins and is trimmed - surrounding whitespace
     // must never leak into request URLs
     expect(getServerBridgeApiUrl()).toBe('https://internal.example/api/v1/');
   });

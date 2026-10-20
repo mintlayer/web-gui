@@ -12,10 +12,10 @@ export interface TxToast {
   status: ToastStatus;
   blockHeight?: number;
   errorMessage?: string;
-  /** When the toast entered 'pending' — drives the "still pending" escalation. */
+  /** When the toast entered 'pending' - drives the "still pending" escalation. */
   pendingSince?: number;
-  /** True once a pending toast has been waiting for >3 min — UI should say
-   *  "still pending — check the explorer" instead of the plain spinner copy. */
+  /** True once a pending toast has been waiting for >3 min - UI should say
+   *  "still pending - check the explorer" instead of the plain spinner copy. */
   stale?: boolean;
 }
 
@@ -162,7 +162,7 @@ export async function submitWithToast(
         // state and hand the user to the explorer instead.
         toastStore.update(txId, {
           status: 'untracked',
-          errorMessage: 'Confirmation not tracked — check the explorer for the latest state.',
+          errorMessage: 'Confirmation not tracked - check the explorer for the latest state.',
         });
       }
     });

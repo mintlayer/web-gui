@@ -1,5 +1,5 @@
 /**
- * GET /ipfs/{cid}/{...path} — same-origin IPFS gateway proxy.
+ * GET /ipfs/{cid}/{...path} - same-origin IPFS gateway proxy.
  *
  * The bridge SDK rewrites ipfs:// URIs to /ipfs/… so token metadata
  * (JSON) and icons (images) are fetched same-origin: one place to
@@ -17,7 +17,7 @@
  * NOT an open proxy: only a real CID (v0 base58 or v1 base32) with an
  * optional safe subpath is fetchable, and only from the configured
  * gateway hosts. Redirects are followed only to a subdomain of the
- * same gateway (the CIDv1 → subdomain-gateway pattern) — never to an
+ * same gateway (the CIDv1 → subdomain-gateway pattern) - never to an
  * arbitrary host. Responses are size-capped and content-type filtered.
  */
 
@@ -25,7 +25,7 @@ export const prerender = false;
 
 // Happy-eyeballs per-address connect timeout. The default (250 ms) is
 // shorter than the real RTT to the CDN edge from some networks (~300 ms),
-// so Node intermittently aborts connects that would have succeeded —
+// so Node intermittently aborts connects that would have succeeded -
 // surfacing as connect ETIMEDOUT after ~2×250 ms and, through this
 // proxy, flaky 502s and missing token icons. Widen the window; dead
 // addresses still fall through to the next family.
@@ -59,7 +59,7 @@ const DEFAULT_GATEWAYS = [
 const ALLOWED_TYPES =
   /^(?:application\/json|application\/octet-stream|image\/(?!svg)[a-z0-9.+-]+|text\/plain)\b/i;
 
-/** Applied to every proxied response — the body is never trusted. */
+/** Applied to every proxied response - the body is never trusted. */
 const RESPONSE_CSP = "default-src 'none'; sandbox";
 
 function configuredGateways(): string[] {
@@ -101,7 +101,7 @@ function isSameSite(gatewayUrl: string, location: string): boolean {
 }
 
 function errorResponse(message: string, status: number): Response {
-  // Failures are NOT cacheable — a cold, broken path must not get
+  // Failures are NOT cacheable - a cold, broken path must not get
   // pinned by a browser or intermediate cache.
   return new Response(message, { status, headers: { 'cache-control': 'no-store' } });
 }
@@ -146,7 +146,7 @@ export async function GET(ctx: {
   for (const upstream of candidates) {
     // Cold connects from small containers to the proxy intermittently
     // fail at connect time (ETIMEDOUT/AggregateError well under the
-    // per-gateway budget) and succeed on an immediate retry — the
+    // per-gateway budget) and succeed on an immediate retry - the
     // browser-visible symptom was missing token icons. Retry the same
     // gateway once on a network-level throw; HTTP statuses are never
     // retried (they are answers, not accidents).
@@ -157,7 +157,7 @@ export async function GET(ctx: {
       try {
         // Redirects are handled manually: the CID allowlist gates hop 1,
         // so only a same-site redirect (CIDv1 → subdomain gateway) is
-        // followed — never a bounce to an arbitrary host.
+        // followed - never a bounce to an arbitrary host.
         upstreamRes = await fetch(upstream, {
           redirect: 'manual',
           signal: controller.signal,
@@ -166,12 +166,12 @@ export async function GET(ctx: {
       } catch {
         clearTimeout(timer);
         lastStatus = 502;
-        continue; // network accident — retry this gateway once
+        continue; // network accident - retry this gateway once
       }
 
       if (upstreamRes.status >= 300 && upstreamRes.status < 400) {
         const location = upstreamRes.headers.get('location') ?? '';
-        // Timer stays armed — both hops share the per-gateway budget.
+        // Timer stays armed - both hops share the per-gateway budget.
         if (isSameSite(upstream, location)) {
           try {
             upstreamRes = await fetch(location, {
@@ -187,14 +187,14 @@ export async function GET(ctx: {
         } else {
           clearTimeout(timer);
           lastStatus = 502;
-          break; // foreign redirect — this gateway misbehaves, next one
+          break; // foreign redirect - this gateway misbehaves, next one
         }
       }
 
       if (upstreamRes.status !== 200) {
         clearTimeout(timer);
         lastStatus = upstreamRes.status === 404 ? 404 : 502;
-        break; // an HTTP answer — next gateway, not a retry
+        break; // an HTTP answer - next gateway, not a retry
       }
 
       // Honour an honest content-length before reading anything.
@@ -210,7 +210,7 @@ export async function GET(ctx: {
       if (!ALLOWED_TYPES.test(contentType)) {
         clearTimeout(timer);
         // Fail fast: content-type is a property of the CID content, not
-        // of the gateway — another gateway would serve the same bytes.
+        // of the gateway - another gateway would serve the same bytes.
         return errorResponse('Unsupported media type', 415);
       }
 

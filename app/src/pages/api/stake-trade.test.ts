@@ -145,7 +145,7 @@ describe('stake-trade endpoint', () => {
 
   it('flags code_consumed when the daemon rejects after the burn', async () => {
     vi.mocked(rpcCall).mockRejectedValue(
-      new WalletRpcError('Cannot reach wallet-rpc-daemon at http://127.0.0.1:8556 — is it running?', -32000),
+      new WalletRpcError('Cannot reach wallet-rpc-daemon at http://127.0.0.1:8556 - is it running?', -32000),
     );
     const res = await POST(ctx({ action: 'order_fill', params: VALID.order_fill, totp_code: '654321' }));
     expect(res.status).toBe(502);

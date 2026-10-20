@@ -10,7 +10,7 @@ import {
 import { isBitcoinEnabled } from '@/lib/bitcoin-wallet';
 
 /**
- * POST /api/features/disable — queue an optional-service stop (bitcoin or
+ * POST /api/features/disable - queue an optional-service stop (bitcoin or
  * indexer profile) for the feature-enabler sidecar. Requires the session
  * plus a fresh single-use TOTP: stopping services is disruptive (the BTC
  * wallet stops tracking funds, indexed data goes stale).

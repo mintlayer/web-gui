@@ -4,7 +4,7 @@
  * Scans the wallet's UTXO set for IssueFungibleToken and IssueNft outputs,
  * which represent tokens for which this wallet currently holds authority.
  *
- * Works WITHOUT the indexer — uses only the wallet-rpc-daemon.
+ * Works WITHOUT the indexer - uses only the wallet-rpc-daemon.
  *
  * For fungible tokens: computes the token_id from the first UTXO input of the
  * issuance transaction using the Mintlayer derivation:
@@ -152,7 +152,7 @@ export const GET: APIRoute = async () => {
 
     return json({ ok: true, fungible: fungibleResult, nfts: nftResult }, 200);
   } catch {
-    // Best-effort — never crash the page
+    // Best-effort - never crash the page
     return json({ ok: true, fungible: [], nfts: [] }, 200);
   }
 };

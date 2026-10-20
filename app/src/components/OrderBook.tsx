@@ -154,7 +154,7 @@ function BuySellPanel({
   tokenBalance: string | null;
   onCreated: () => void;
   onPairRefresh: () => void;
-  /** Order-book rows never execute here — a click prefills this form. */
+  /** Order-book rows never execute here - a click prefills this form. */
   prefill: { side: "buy" | "sell"; price: string; amount: string } | null;
 }) {
   const [side, setSide]     = useState<"buy" | "sell">("buy");
@@ -783,7 +783,7 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
   // Shared 2FA codes: filling order-book rows and concluding own orders both
   // move funds and burn a code server-side. One field per section keeps the
   // rows uncluttered.
-  // Order-book rows never execute — a click on a row hands its price/size
+  // Order-book rows never execute - a click on a row hands its price/size
   // to the place-order form below.
   const [bookPrefill, setBookPrefill] = useState<{
     side: "buy" | "sell"; price: string; amount: string;
@@ -1062,7 +1062,7 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
               <div className="space-y-3">
                 <DepthStrip asks={pairAsks} bids={pairBids} ticker={selectedTicker} />
                 <p className="text-xs text-gray-500 -mt-1">
-                  "Fill form" pre-fills the order form below with that price and size — nothing is
+                  "Fill form" pre-fills the order form below with that price and size - nothing is
                   submitted from the book itself.
                 </p>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

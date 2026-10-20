@@ -82,4 +82,4 @@ for entry in "${ALL_SERVICES[@]}"; do
 done
 
 echo ""
-echo "Done. Images are tagged identically to Docker Hub — docker compose up will use them."
+echo "Done. Images are tagged identically to Docker Hub - docker compose up will use them."

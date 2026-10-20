@@ -72,7 +72,7 @@ export async function handleUpdate(
         );
     }
   } catch (err) {
-    // Escape before HTML parse_mode — raw daemon errors can contain <, >, &
+    // Escape before HTML parse_mode - raw daemon errors can contain <, >, &
     // which would make Telegram reject the message (400) and lose the alert.
     const raw = err instanceof WalletRpcError ? err.message : String(err);
     const msg = raw.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -238,7 +238,7 @@ async function cmdStaking(botToken: string, chatId: string, args: string[], mess
 
     const check = verifyAndBurnTotpCode(totpCode, secret, `telegram:${chatId}`);
     if (!check.ok) {
-      // Best-effort delete of the attempt too — don't leave code material in
+      // Best-effort delete of the attempt too - don't leave code material in
       // chat history even when the check failed.
       if (messageId) {
         await deleteTelegramMessage(botToken, chatId, messageId);
@@ -258,10 +258,10 @@ async function cmdStaking(botToken: string, chatId: string, args: string[], mess
       try {
         await startStaking(0);
       } catch (err) {
-        // The code was already burned — tell the user the retry needs a fresh
+        // The code was already burned - tell the user the retry needs a fresh
         // one instead of a bare daemon error.
         await sendTelegramMessage(botToken, chatId,
-          `⚠️ Error: ${escapeHtml((err as Error).message)}\n\nYour authenticator code was consumed — wait up to a minute for a fresh one before retrying.`);
+          `⚠️ Error: ${escapeHtml((err as Error).message)}\n\nYour authenticator code was consumed - wait up to a minute for a fresh one before retrying.`);
         return;
       }
       await sendTelegramMessage(botToken, chatId, '⛏ <b>Staking started.</b>');
@@ -270,7 +270,7 @@ async function cmdStaking(botToken: string, chatId: string, args: string[], mess
         await stopStaking(0);
       } catch (err) {
         await sendTelegramMessage(botToken, chatId,
-          `⚠️ Error: ${escapeHtml((err as Error).message)}\n\nYour authenticator code was consumed — wait up to a minute for a fresh one before retrying.`);
+          `⚠️ Error: ${escapeHtml((err as Error).message)}\n\nYour authenticator code was consumed - wait up to a minute for a fresh one before retrying.`);
         return;
       }
       await sendTelegramMessage(botToken, chatId, '💤 <b>Staking stopped.</b>');

@@ -121,7 +121,7 @@ export default function IssueTokenModal({ ipfsEnabled, onClose, onIssued }: Prop
           if (r.code_consumed) {
             setTotp('');
             window.setTimeout(() => totpRef.current?.focus(), 0);
-            throw new Error(`${r.error} Your code was consumed — wait up to a minute for a fresh one.`);
+            throw new Error(`${r.error} Your code was consumed - wait up to a minute for a fresh one.`);
           }
           throw new Error(r.error);
         }

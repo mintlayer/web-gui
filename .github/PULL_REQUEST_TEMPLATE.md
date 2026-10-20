@@ -1,6 +1,6 @@
 <!--
 PR size guidance: if this PR exceeds ~500 changed lines, consider splitting it
-(stack or sequence). Reviews of huge diffs find fewer bugs — PR #4 (10k+ lines)
+(stack or sequence). Reviews of huge diffs find fewer bugs - PR #4 (10k+ lines)
 took a multi-pass review round and still shipped blockers that a small diff
 review would have caught.
 -->
@@ -17,7 +17,7 @@ review would have caught.
 
 ## Propagation checklist
 
-<!-- Tick or strike out — these exist because the same config lives in several places. -->
+<!-- Tick or strike out - these exist because the same config lives in several places. -->
 
 - [ ] Compose changed? → propagated to **all four** copies:
       `docker-compose.yml`, `deploy/docker-compose.yml`, embedded compose in

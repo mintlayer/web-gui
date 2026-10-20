@@ -11,7 +11,7 @@ import { join } from 'node:path';
  * sidecar watches; it applies a fixed set of compose actions and writes
  * <service>.result status files back.
  *
- * The directory only exists when the deployment ships the enabler volume —
+ * The directory only exists when the deployment ships the enabler volume -
  * its absence means "manage from the host CLI instead".
  */
 
@@ -40,11 +40,11 @@ export interface FeatureRequest {
   service: FeatureService;
   /** bitcoin only */
   network?: BitcoinNetwork;
-  /** bitcoin only — pruned mode (default true, matches setup) */
+  /** bitcoin only - pruned mode (default true, matches setup) */
   pruned?: boolean;
-  /** web-gui upgrade only — the release tag to move every image to */
+  /** web-gui upgrade only - the release tag to move every image to */
   tag?: string;
-  /** web-gui upgrade only — Bitcoin Core version declared by that release */
+  /** web-gui upgrade only - Bitcoin Core version declared by that release */
   bitcoind?: string;
 }
 
@@ -109,8 +109,8 @@ export async function queueFeatureRequest(req: FeatureRequest): Promise<boolean>
   // never reach the request file at all.
   if (req.service === 'web-gui' && req.action === 'upgrade') {
     // Length caps match the enabler's own limits (tag ≤40, version ≤32) so an
-    // over-long value from a bad release fails HERE — degrading to "skip this
-    // release / this core bump" — instead of being written and rejected by the
+    // over-long value from a bad release fails HERE - degrading to "skip this
+    // release / this core bump" - instead of being written and rejected by the
     // sidecar, which would brick auto-install with a permanent failure.
     if (typeof req.tag !== 'string' || !RELEASE_TAG_RE.test(req.tag) || req.tag.length > 40) {
       throw new Error('invalid release tag');
@@ -124,7 +124,7 @@ export async function queueFeatureRequest(req: FeatureRequest): Promise<boolean>
   }
   const dir = requestsDir();
   await mkdir(dir, { recursive: true });
-  // Compact JSON, fixed field order, enum-validated values only — the sidecar
+  // Compact JSON, fixed field order, enum-validated values only - the sidecar
   // parses with exact-match greps and rejects anything else.
   const body = JSON.stringify({
     action: req.action,

@@ -1,4 +1,4 @@
-# btc-rpc-explorer — self-hosted Bitcoin block explorer.
+# btc-rpc-explorer - self-hosted Bitcoin block explorer.
 #
 # Built from the upstream source (janoside/btc-rpc-explorer) because no
 # official Docker image is published. BTC_RPC_EXPLORER_REF pins the version;

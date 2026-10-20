@@ -20,7 +20,7 @@ export const POST: APIRoute = async ({ request }) => {
   }
 
   applyPasswordChange(decision.newHash);
-  // The version bump just invalidated every session — including this one.
+  // The version bump just invalidated every session - including this one.
   // Tell fetch callers so they can redirect to /login instead of showing a
   // success banner that dies on the next click.
   return json({ ok: true, signed_out_everywhere: true }, 200);

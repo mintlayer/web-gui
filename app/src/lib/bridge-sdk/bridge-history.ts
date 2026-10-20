@@ -1,7 +1,7 @@
 /**
  * Local history of the user's own bridge requests, persisted in
  * localStorage (one slot per browser, most recent first, capped).
- * Every field is re-validated on read — localStorage is user-writable,
+ * Every field is re-validated on read - localStorage is user-writable,
  * so a type-confused record fails closed instead of crashing the UI.
  */
 
@@ -32,7 +32,7 @@ function asEntry(raw: unknown): BridgeHistoryEntry | null {
   if (typeof e.asset !== 'string' || e.asset.length === 0) return null;
   if (typeof e.amount !== 'string') return null;
   if (typeof e.receiver !== 'string') return null;
-  // startedAt renders via toLocaleDateString — reject junk up front.
+  // startedAt renders via toLocaleDateString - reject junk up front.
   if (
     typeof e.startedAt !== 'string' ||
     Number.isNaN(Date.parse(e.startedAt))
@@ -72,7 +72,7 @@ export function appendHistory(entry: BridgeHistoryEntry): void {
       JSON.stringify([entry, ...rest].slice(0, HISTORY_LIMIT)),
     );
   } catch {
-    /* storage unavailable — history is best-effort */
+    /* storage unavailable - history is best-effort */
   }
 }
 

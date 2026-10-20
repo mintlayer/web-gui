@@ -74,7 +74,7 @@ describe('GET /ipfs/[...path]', () => {
     expect(vi.mocked(fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).toBe(
       `https://bridge.mintlayer.org/ipfs/${CID_V0}`,
     );
-    // Hop 1 is manual — same-site redirects (CIDv1 → subdomain
+    // Hop 1 is manual - same-site redirects (CIDv1 → subdomain
     // gateway) are followed, foreign ones are not.
     expect(
       (vi.mocked(fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as RequestInit)
@@ -164,7 +164,7 @@ describe('GET /ipfs/[...path]', () => {
       vi.fn(async (url: string | URL, init?: RequestInit) => {
         calls.push(String(url));
         if (calls.length === 1) {
-          // First gateway bounces to a FOREIGN host — must not be followed.
+          // First gateway bounces to a FOREIGN host - must not be followed.
           expect(String(url)).toBe(`https://bridge.mintlayer.org/ipfs/${CID_V0}`);
           expect(init?.redirect).toBe('manual');
           return new Response(null, {
@@ -173,7 +173,7 @@ describe('GET /ipfs/[...path]', () => {
           });
         }
         if (calls.length === 2) {
-          // Second gateway bounces to its OWN subdomain — followed.
+          // Second gateway bounces to its OWN subdomain - followed.
           expect(String(url)).toBe(`https://ipfs.io/ipfs/${CID_V0}`);
           expect(init?.redirect).toBe('manual');
           return new Response(null, {
@@ -195,7 +195,7 @@ describe('GET /ipfs/[...path]', () => {
     expect(calls.some((c) => c.includes('evil.example'))).toBe(false);
   });
 
-  it('refuses svg — same-origin svg can carry script', async () => {
+  it('refuses svg - same-origin svg can carry script', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () =>

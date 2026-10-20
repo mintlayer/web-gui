@@ -2,7 +2,7 @@
  * Proxy-aware cross-site request check.
  *
  * Replaces Astro's built-in `security.checkOrigin`, which compares the
- * browser's Origin header against the URL derived from the *socket* —
+ * browser's Origin header against the URL derived from the *socket* -
  * behind a TLS-terminating proxy (caddy) the app sees plain HTTP and every
  * form POST 403s. See astro/dist/core/app/origin-check.js for the original.
  *
@@ -16,7 +16,7 @@
  * sanitizes inbound X-Forwarded-* (caddy ignores client-supplied values by
  * default). When TRUST_PROXY=true is set, forwarded headers are honored
  * (matching lib/auth.ts getClientAddress); without it, only the request's
- * own URL is used — attacker-supplied X-Forwarded-* on a directly exposed
+ * own URL is used - attacker-supplied X-Forwarded-* on a directly exposed
  * instance can no longer forge the expected origin to defeat this check.
  */
 

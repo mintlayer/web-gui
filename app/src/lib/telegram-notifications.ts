@@ -139,7 +139,7 @@ export async function pollNotifications(
   if (createdBlockCount > state.lastCreatedBlockCount && notifEnabled('staking', true)) {
     const newBlocks = createdBlockCount - state.lastCreatedBlockCount;
     // Balance movement in the same tick can be block rewards, an incoming
-    // deposit, or both — attribute honestly instead of claiming "reward".
+    // deposit, or both - attribute honestly instead of claiming "reward".
     const balanceDiff = balanceAtoms - state.lastBalanceAtoms;
     const balanceNote = balanceDiff > 0n
       ? `\nBalance: <code>+${formatAtoms(balanceDiff)} ML</code> (block rewards and/or incoming deposits).`
@@ -160,7 +160,7 @@ export async function pollNotifications(
       // Not from staking - likely an incoming payment
       const diffDecimal = formatAtoms(balanceDiff);
       // getBalance counts confirmed coins only, so "received" fires on the
-      // same tick the transaction confirms — suppress the generic confirmed
+      // same tick the transaction confirms - suppress the generic confirmed
       // ping below or every deposit notifies twice.
       receivedAnnouncedThisTick = notifEnabled('received', true);
       await maybeNotify(botToken, chatId, 'received',

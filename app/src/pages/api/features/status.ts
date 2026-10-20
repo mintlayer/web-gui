@@ -10,7 +10,7 @@ import {
 import { isBitcoinEnabled } from '@/lib/bitcoin-wallet';
 
 /**
- * GET /api/features/status — enablement state for the optional services
+ * GET /api/features/status - enablement state for the optional services
  * (bitcoin, indexer), whether the enabler sidecar is wired into this
  * install, queued requests and the last apply results.
  *

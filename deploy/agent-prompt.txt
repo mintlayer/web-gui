@@ -1,4 +1,4 @@
-MINTLAYER STACK INSTALL — AGENT PROMPT
+MINTLAYER STACK INSTALL - AGENT PROMPT
 =======================================
 
 You are an AI coding agent installing the Mintlayer stack on this machine:
@@ -120,7 +120,7 @@ Environment (.env):
   .env switches the whole stack after a restart.
   ML_USER_ID / ML_GROUP_ID must match the host user that owns
   mintlayer-data, or containers cannot read/write it. On Windows with
-  Docker Desktop this is always 1000 (WSL2 VM mapping) — leave it.
+  Docker Desktop this is always 1000 (WSL2 VM mapping) - leave it.
 
 Known failure modes:
   - Staking setup can exit when the node and wallet are not yet in sync.

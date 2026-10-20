@@ -51,7 +51,7 @@ export function safeExternalUri(raw: string): string | null {
  * Resolve a chain-supplied URI to a safe <img src>, or null when it must not
  * be rendered as an image.
  *
- * Unlike links, images cannot execute scripts — but they DO fetch the remote
+ * Unlike links, images cannot execute scripts - but they DO fetch the remote
  * resource, so an unfiltered chain-controlled icon_uri/metadata_uri would let
  * a token issuer turn every wallet that lists the token into a tracking
  * beacon (IP + user-agent + view timing) for arbitrary schemes. Only https:

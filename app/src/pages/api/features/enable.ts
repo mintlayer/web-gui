@@ -11,7 +11,7 @@ import {
 import { isBitcoinEnabled } from '@/lib/bitcoin-wallet';
 
 /**
- * POST /api/features/enable — queue an optional-service start (bitcoin or
+ * POST /api/features/enable - queue an optional-service start (bitcoin or
  * indexer profile) for the feature-enabler sidecar. The compose work happens
  * asynchronously outside this process; the UI follows up by polling
  * /api/features/status and the service health endpoints.

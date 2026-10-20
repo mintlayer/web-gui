@@ -56,7 +56,7 @@ async function runCommandLoop(): Promise<void> {
     }
 
     // A rotated token belongs to a different bot whose update ids start near
-    // zero — reusing the old offset would filter out every command silently.
+    // zero - reusing the old offset would filter out every command silently.
     if (botToken !== lastToken) {
       offset = 0;
       lastToken = botToken;
@@ -77,9 +77,9 @@ async function runCommandLoop(): Promise<void> {
     } catch (err) {
       const msg = (err as Error).message ?? '';
       if (msg.includes('409')) {
-        // Another instance is polling — wait longer than the poll timeout (25s)
+        // Another instance is polling - wait longer than the poll timeout (25s)
         // so Telegram drops the competing request before we retry.
-        console.warn('[telegram-bot] 409 conflict — another instance is polling, backing off 35s');
+        console.warn('[telegram-bot] 409 conflict - another instance is polling, backing off 35s');
         await sleep(35_000);
       } else {
         console.error('[telegram-bot] getUpdates failed:', err);

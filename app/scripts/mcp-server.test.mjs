@@ -37,7 +37,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('readPerms — fail closed', () => {
+describe('readPerms - fail closed', () => {
   it('returns all-false when the prefs DB is missing', () => {
     process.env.PREFS_DB_PATH = join(tmp, 'nope.sqlite');
     expect(readPerms()).toEqual({ enabled: false, allowActions: false, allowSpend: false });
@@ -63,7 +63,7 @@ describe('readPerms — fail closed', () => {
   });
 });
 
-describe('guarded — permission gate', () => {
+describe('guarded - permission gate', () => {
   it('denies and never runs the fn when MCP is disabled', async () => {
     prefsDb('off', { 'mcp.enabled': false });
     const fn = vi.fn();
@@ -135,7 +135,7 @@ describe('tolerant', () => {
   });
 });
 
-describe('tool handlers — end to end under full permissions', () => {
+describe('tool handlers - end to end under full permissions', () => {
   it('every registered tool runs and returns a non-error result', async () => {
     prefsDb('all', { 'mcp.enabled': true, 'mcp.allow_actions': true, 'mcp.allow_spend': true });
     okFetch({});

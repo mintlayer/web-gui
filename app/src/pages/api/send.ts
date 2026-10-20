@@ -10,7 +10,7 @@ import { isValidAmount } from '@/lib/validation';
  * Money-movement endpoint: requires a fresh TOTP code (step-up) on top of the
  * session cookie, is rate limited (inside requireStepUp), and accepts each
  * code at most once. address_send/token_send are intentionally absent from
- * the browser/plugin RPC allowlist, so this is the only send path — a stolen
+ * the browser/plugin RPC allowlist, so this is the only send path - a stolen
  * session cookie alone cannot move funds.
  *
  * Amount arrives as a decimal string and is re-validated here (shared
@@ -30,7 +30,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     if (typeof body.address === 'string') address = body.address.trim();
     if (typeof body.amount === 'string') amount = body.amount.trim();
     // Strict enum: anything that is not exactly one of the two kinds is a 400,
-    // never a silent fall-through to an ML send — what the user confirmed in
+    // never a silent fall-through to an ML send - what the user confirmed in
     // the dialog must be what gets sent.
     if (body.asset_type !== 'ml' && body.asset_type !== 'token') {
       return json({ ok: false, error: 'asset_type must be "ml" or "token"' }, 400);

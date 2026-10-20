@@ -8,7 +8,7 @@ interface ModalOverlayProps {
   label: string;
   maxWidth?: string;
   maxHeight?: string;
-  /** When false, Escape/backdrop-click no longer dismiss the dialog — use
+  /** When false, Escape/backdrop-click no longer dismiss the dialog - use
    *  while a submit is in flight so a stray keypress can't abandon it. */
   dismissible?: boolean;
   children: ReactNode;
@@ -26,7 +26,7 @@ export function ModalOverlay({ onClose, label, maxWidth = 'max-w-lg', maxHeight 
   const cardRef = useRef<HTMLDivElement>(null);
   const restoreRef = useRef<HTMLElement | null>(null);
   // Keep onClose in a ref so parent re-renders (inline closures) don't tear
-  // down and re-run the setup effect — that used to steal focus back to the
+  // down and re-run the setup effect - that used to steal focus back to the
   // first field mid-typing.
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;

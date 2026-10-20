@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Mintlayer Nexus — interactive setup
+# Mintlayer Nexus - interactive setup
 # Inspired by the Astro create CLI style
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -157,14 +157,14 @@ docker_install_hint() {
 
 # ── Prerequisite checks ───────────────────────────────────────────────────────
 check_prereqs() {
-  # Check Docker first — give OS-specific install instructions if missing
+  # Check Docker first - give OS-specific install instructions if missing
   if ! command -v docker &>/dev/null; then
     err "Docker is not installed or not in PATH."
     docker_install_hint
     exit 1
   fi
 
-  # Docker found — make sure the daemon is actually running
+  # Docker found - make sure the daemon is actually running
   if ! docker info &>/dev/null 2>&1; then
     err "Docker is installed but the daemon is not running."
     local os
@@ -216,7 +216,7 @@ printf "  ██║ ╚═╝ ██║██║██║ ╚████║   �
 printf "  ╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝   ╚═╝   ╚══════╝╚═╝  ╚═╝   ╚═╝   ╚══════╝╚═╝  ╚═╝\n"
 printf "${RESET}"
 printf "\n"
-printf "  ${BOLD}Web GUI Setup${RESET}  ${GRAY}— node + wallet-rpc-daemon + web interface${RESET}\n"
+printf "  ${BOLD}Web GUI Setup${RESET}  ${GRAY}- node + wallet-rpc-daemon + web interface${RESET}\n"
 printf "\n"
 printf "${GRAY}  This script writes your .env and starts the Docker stack.${RESET}\n"
 printf "\n"
@@ -224,7 +224,7 @@ printf "\n"
 check_prereqs
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 1 — Network
+# Step 1 - Network
 # ─────────────────────────────────────────────────────────────────────────────
 step "Network"
 hint "mainnet uses real ML tokens; testnet is for experimentation"
@@ -232,18 +232,18 @@ hint ""
 
 NETWORK_CHOICE=""
 choose NETWORK_CHOICE "Which network?" \
-  "mainnet  — real funds" \
-  "testnet  — for testing, no real value"
+  "mainnet  - real funds" \
+  "testnet  - for testing, no real value"
 
 case "$NETWORK_CHOICE" in
-  "mainnet  — real funds") NETWORK="mainnet" ;;
+  "mainnet  - real funds") NETWORK="mainnet" ;;
   *)                       NETWORK="testnet" ;;
 esac
 
 divider
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 2 — Passwords
+# Step 2 - Passwords
 # ─────────────────────────────────────────────────────────────────────────────
 step "Passwords"
 hint "Two internal RPC services need authentication."
@@ -258,7 +258,7 @@ if [[ "$USE_RANDOM_PASSWORDS" == "yes" ]]; then
   ok "Generated random passwords (saved to .env)"
 else
   ask "Node RPC password"
-  hint "Used by node-daemon — not exposed outside Docker"
+  hint "Used by node-daemon - not exposed outside Docker"
   prompt_secret NODE_RPC_PASSWORD "Password:"
   while [[ ${#NODE_RPC_PASSWORD} -lt 8 ]]; do
     printf "${CYAN}│${RESET}  ${RED}Password must be at least 8 characters${RESET}\n"
@@ -266,7 +266,7 @@ else
   done
 
   ask "Wallet RPC password"
-  hint "Used by wallet-rpc-daemon — not exposed outside Docker"
+  hint "Used by wallet-rpc-daemon - not exposed outside Docker"
   prompt_secret WALLET_RPC_PASSWORD "Password:"
   while [[ ${#WALLET_RPC_PASSWORD} -lt 8 ]]; do
     printf "${CYAN}│${RESET}  ${RED}Password must be at least 8 characters${RESET}\n"
@@ -280,7 +280,7 @@ WALLET_RPC_USERNAME="wallet_user"
 divider
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 3 — Web UI access (password + TOTP 2FA)
+# Step 3 - Web UI access (password + TOTP 2FA)
 # ─────────────────────────────────────────────────────────────────────────────
 step "Web UI access"
 hint "Protect the wallet interface with a password and authenticator app (TOTP 2FA)."
@@ -288,7 +288,7 @@ hint ""
 
 ask "Web UI password"
 hint "Used to sign in to the wallet web interface."
-hint "Choose a strong password — this guards access to your wallet."
+hint "Choose a strong password - this guards access to your wallet."
 UI_PASSWORD=""
 UI_PASSWORD_CONFIRM=""
 prompt_secret UI_PASSWORD "Password:"
@@ -361,7 +361,7 @@ fi
 printf "${CYAN}│${RESET}\n"
 hint "Or enter the secret manually: ${BOLD}${UI_TOTP_SECRET}${RESET}"
 printf "${CYAN}│${RESET}\n"
-warn "Scan this QR code NOW before continuing — it will not be shown again."
+warn "Scan this QR code NOW before continuing - it will not be shown again."
 printf "${CYAN}│${RESET}\n"
 SCANNED="no"
 confirm SCANNED "I have scanned the QR code / saved the TOTP secret" "N"
@@ -382,7 +382,7 @@ ok "2FA configured"
 divider
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 4 — Web GUI port
+# Step 4 - Web GUI port
 # ─────────────────────────────────────────────────────────────────────────────
 step "Web interface"
 
@@ -398,13 +398,13 @@ done
 
 ask "Expose the web GUI to your network?"
 hint "Three access modes:"
-hint "  localhost only — the GUI is reachable solely from this machine;"
+hint "  localhost only - the GUI is reachable solely from this machine;"
 hint "    open it through an SSH tunnel. Most secure."
-hint "  LAN over HTTPS — other devices open it at https://<hostname>; Caddy"
+hint "  LAN over HTTPS - other devices open it at https://<hostname>; Caddy"
 hint "    terminates TLS with a local Certificate Authority (works without a"
 hint "    public domain). Browsers warn once until you import the CA root,"
 hint "    downloadable from Settings -> HTTPS after setup."
-hint "  LAN plain HTTP — not recommended: traffic is unencrypted and the"
+hint "  LAN plain HTTP - not recommended: traffic is unencrypted and the"
 hint "    session cookie is refused on non-localhost origins, so sign-in only"
 hint "    works from this machine anyway."
 hint "Running your own TLS proxy on a public domain? Pick 'localhost only'"
@@ -426,28 +426,28 @@ case "$ACCESS_CHOICE" in
     hint "(mDNS) or an entry in your router's DNS / your device's hosts file."
     prompt WEB_GUI_HOST "Hostname:" "$(hostname -s 2>/dev/null || echo mintlayer-gui).local"
     # Hostname flows into the Caddyfile (pre-parse textual substitution),
-    # docker-compose env interpolation, and the WebAuthn RP ID — so it must
+    # docker-compose env interpolation, and the WebAuthn RP ID - so it must
     # be a plain lowercase DNS name. Uppercase is normalized; everything
     # else invalid is re-asked.
     while ! [[ "${WEB_GUI_HOST,,}" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$ ]]; do
-      printf "${CYAN}│${RESET}  ${RED}Enter a valid hostname (letters, digits, dots, hyphens — no ports, spaces or underscores)${RESET}\n"
+      printf "${CYAN}│${RESET}  ${RED}Enter a valid hostname (letters, digits, dots, hyphens - no ports, spaces or underscores)${RESET}\n"
       prompt WEB_GUI_HOST "Hostname:" "$(hostname -s 2>/dev/null || echo mintlayer-gui).local"
     done
     WEB_GUI_HOST="${WEB_GUI_HOST,,}"
-    warn "The GUI stays bound to 127.0.0.1 — only the HTTPS gateway (port 443) is exposed."
-    hint "Always open https://${WEB_GUI_HOST} — plain http:// (port 80) is not published."
+    warn "The GUI stays bound to 127.0.0.1 - only the HTTPS gateway (port 443) is exposed."
+    hint "Always open https://${WEB_GUI_HOST} - plain http:// (port 80) is not published."
     ;;
   *"LAN plain HTTP"*)
     WEB_GUI_BIND="0.0.0.0"
     warn "GUI will be reachable from other machines (plain HTTP)."
     warn "Login requires a Secure session cookie, which browsers refuse on"
-    warn "plain HTTP for non-localhost origins — sign-in works only locally."
+    warn "plain HTTP for non-localhost origins - sign-in works only locally."
     ;;
   *)
     ;;
 esac
 
-# Passkeys (WebAuthn) need a proper DNS hostname — they never work from raw
+# Passkeys (WebAuthn) need a proper DNS hostname - they never work from raw
 # IPs. The HTTPS mode implies one; localhost/plain-HTTP keep passkeys off.
 
 # Derive passkey config from hostname
@@ -463,7 +463,7 @@ fi
 divider
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 5 — Indexer
+# Step 5 - Indexer
 # ─────────────────────────────────────────────────────────────────────────────
 step "Indexer stack"
 hint "The indexer adds PostgreSQL + blockchain scanner + REST API."
@@ -499,7 +499,7 @@ fi
 divider
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step — Bitcoin node + BTC wallet (optional)
+# Step - Bitcoin node + BTC wallet (optional)
 # ─────────────────────────────────────────────────────────────────────────────
 step "Bitcoin node + BTC wallet (optional)"
 hint "Adds a Bitcoin Core node and a built-in BTC wallet to the web UI"
@@ -563,7 +563,7 @@ fi
 divider
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step — Auto-update (Watchtower)
+# Step - Auto-update (Watchtower)
 # ─────────────────────────────────────────────────────────────────────────────
 step "Auto-update (Watchtower)"
 hint "Watchtower checks Docker Hub daily at 04:00 and automatically pulls new"
@@ -587,11 +587,11 @@ fi
 divider
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step — IPFS Storage (optional)
+# Step - IPFS Storage (optional)
 # ─────────────────────────────────────────────────────────────────────────────
 step "IPFS Storage (optional)"
 hint "Enables automatic upload of token/NFT images and metadata to IPFS."
-hint "Without this, URLs can still be entered manually — you can configure this"
+hint "Without this, URLs can still be entered manually - you can configure this"
 hint "later in the web UI Settings page."
 hint ""
 
@@ -603,20 +603,20 @@ FILEBASE_TOKEN=""
 PINATA_JWT=""
 
 if [[ "$SETUP_IPFS" == "yes" ]]; then
-  hint "  Filebase — 5 GB free, always public — https://filebase.com"
-  hint "  Pinata   — requires paid plan for public files — https://app.pinata.cloud"
+  hint "  Filebase - 5 GB free, always public - https://filebase.com"
+  hint "  Pinata   - requires paid plan for public files - https://app.pinata.cloud"
   hint ""
 
   IPFS_CHOICE=""
   choose IPFS_CHOICE "Choose IPFS provider:" \
-    "Filebase (recommended — 5 GB free, always public)" \
+    "Filebase (recommended - 5 GB free, always public)" \
     "Pinata (paid account required to make files public)"
 
   case "$IPFS_CHOICE" in
     *"Filebase"*)
       IPFS_PROVIDER="filebase"
       ask "Filebase API key"
-      hint "Find it at https://console.filebase.com/keys — scroll to the bottom"
+      hint "Find it at https://console.filebase.com/keys - scroll to the bottom"
       hint "for the bucket-specific IPFS API keys (not the S3 access keys at the top)."
       prompt_secret FILEBASE_TOKEN "API key:"
       while [[ -z "$FILEBASE_TOKEN" ]]; do
@@ -641,7 +641,7 @@ fi
 divider
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step — Telegram Notifications (optional)
+# Step - Telegram Notifications (optional)
 # ─────────────────────────────────────────────────────────────────────────────
 step "Telegram Notifications (optional)"
 hint "Receive wallet alerts (payments, staking rewards, node status) via a Telegram bot."
@@ -688,10 +688,10 @@ printf "${CYAN}│${RESET}  %-22s %s\n" "Web UI auth:"  "${BOLD}password + TOTP 
 printf "${CYAN}│${RESET}  %-22s %s\n" "Web GUI:"    "${BOLD}${PASSKEY_ORIGIN}${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "LAN HTTPS:"   "${BOLD}$([ "$WEB_GUI_TLS" == "true" ] && echo "enabled (${WEB_GUI_HOST}, local CA)" || echo "disabled")${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Passkeys:"   "${BOLD}$([ "$WEB_GUI_HOST" != "localhost" ] && echo "enabled (${WEB_GUI_HOST})" || echo "localhost only")${RESET}"
-printf "${CYAN}│${RESET}  %-22s %s\n" "Indexer:"      "${BOLD}$([ "$ENABLE_INDEXER" == "yes" ] && echo "enabled (port ${API_WEB_SERVER_PORT}) — Token Management + Trading active" || echo "disabled — Token Management + Trading hidden")${RESET}"
+printf "${CYAN}│${RESET}  %-22s %s\n" "Indexer:"      "${BOLD}$([ "$ENABLE_INDEXER" == "yes" ] && echo "enabled (port ${API_WEB_SERVER_PORT}) - Token Management + Trading active" || echo "disabled - Token Management + Trading hidden")${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Bitcoin:"     "${BOLD}$([ "$ENABLE_BITCOIN" == "yes" ] && echo "enabled (node + BTC wallet)" || echo "disabled")${RESET}"
-printf "${CYAN}│${RESET}  %-22s %s\n" "IPFS storage:" "${BOLD}$([ -n "$IPFS_PROVIDER" ] && echo "$IPFS_PROVIDER" || echo "disabled — configure later in Settings")${RESET}"
-printf "${CYAN}│${RESET}  %-22s %s\n" "Telegram:"     "${BOLD}$([ -n "$TELEGRAM_BOT_TOKEN" ] && echo "configured" || echo "disabled — configure later in Settings")${RESET}"
+printf "${CYAN}│${RESET}  %-22s %s\n" "IPFS storage:" "${BOLD}$([ -n "$IPFS_PROVIDER" ] && echo "$IPFS_PROVIDER" || echo "disabled - configure later in Settings")${RESET}"
+printf "${CYAN}│${RESET}  %-22s %s\n" "Telegram:"     "${BOLD}$([ -n "$TELEGRAM_BOT_TOKEN" ] && echo "configured" || echo "disabled - configure later in Settings")${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Auto-update:"  "${BOLD}$([ "$ENABLE_WATCHTOWER" == "yes" ] && echo "enabled (daily at 04:00)" || echo "disabled")${RESET}"
 printf "${CYAN}│${RESET}\n"
 
@@ -715,7 +715,7 @@ divider
 # Get current user/group IDs for the container's mintlayer user.
 # GIDs below 1000 are reserved system groups on Linux and may already exist
 # inside the container (e.g. macOS 'staff' GID 20 = Linux 'dialout' GID 20).
-# Use 1000 in that case — it's the standard unprivileged GID on Linux.
+# Use 1000 in that case - it's the standard unprivileged GID on Linux.
 ML_USER_ID=$(id -u 2>/dev/null || echo "1000")
 _raw_gid=$(id -g 2>/dev/null || echo "1000")
 if (( _raw_gid < 1000 )); then
@@ -770,7 +770,7 @@ WALLET_RPC_CMD="wallet-rpc-daemon ${NETWORK}"
 if [[ -f .env ]]; then
   ENV_BACKUP=".env.bak.$(date +%Y%m%d-%H%M%S)"
   cp .env "$ENV_BACKUP" && chmod 600 "$ENV_BACKUP"
-  warn "Existing .env detected — old credentials saved to $ENV_BACKUP."
+  warn "Existing .env detected - old credentials saved to $ENV_BACKUP."
   warn "Re-running setup REGENERATES the password, 2FA secret and RPC credentials; you will be logged out and must re-scan TOTP."
 fi
 ( umask 077 && cat > .env <<EOF
@@ -784,7 +784,7 @@ NETWORK=${NETWORK}
 ML_USER_ID=${ML_USER_ID}
 ML_GROUP_ID=${ML_GROUP_ID}
 
-# wallet-rpc-daemon command (network only — wallet files are managed via the web UI)
+# wallet-rpc-daemon command (network only - wallet files are managed via the web UI)
 WALLET_RPC_CMD="${WALLET_RPC_CMD}"
 
 # Node RPC credentials
@@ -804,7 +804,7 @@ WEB_GUI_BIND=${WEB_GUI_BIND}
 # LAN HTTPS gateway (Caddy local CA, profile: web)
 WEB_GUI_TLS=${WEB_GUI_TLS}
 
-# Passkeys (WebAuthn) — derived from WEB_GUI_HOST above
+# Passkeys (WebAuthn) - derived from WEB_GUI_HOST above
 # Override these if running behind a reverse proxy that changes the visible hostname.
 PASSKEY_RP_ID=${PASSKEY_RP_ID}
 PASSKEY_ORIGIN=${PASSKEY_ORIGIN}
@@ -815,7 +815,7 @@ INDEXER_ENABLED=${INDEXER_ENABLED}
 # Session signing secret (generated by init.sh)
 SESSION_SECRET=${SESSION_SECRET}
 
-# Watchtower — auto-update Mintlayer images (profile: watchtower)
+# Watchtower - auto-update Mintlayer images (profile: watchtower)
 # telegram://BOT_TOKEN@telegram?channels=CHAT_ID  or leave empty
 WATCHTOWER_NOTIFICATION_URL=${WATCHTOWER_NOTIFICATION_URL}
 
@@ -855,7 +855,7 @@ COMPOSE_PROFILES=${COMPOSE_PROFILES_LINE}
 
 # Absolute path of this install directory. The feature-enabler sidecar mounts
 # the project at the SAME path inside its container and passes it to
-# 'docker compose --project-directory' — identical paths keep the compose
+# 'docker compose --project-directory' - identical paths keep the compose
 # project name and every relative bind mount resolving to this directory on
 # the host (a mismatched path would build a phantom duplicate stack).
 PROJECT_DIR_HOST=$(pwd)
@@ -933,7 +933,7 @@ if [[ "$START" == "yes" ]]; then
   # Local rebuilds stay available: docker compose build (see README).
   $COMPOSE $PROFILES pull --quiet || {
     hint "Prebuilt image pull failed. On a fresh branch, CI must have published"
-    hint "ghcr.io/mintlayer/web-gui/*:${IMAGE_TAG} first — falling back to a local build."
+    hint "ghcr.io/mintlayer/web-gui/*:${IMAGE_TAG} first - falling back to a local build."
     $COMPOSE $PROFILES build
   }
   $COMPOSE $PROFILES up -d

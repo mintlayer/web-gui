@@ -12,7 +12,7 @@ import { requireStepUp } from '@/lib/step-up';
 
 /**
  * API contract for the optional-services enable/disable/status routes
- * (tests live outside src/pages — astro compiles colocated tests there
+ * (tests live outside src/pages - astro compiles colocated tests there
  * into phantom endpoints). Contract: availability gate, step-up
  * requirement, strict body validation, "already enabled/queued"
  * idempotency, exact request payloads, honest status output.

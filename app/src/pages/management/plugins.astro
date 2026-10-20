@@ -24,7 +24,7 @@ if (Astro.request.method === 'POST') {
         result = { action: 'error', message: 'No file selected.' };
       } else {
         // Server-side self-call: undici fetch sends no Origin of its own,
-        // which the CSRF guard reads as cross-site for form-like bodies —
+        // which the CSRF guard reads as cross-site for form-like bodies -
         // relay the browser's Origin so the request keeps its same-origin
         // status and every API-side gate (CSRF, 2FA, size cap) still runs.
         const relay = {
@@ -50,7 +50,7 @@ if (Astro.request.method === 'POST') {
           cookie: Astro.request.headers.get('cookie') ?? '',
           origin: Astro.request.headers.get('origin') ?? '',
         },
-        // Enabling activates dormant plugin code — carries the TOTP code for
+        // Enabling activates dormant plugin code - carries the TOTP code for
         // the step-up gate; disabling needs no code.
         body: JSON.stringify({ enabled: enabledVal, totp_code: str(form.get('totp_code')) }),
       });

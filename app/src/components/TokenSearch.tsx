@@ -79,7 +79,7 @@ function TokenCard({ tokenId, info, explorerBase, isFavourite, onToggleFavourite
     ? (info.content.metadata.icon_uri?.text ?? null)
     : (info?.type === 'FungibleToken' ? (info.content.metadata_uri.text ?? null) : null);
   // Chain-controlled icon URLs must pass the image URI whitelist (https/ipfs/
-  // data:image) — a raw https tracking pixel would leak every viewer's IP.
+  // data:image) - a raw https tracking pixel would leak every viewer's IP.
   const iconUrl = rawIconUrl ? safeImageUri(rawIconUrl) : null;
   const supplyType = info ? getSupplyType(info) : null;
   const circulatingDisplay = info ? getCirculatingDisplay(info, ticker) : null;
@@ -213,12 +213,12 @@ export default function TokenSearch({ network }: Props) {
       next = favourites.filter(f => f.tokenId !== tokenId);
     } else {
       if (favourites.length >= FAVOURITES_CAP) {
-        setSaveError(`Your list is at its cap (${FAVOURITES_CAP}) — unpin something first.`);
+        setSaveError(`Your list is at its cap (${FAVOURITES_CAP}) - unpin something first.`);
         return;
       }
       next = [...favourites, { tokenId, ticker: ticker === '???' ? `${tokenId.slice(0, 8)}…` : ticker }];
     }
-    // Persist first, then commit — the UI never claims a state the store
+    // Persist first, then commit - the UI never claims a state the store
     // doesn't hold, and a later import can't overwrite a failed toggle.
     try {
       const res = await fetch('/api/prefs', {
@@ -329,7 +329,7 @@ export default function TokenSearch({ network }: Props) {
       const room = Math.max(0, FAVOURITES_CAP - favourites.length);
       const accepted = additions.slice(0, room);
       if (accepted.length === 0) {
-        setVtNote('Nothing to import — these tokens are already in your list.');
+        setVtNote('Nothing to import - these tokens are already in your list.');
         return;
       }
       const next: FavouriteEntry[] = [
@@ -346,7 +346,7 @@ export default function TokenSearch({ network }: Props) {
       setFavourites(next);
       fetchFavInfos(next.map(f => f.tokenId));
       setVtNote(additions.length > accepted.length
-        ? `Imported ${accepted.length} tokens — the list cap was reached.`
+        ? `Imported ${accepted.length} tokens - the list cap was reached.`
         : `Imported ${accepted.length} token${accepted.length === 1 ? '' : 's'}.`);
       setVtSelected(new Set());
     } catch (err) {
@@ -385,7 +385,7 @@ export default function TokenSearch({ network }: Props) {
             {vtLoading ? 'Loading…' : vtOpen ? 'Hide verified tokens' : 'Browse verified tokens'}
           </button>
           <span className="text-xs text-gray-500">
-            From the Mintlayer explorer's verified list — always check a token before trading it.
+            From the Mintlayer explorer's verified list - always check a token before trading it.
           </span>
         </div>
 

@@ -21,7 +21,7 @@ const WALLET_RPC_URL = process.env.WALLET_RPC_URL ?? 'http://localhost:3034';
 const WALLET_RPC_USERNAME = process.env.WALLET_RPC_USERNAME ?? '';
 const WALLET_RPC_PASSWORD = process.env.WALLET_RPC_PASSWORD ?? '';
 
-// Read at call time (not import) so a fresh env — including a test's temp DB —
+// Read at call time (not import) so a fresh env - including a test's temp DB -
 // always wins.
 function prefsDbPath() {
   return process.env.PREFS_DB_PATH ?? join('/app/prefs', 'mintlayer_prefs.sqlite');
@@ -244,7 +244,7 @@ registerTool(
   'send_coins',
   {
     description:
-      'Send ML coins to an address. Moves real funds — requires "Allow fund-moving operations" in the settings panel.',
+      'Send ML coins to an address. Moves real funds - requires "Allow fund-moving operations" in the settings panel.',
     inputSchema: {
       account,
       address: z.string().min(1).describe('Destination address'),
@@ -284,7 +284,7 @@ registerTool(
   ({ method, params }) => guarded([method], () => rpcCall(method, params)),
 );
 
-// Only connect the stdio transport when run as the entry script — not when
+// Only connect the stdio transport when run as the entry script - not when
 // imported by tests.
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {

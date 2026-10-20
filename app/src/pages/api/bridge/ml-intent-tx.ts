@@ -17,7 +17,7 @@ import { validateEvmAddress } from '@/lib/bridge-sdk/addresses';
  * Security posture:
  *  - Money-movement endpoint: requires a fresh, single-use TOTP code
  *    (step-up) on top of the session cookie, plus per-IP rate limiting.
- *  - The token_id and destination are NOT taken from the request — they are
+ *  - The token_id and destination are NOT taken from the request - they are
  *    resolved server-side from the bridge agents-config, so a caller can only
  *    mint bridge deposits for supported tokens into the bridge's own deposit
  *    address. The intent (EVM receiver) is user choice.
@@ -45,7 +45,7 @@ interface AgentsConfig {
 function pickFlavorConfig(config: AgentsConfig) {
   const flavors = config.eth_flavor_specific_config ?? {};
   // Flavor keys are network-specific ('' = mainnet, 'sepolia' = testnet) and
-  // their order is not — pick the one matching the configured network first.
+  // their order is not - pick the one matching the configured network first.
   const preferred = config.network_type === 'mainnet' ? '' : 'sepolia';
   const key =
     flavors[preferred]?.m2e != null
@@ -57,7 +57,7 @@ function pickFlavorConfig(config: AgentsConfig) {
 /**
  * Whitelist wallet-rpc failures into safe, user-fixable messages.
  * Transport failures (code -32000/-32001) and daemon HTTP >=500 are service
- * outages, not user mistakes — they must return 503 so the UI doesn't tell
+ * outages, not user mistakes - they must return 503 so the UI doesn't tell
  * the user to fix something they cannot. Daemon JSON-RPC rejections keep the
  * whitelist below; anything unrecognized stays generic (never echo daemon
  * internals such as URLs to the client).
@@ -70,7 +70,7 @@ function safeWalletError(err: unknown): { message: string; status: number } {
     }
     const msg = err.message.toLowerCase();
     if (msg.includes('insufficient')) return { message: 'Insufficient funds for this transfer', status: 400 };
-    if (msg.includes('not open') || msg.includes('wallet not')) return { message: 'Wallet is not open — open it from the dashboard first', status: 409 };
+    if (msg.includes('not open') || msg.includes('wallet not')) return { message: 'Wallet is not open - open it from the dashboard first', status: 409 };
     if (msg.includes('balance')) return { message: 'Insufficient balance for this transfer', status: 400 };
     return { message: 'Wallet rejected the bridge transaction', status: 400 };
   }
@@ -113,7 +113,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
       `${getServerBridgeApiUrl().replace(/\/+$/, '')}/agents-config`,
     );
     if (typeof config.ml_tokens?.[tokenId] !== 'string') {
-      // Not `!config.ml_tokens?.[tokenId]` — truthiness would pass inherited
+      // Not `!config.ml_tokens?.[tokenId]` - truthiness would pass inherited
       // Object properties (constructor/toString/__proto__) and burn a code
       // for a request the wallet would reject anyway.
       return json({ ok: false, error: `token ${tokenId} is not bridged` }, 400);

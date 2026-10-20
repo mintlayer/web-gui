@@ -1,6 +1,6 @@
 /**
  * "Did you mean…?" address typo-correction chip, shared by the Bitcoin and
- * Bridge send flows (bech32 checksum recovery). Never auto-replaces input —
+ * Bridge send flows (bech32 checksum recovery). Never auto-replaces input -
  * the user must accept the suggestion explicitly.
  */
 

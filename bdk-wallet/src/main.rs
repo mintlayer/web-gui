@@ -143,7 +143,7 @@ fn save_seed(path: &PathBuf, mnemonic: &str, network: Network, created_at: u64) 
     // create_new + 0600 from the start: no window where the mnemonic sits on
     // disk with default (world-readable) permissions before the chmod lands.
     // sync_all before returning: the only copy of the wallet's key material
-    // must not sit in a page cache that a crash/power-loss can lose — a seed
+    // must not sit in a page cache that a crash/power-loss can lose - a seed
     // file that exists but reads back empty truncates the wallet into
     // unrecoverable.
     #[cfg(unix)]
@@ -190,7 +190,7 @@ fn build_wallet(config: &Config, mnemonic: &str) -> Result<BdkWallet> {
         path: config.data_dir.join("wallet.sqlite").display().to_string(),
     }))?;
 
-    // The sqlite db (plus its WAL/SHM sidecars) holds the full xprv — tighten
+    // The sqlite db (plus its WAL/SHM sidecars) holds the full xprv - tighten
     // to owner-only. bdk creates the file with the process umask, which in
     // typical container images leaves it 0644 (world-readable).
     #[cfg(unix)]

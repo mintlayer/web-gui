@@ -68,7 +68,7 @@ function nftIconUrl(info: TokenInfo | undefined): string | null {
   if (info?.type !== 'NonFungibleToken') return null;
   const raw = hexToText(info.content.metadata.icon_uri) ?? null;
   if (!raw) return null;
-  // Whitelist-filtered (https/ipfs/data:image) — never a raw chain URI.
+  // Whitelist-filtered (https/ipfs/data:image) - never a raw chain URI.
   return safeImageUri(raw.startsWith("ipfs://") ? "https://ipfs.io/ipfs/" + raw.slice(7) : raw);
 }
 ---
@@ -306,7 +306,7 @@ function nftIconUrl(info: TokenInfo | undefined): string | null {
             class="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder:text-gray-600
                    px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-mint-600" />
           <div id="addr-suggestion" class="hidden mt-2 rounded-lg border border-amber-800 bg-amber-900/20 px-3 py-2 text-xs text-amber-300">
-            <span>Checksum failed — did you mean</span>
+            <span>Checksum failed - did you mean</span>
             <code id="addr-suggestion-text" class="font-mono text-mint-300 break-all"></code>
             <span id="addr-suggestion-fixed"></span>?
             <button id="addr-suggestion-use" type="button" class="ml-1 underline font-semibold hover:text-amber-200">Use suggested address</button>
@@ -407,7 +407,7 @@ const txidEl     = document.getElementById('send-txid')!;
 const submitBtn  = document.getElementById('send-submit') as HTMLButtonElement;
 const totpInput  = document.getElementById('send-totp') as HTMLInputElement;
 
-/** Fetch followed the auth 302 to /login — the caller must redirect, not retry. */
+/** Fetch followed the auth 302 to /login - the caller must redirect, not retry. */
 class SendExpiredError extends Error {}
 
 /** Bumped on every openSendModal; stale async continuations compare and bail. */
@@ -528,12 +528,12 @@ submitBtn.addEventListener('click', async () => {
 
   checkAddressTypo();
   if (pendingCorrection) {
-    errBox.textContent = 'Address checksum failed — review the suggested correction below.';
+    errBox.textContent = 'Address checksum failed - review the suggested correction below.';
     errBox.classList.remove('hidden');
     return;
   }
 
-  // Review step: sends are irreversible — one explicit confirmation with the
+  // Review step: sends are irreversible - one explicit confirmation with the
   // full amount/recipient summary before anything is signed or broadcast.
   const summary = activeIsNft
     ? `NFT ${activeAssetId.slice(0, 12)}…`
@@ -568,17 +568,17 @@ submitBtn.addEventListener('click', async () => {
           if (res.redirected || res.status === 401 || res.status === 302) {
             throw new SendExpiredError();
           }
-          throw new Error(`Send failed (HTTP ${res.status}) — no transaction was broadcast`);
+          throw new Error(`Send failed (HTTP ${res.status}) - no transaction was broadcast`);
         }
         const body = await res.json().catch(() => null) as { ok: boolean; tx_id?: string; error?: string; code_consumed?: boolean } | null;
         if (!body) {
-          throw new Error(`Send failed (HTTP ${res.status}) — no transaction was broadcast`);
+          throw new Error(`Send failed (HTTP ${res.status}) - no transaction was broadcast`);
         }
         if (!res.ok || !body.ok || !body.tx_id) {
           if (body.code_consumed) {
             // Step-up already burned the code even though the send failed
             // daemon-side: the retry needs a FRESH code, so say so.
-            throw new Error(`${body.error ?? 'Send failed'} — your authenticator code was consumed; enter a fresh code to retry.`);
+            throw new Error(`${body.error ?? 'Send failed'} - your authenticator code was consumed; enter a fresh code to retry.`);
           }
           throw new Error(body.error ?? 'Send failed');
         }
@@ -598,14 +598,14 @@ submitBtn.addEventListener('click', async () => {
   } catch (err) {
     if (gen !== sendModalGen) return;
     if (err instanceof SendExpiredError) {
-      errBox.textContent = 'Your session expired — redirecting to login…';
+      errBox.textContent = 'Your session expired - redirecting to login…';
       errBox.classList.remove('hidden');
       setTimeout(() => window.location.assign('/login'), 800);
       return;
     }
     errBox.textContent = (err as Error).message;
     errBox.classList.remove('hidden');
-    // A failed step-up means the code is dead (burned or stale) — never let
+    // A failed step-up means the code is dead (burned or stale) - never let
     // the user retry the same six digits.
     totpInput.value = '';
     totpInput.focus();

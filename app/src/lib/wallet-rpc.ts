@@ -242,7 +242,7 @@ export async function createWallet(
 
 /**
  * Recover an existing wallet from a mnemonic by scanning the full blockchain.
- * Blocks until the scan completes — can take many minutes on mainnet.
+ * Blocks until the scan completes - can take many minutes on mainnet.
  */
 export async function recoverWallet(
   path: string,

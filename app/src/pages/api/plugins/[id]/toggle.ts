@@ -20,7 +20,7 @@ export const POST: APIRoute = async ({ params, request, clientAddress }) => {
   }
 
   // Enabling activates dormant plugin code (its page becomes reachable and the
-  // unsandboxed handler runs) — the same step as installing, so it needs the
+  // unsandboxed handler runs) - the same step as installing, so it needs the
   // same fresh 2FA code. Disabling only reduces capability: session is enough.
   if (body.enabled) {
     const totpCode = typeof body.totp_code === 'string' ? body.totp_code : '';

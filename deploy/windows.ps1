@@ -1,6 +1,6 @@
 #Requires -Version 5.1
 # ─────────────────────────────────────────────────────────────────────────────
-# Mintlayer Web GUI — Windows installer (Docker Desktop, WSL2 backend)
+# Mintlayer Web GUI - Windows installer (Docker Desktop, WSL2 backend)
 # Served at https://get.mintlayer.org/windows.ps1
 #
 # Wizard:
@@ -26,7 +26,7 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 # ML_NONINTERACTIVE=1 (alias: NONINTERACTIVE=1) skips every prompt. Values are
 # taken from the environment with sane defaults:
 #   INSTALL_DIR ($HOME\mintlayer)  NETWORK (mainnet)  WEB_UI_PASSWORD (generated)
-# Intended for AI coding agents and automation — see agent-prompt.txt.
+# Intended for AI coding agents and automation - see agent-prompt.txt.
 $script:NonInteractive = ($env:ML_NONINTERACTIVE -eq '1' -or $env:NONINTERACTIVE -eq '1')
 
 function Exit-ML([int]$Code = 0) {
@@ -145,7 +145,7 @@ function New-PasswordHash([string]$Password) {
     $rng.GetBytes($salt)
     $saltHex = ([BitConverter]::ToString($salt) -replace '-').ToLower()
     # The app's verifyPassword hashes over the UTF-8 bytes of the stored HEX
-    # SALT STRING (salt.encode() in init.sh / deploy/linux.sh) — deriving over
+    # SALT STRING (salt.encode() in init.sh / deploy/linux.sh) - deriving over
     # the raw salt bytes produces a different key and logins always fail.
     $pbkdf2  = New-Object System.Security.Cryptography.Rfc2898DeriveBytes(
         $Password, [System.Text.Encoding]::UTF8.GetBytes($saltHex), 210000,
@@ -207,7 +207,7 @@ function Test-DockerRunning {
 
 # ── WSL2 / virtualization preflight ──────────────────────────────────────────
 function Invoke-EnsureWsl2 {
-    # CPU virtualization — if off, nothing else will work
+    # CPU virtualization - if off, nothing else will work
     try {
         $cpu = Get-CimInstance -ClassName Win32_Processor -ErrorAction Stop | Select-Object -First 1
         if ($cpu -and $cpu.VirtualizationFirmwareEnabled -eq $false) {
@@ -285,7 +285,7 @@ function Invoke-CheckPrereqs {
             Hint-ML "Automatic installation via winget requires an Administrator PowerShell."
             Hint-ML "Re-run as Administrator, or install manually:"
         } else {
-            Hint-ML "winget is not available — install manually:"
+            Hint-ML "winget is not available - install manually:"
         }
         Err-ML "Docker Desktop is required."
         Write-Host "  Download: https://docs.docker.com/desktop/install/windows-install/" -ForegroundColor Cyan
@@ -322,7 +322,7 @@ function Invoke-Bootstrap {
 
     $composePath = Join-Path $script:InstallDir 'docker-compose.yml'
     if (Test-Path $composePath) {
-        Ok-ML "docker-compose.yml already exists — skipping"
+        Ok-ML "docker-compose.yml already exists - skipping"
     } else {
         # Single-quoted here-string: PowerShell does NOT expand $ signs inside @'...'@
         $compose = @'
@@ -409,7 +409,7 @@ services:
       # Shared with wallet-rpc-daemon's /home/mintlayer/ so uploaded wallet files
       # are accessible to the daemon at /home/mintlayer/uploads/<filename>
       - "./mintlayer-data/uploads:/app/uploads"
-      # Server-side preferences (SQLite) — persists across browsers and restarts
+      # Server-side preferences (SQLite) - persists across browsers and restarts
       - "./mintlayer-data/prefs:/app/prefs"
     ports:
       - "127.0.0.1:4321:4321"
@@ -646,15 +646,15 @@ Write-Host "${CYAN}${BOLD}  ██║╚██╔╝██║██║╚██�
 Write-Host "${CYAN}${BOLD}  ██║ ╚═╝ ██║██║██║ ╚████║   ██║   ███████╗██║  ██║   ██║   ███████╗██║  ██║${RESET}"
 Write-Host "${CYAN}${BOLD}  ╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝   ╚═╝   ╚══════╝╚═╝  ╚═╝   ╚═╝   ╚══════╝╚═╝  ╚═╝${RESET}"
 Write-Host ""
-Write-Host "  ${BOLD}Web GUI Setup${RESET}  ${GRAY}— node + wallet-rpc-daemon + web interface${RESET}"
+Write-Host "  ${BOLD}Web GUI Setup${RESET}  ${GRAY}- node + wallet-rpc-daemon + web interface${RESET}"
 Write-Host ""
 if ($script:NonInteractive) {
-    Write-Host "${GRAY}  Non-interactive mode — values from environment, no prompts.${RESET}"
+    Write-Host "${GRAY}  Non-interactive mode - values from environment, no prompts.${RESET}"
     Write-Host ""
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 1 — Network
+# Step 1 - Network
 # ─────────────────────────────────────────────────────────────────────────────
 if ($script:NonInteractive) {
     Step-ML "Network"
@@ -668,13 +668,13 @@ if ($script:NonInteractive) {
     Step-ML "Network"
     Hint-ML "mainnet uses real ML tokens; testnet is for experimentation"
     Hint-ML ""
-    $networkChoice = Choose-ML "Which network?" @("mainnet  — real funds", "testnet  — for testing, no real value")
+    $networkChoice = Choose-ML "Which network?" @("mainnet  - real funds", "testnet  - for testing, no real value")
     $Network = if ($networkChoice -like "*mainnet*") { "mainnet" } else { "testnet" }
     Divider-ML
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 2 — Passwords
+# Step 2 - Passwords
 # ─────────────────────────────────────────────────────────────────────────────
 $useRandom = 'yes'
 if ($script:NonInteractive) {
@@ -696,14 +696,14 @@ if ($script:NonInteractive) {
         Ok-ML "Generated random passwords (saved to .env)"
     } else {
         Ask-ML "Node RPC password"
-        Hint-ML "Used by node-daemon — not exposed outside Docker"
+        Hint-ML "Used by node-daemon - not exposed outside Docker"
         do {
             $NodeRpcPassword = PromptSecret-ML "Password:"
             if ($NodeRpcPassword.Length -lt 8) { Write-Host "${CYAN}│${RESET}  ${RED}Password must be at least 8 characters${RESET}" }
         } while ($NodeRpcPassword.Length -lt 8)
 
         Ask-ML "Wallet RPC password"
-        Hint-ML "Used by wallet-rpc-daemon — not exposed outside Docker"
+        Hint-ML "Used by wallet-rpc-daemon - not exposed outside Docker"
         do {
             $WalletRpcPassword = PromptSecret-ML "Password:"
             if ($WalletRpcPassword.Length -lt 8) { Write-Host "${CYAN}│${RESET}  ${RED}Password must be at least 8 characters${RESET}" }
@@ -715,7 +715,7 @@ if ($script:NonInteractive) {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 3 — Web UI access (password + TOTP 2FA)
+# Step 3 - Web UI access (password + TOTP 2FA)
 # ─────────────────────────────────────────────────────────────────────────────
 if ($script:NonInteractive) {
     Step-ML "Web UI access"
@@ -744,7 +744,7 @@ if ($script:NonInteractive) {
     Hint-ML ""
     Ask-ML "Web UI password"
     Hint-ML "Used to sign in to the wallet web interface."
-    Hint-ML "Choose a strong password — this guards access to your wallet."
+    Hint-ML "Choose a strong password - this guards access to your wallet."
     $UiPassword = ''; $UiPasswordConfirm = ''
     do {
         do {
@@ -769,7 +769,7 @@ if ($script:NonInteractive) {
     Write-Host "${CYAN}│${RESET}"
     Write-Host "${CYAN}│${RESET}  ${BOLD}Set up with Google Authenticator, Authy, or any TOTP app:${RESET}"
     Write-Host "${CYAN}│${RESET}"
-    # Never send the secret anywhere — no third-party QR websites. Manual
+    # Never send the secret anywhere - no third-party QR websites. Manual
     # enrollment keeps the secret on this machine.
     Write-Host "${CYAN}│${RESET}  In your authenticator app choose ${BOLD}`"Enter a setup key`"${RESET} and type:"
     Write-Host "${CYAN}│${RESET}    Account: Mintlayer Web GUI"
@@ -780,7 +780,7 @@ if ($script:NonInteractive) {
     Write-Host "${CYAN}│${RESET}"
 
     Write-Host "${CYAN}│${RESET}"
-    Warn-ML "Save the TOTP secret NOW — it will not be shown again."
+    Warn-ML "Save the TOTP secret NOW - it will not be shown again."
     $scanned = 'no'
     while ($scanned -ne 'yes') {
         $scanned = Confirm-ML "I have scanned the QR code / saved the TOTP secret" 'N'
@@ -794,17 +794,17 @@ if ($script:NonInteractive) {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 4 — HTTPS / Public access
+# Step 4 - HTTPS / Public access
 # ─────────────────────────────────────────────────────────────────────────────
 $httpsSetup = 'no'; $Domain = ''; $DuckdnsSubdomain = ''; $DuckdnsToken = ''
 if ($script:NonInteractive) {
     Step-ML "HTTPS / Public access"
-    Ok-ML "Skipped (non-interactive) — configure later by re-running the wizard or editing .env"
+    Ok-ML "Skipped (non-interactive) - configure later by re-running the wizard or editing .env"
     Divider-ML
 } else {
     Step-ML "HTTPS / Public access"
     Hint-ML "Caddy can automatically provision a free TLS certificate (Let's Encrypt)"
-    Hint-ML "so the GUI is served over HTTPS — recommended for internet-facing servers."
+    Hint-ML "so the GUI is served over HTTPS - recommended for internet-facing servers."
     Hint-ML ""
     $httpsSetup = Confirm-ML "Set up HTTPS with automatic TLS certificate?" 'N'
 
@@ -815,7 +815,7 @@ if ($script:NonInteractive) {
 
         if ($domainType -like "*domain name*") {
             Ask-ML "Domain name"
-            Hint-ML "e.g. wallet.example.com — DNS must already resolve to this server"
+            Hint-ML "e.g. wallet.example.com - DNS must already resolve to this server"
             do { $Domain = Prompt-ML "Domain:" } while ([string]::IsNullOrEmpty($Domain))
             Ok-ML "Domain: $Domain"
         } else {
@@ -827,7 +827,7 @@ if ($script:NonInteractive) {
             do { $DuckdnsSubdomain = Prompt-ML "Subdomain (without .duckdns.org):" } while ([string]::IsNullOrEmpty($DuckdnsSubdomain))
             do { $DuckdnsToken = PromptSecret-ML "DuckDNS token:" } while ([string]::IsNullOrEmpty($DuckdnsToken))
             $Domain = "$DuckdnsSubdomain.duckdns.org"
-            Ok-ML "DuckDNS configured — $Domain"
+            Ok-ML "DuckDNS configured - $Domain"
         }
         Write-Host "${CYAN}│${RESET}"
         Warn-ML "Ensure ports 80 and 443 are open in your firewall / router."
@@ -836,13 +836,13 @@ if ($script:NonInteractive) {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 5 — Indexer
+# Step 5 - Indexer
 # ─────────────────────────────────────────────────────────────────────────────
 $enableIndexer = 'yes'
 if ($script:NonInteractive) {
     Step-ML "Indexer stack"
     $PostgresPassword = New-RandomPassword
-    Ok-ML "Indexer enabled (default) — random PostgreSQL password generated"
+    Ok-ML "Indexer enabled (default) - random PostgreSQL password generated"
     Divider-ML
 } else {
     Step-ML "Indexer stack"
@@ -868,22 +868,22 @@ if ($script:NonInteractive) {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 6 — IPFS Storage (optional)
+# Step 6 - IPFS Storage (optional)
 # ─────────────────────────────────────────────────────────────────────────────
 $IpfsProvider = ''; $FilebaseToken = ''; $PinataJwt = ''
 if ($script:NonInteractive) {
     Step-ML "IPFS Storage (optional)"
-    Ok-ML "Skipped (non-interactive) — configure later in the web UI Settings page"
+    Ok-ML "Skipped (non-interactive) - configure later in the web UI Settings page"
     Divider-ML
 } else {
     Step-ML "IPFS Storage (optional)"
     Hint-ML "Enables automatic upload of token/NFT images and metadata to IPFS."
-    Hint-ML "Without this, URLs can still be entered manually — configure later in Settings."
+    Hint-ML "Without this, URLs can still be entered manually - configure later in Settings."
     Hint-ML ""
     $setupIpfs = Confirm-ML "Configure IPFS now?" 'N'
     if ($setupIpfs -eq 'yes') {
         $ipfsChoice = Choose-ML "Choose IPFS provider:" @(
-            "Filebase (recommended — 5 GB free, always public)",
+            "Filebase (recommended - 5 GB free, always public)",
             "Pinata (paid account required to make files public)")
         if ($ipfsChoice -like "*Filebase*") {
             $IpfsProvider = "filebase"
@@ -902,12 +902,12 @@ if ($script:NonInteractive) {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 7 — Telegram Notifications (optional)
+# Step 7 - Telegram Notifications (optional)
 # ─────────────────────────────────────────────────────────────────────────────
 $TelegramBotToken = ''; $TelegramChatId = ''
 if ($script:NonInteractive) {
     Step-ML "Telegram Notifications (optional)"
-    Ok-ML "Skipped (non-interactive) — configure later in the web UI Settings page"
+    Ok-ML "Skipped (non-interactive) - configure later in the web UI Settings page"
     Divider-ML
 } else {
     Step-ML "Telegram Notifications (optional)"
@@ -929,19 +929,19 @@ if ($script:NonInteractive) {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 8 — Windows Firewall (wizard + admin only)
+# Step 8 - Windows Firewall (wizard + admin only)
 # ─────────────────────────────────────────────────────────────────────────────
 $P2pPort = if ($Network -eq 'mainnet') { 3031 } else { 13031 }
 $setupFirewall = 'no'; $openP2pPort = 'no'
 if ($script:NonInteractive) {
-    Ok-ML "Firewall: left unchanged (non-interactive) — the default stack needs zero inbound ports"
+    Ok-ML "Firewall: left unchanged (non-interactive) - the default stack needs zero inbound ports"
 } else {
     Step-ML "Windows Firewall"
     Hint-ML "Adds inbound Allow rules for ports 80, 443, 4321."
-    Hint-ML "Does NOT block other ports — only adds rules for Mintlayer."
+    Hint-ML "Does NOT block other ports - only adds rules for Mintlayer."
     Hint-ML ""
     if (-not $script:IsAdmin) {
-        Hint-ML "Skipping — not running as Administrator."
+        Hint-ML "Skipping - not running as Administrator."
         Hint-ML "Re-run as Administrator to configure Windows Firewall, or add rules manually."
     } else {
         $setupFirewall = Confirm-ML "Add Windows Firewall rules now?" 'N'
@@ -963,16 +963,16 @@ Write-Host "${CYAN}│${RESET}  $("Network:".PadRight(22)) ${BOLD}$Network${RESE
 Write-Host "${CYAN}│${RESET}  $("Passwords:".PadRight(22)) ${BOLD}$(if ($useRandom -eq 'yes') {'randomly generated'} else {'custom'})${RESET}"
 Write-Host "${CYAN}│${RESET}  $("Web UI auth:".PadRight(22)) ${BOLD}password + TOTP 2FA${RESET}"
 Write-Host "${CYAN}│${RESET}  $("Web GUI:".PadRight(22)) ${BOLD}$guiUrl${RESET}"
-Write-Host "${CYAN}│${RESET}  $("Indexer:".PadRight(22)) ${BOLD}$(if ($enableIndexer -eq 'yes') {'enabled — Token Management + Trading active'} else {'disabled — Token Management + Trading hidden'})${RESET}"
-Write-Host "${CYAN}│${RESET}  $("IPFS storage:".PadRight(22)) ${BOLD}$(if ($IpfsProvider) {$IpfsProvider} else {'disabled — configure later in Settings'})${RESET}"
-Write-Host "${CYAN}│${RESET}  $("Telegram:".PadRight(22)) ${BOLD}$(if ($TelegramBotToken) {'configured'} else {'disabled — configure later in Settings'})${RESET}"
+Write-Host "${CYAN}│${RESET}  $("Indexer:".PadRight(22)) ${BOLD}$(if ($enableIndexer -eq 'yes') {'enabled - Token Management + Trading active'} else {'disabled - Token Management + Trading hidden'})${RESET}"
+Write-Host "${CYAN}│${RESET}  $("IPFS storage:".PadRight(22)) ${BOLD}$(if ($IpfsProvider) {$IpfsProvider} else {'disabled - configure later in Settings'})${RESET}"
+Write-Host "${CYAN}│${RESET}  $("Telegram:".PadRight(22)) ${BOLD}$(if ($TelegramBotToken) {'configured'} else {'disabled - configure later in Settings'})${RESET}"
 Write-Host "${CYAN}│${RESET}"
 
 if ($script:NonInteractive) {
     Write-Host "${CYAN}│${RESET}  ${BOLD}Web UI password: ${RESET}$UiPassword"
     Write-Host "${CYAN}│${RESET}  $("TOTP secret:".PadRight(22)) written to $(Join-Path $script:InstallDir 'mintlayer-totp.txt') (never shown on screen)"
     Write-Host "${CYAN}│${RESET}"
-    Warn-ML "Save the web UI password now — it is printed only this once."
+    Warn-ML "Save the web UI password now - it is printed only this once."
     Write-Host "${CYAN}│${RESET}"
     $proceed = 'yes'
 } else {
@@ -1025,7 +1025,7 @@ NETWORK=$Network
 ML_USER_ID=$MlUserId
 ML_GROUP_ID=$MlGroupId
 
-# wallet-rpc-daemon command (network only — wallet files are managed via the web UI)
+# wallet-rpc-daemon command (network only - wallet files are managed via the web UI)
 WALLET_RPC_CMD=$WalletRpcCmd
 
 # Node RPC credentials
@@ -1080,7 +1080,7 @@ Ok-ML ".env written"
 if ($script:NonInteractive) {
     $totpFile = Join-Path $script:InstallDir 'mintlayer-totp.txt'
     $totpContent = @"
-Mintlayer Web GUI — TOTP 2FA setup (generated $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'))
+Mintlayer Web GUI - TOTP 2FA setup (generated $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'))
 ──────────────────────────────────────────────────────
 Before your first login, add this secret to your
 authenticator app (Google Authenticator, Authy, ...):
@@ -1107,7 +1107,7 @@ This file contains a secret. Delete it after setup:
 $prefsDir = Join-Path $script:InstallDir 'mintlayer-data\prefs'
 New-Item -ItemType Directory -Force -Path $prefsDir | Out-Null
 # Pre-create uploads/ as the invoking user (docker would create it root-owned,
-# and web-gui — running as ML_USER_ID — must write uploads there).
+# and web-gui - running as ML_USER_ID - must write uploads there).
 New-Item -ItemType Directory -Force -Path (Join-Path $script:InstallDir 'mintlayer-data\uploads') | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $script:InstallDir 'mintlayer-data\plugins') | Out-Null
 
@@ -1188,9 +1188,9 @@ if ($setupFirewall -eq 'yes' -and $script:IsAdmin) {
     New-NetFirewallRule -DisplayName 'Mintlayer Web GUI (App)'   -Direction Inbound -Protocol TCP -LocalPort 4321 -Action Allow | Out-Null
     if ($openP2pPort -eq 'yes') {
         New-NetFirewallRule -DisplayName "Mintlayer Node P2P ($P2pPort)" -Direction Inbound -Protocol TCP -LocalPort $P2pPort -Action Allow | Out-Null
-        Ok-ML "Firewall rules added — HTTP (80), HTTPS (443), App (4321), P2P ($P2pPort)"
+        Ok-ML "Firewall rules added - HTTP (80), HTTPS (443), App (4321), P2P ($P2pPort)"
     } else {
-        Ok-ML "Firewall rules added — HTTP (80), HTTPS (443), App (4321)"
+        Ok-ML "Firewall rules added - HTTP (80), HTTPS (443), App (4321)"
     }
 }
 
@@ -1205,7 +1205,7 @@ if (-not $script:NonInteractive) {
             $iconB64 = (Invoke-WebRequest -UseBasicParsing -Uri 'https://get.mintlayer.org/favicon.ico').Content
             if ($iconB64 -is [byte[]]) { [System.IO.File]::WriteAllBytes($iconPath, $iconB64) }
         } catch {
-            # Icon is cosmetic — a missing file just falls back to the default icon
+            # Icon is cosmetic - a missing file just falls back to the default icon
         }
 
         $shortcutUrl = $guiUrl

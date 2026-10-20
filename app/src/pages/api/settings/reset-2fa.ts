@@ -18,7 +18,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     return json({ ok: false, error: '2FA not configured' }, 400);
   }
 
-  // throttleKey: failed TOTP attempts from one address lock out after 5 —
+  // throttleKey: failed TOTP attempts from one address lock out after 5 -
   // this endpoint returns the NEW secret on success, so an unthrottled
   // guess loop is a 2FA takeover primitive.
   const burn = verifyAndBurnTotpCode(totpCode, currentSecret, getClientAddress(request, clientAddress));

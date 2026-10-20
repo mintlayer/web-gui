@@ -60,7 +60,7 @@ type Phase =
 
 interface Asset {
   ticker: string;
-  /** Undefined for native ML (no ML-side token id — e2m only for now). */
+  /** Undefined for native ML (no ML-side token id - e2m only for now). */
   mlTokenId?: string;
   ethAddress?: string;
   maxAmountPerRequest?: string;
@@ -116,7 +116,7 @@ function chainForFlavor(flavor: string): { id: string; params: Record<string, un
 /** Progress steps shown on the tracked-bridge card. */
 const PROGRESS_STEP_LABELS = [
   'Request submitted',
-  'Deposit seen — waiting for confirmations',
+  'Deposit seen - waiting for confirmations',
   'Deposit confirmed',
   'Agents processing the payout',
   'Completed',
@@ -154,7 +154,7 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
   const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
-  // Tracked (in-flight) bridge — persisted so a refresh restores the card.
+  // Tracked (in-flight) bridge - persisted so a refresh restores the card.
   const [tracked, setTracked] = useState<InFlightBridge | null>(() => loadInFlight());
   const [trackedProgress, setTrackedProgress] = useState<BridgeProgress | null>(null);
   const [trackedRequest, setTrackedRequest] = useState<BridgeRequestDetail | null>(null);
@@ -334,7 +334,7 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
     };
   }, [assets]);
 
-  // Connected-wallet balances for every asset (ETH side) — drives the
+  // Connected-wallet balances for every asset (ETH side) - drives the
   // holdings-first token ordering and the per-row balance display.
   useEffect(() => {
     if (!ethAccount) {
@@ -405,7 +405,7 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
       if (max !== undefined && /^\d+(\.\d+)?$/.test(max)) {
         target = Math.min(target, parseFloat(max));
       }
-      // Truncate toward zero at 8 dp — rounding could exceed the real
+      // Truncate toward zero at 8 dp - rounding could exceed the real
       // balance by dust and guarantee a MetaMask revert on Max.
       const scaled = Math.floor(target * 1e8) / 1e8;
       setAmount(scaled.toFixed(8).replace(/\.?0+$/, ''));
@@ -458,7 +458,7 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
         setPhase(next.kind === 'completed' ? 'done' : next.kind === 'manual' ? 'manual' : 'failed');
       }
       const advanced = next.step > latest.lastStep;
-      // First sight of the deposit hash (ML→ETH submits without one) —
+      // First sight of the deposit hash (ML→ETH submits without one) -
       // persisted so the card links it even across refreshes.
       const depositHashArrived = !latest.depositTxHash && next.depositTxHash;
       if (advanced || depositHashArrived) {
@@ -470,7 +470,7 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
       }
       updateHistoryStatus(current.uuid, next.rawStatus);
     } catch {
-      /* transient — the next poll retries; unknown state keeps polling */
+      /* transient - the next poll retries; unknown state keeps polling */
     }
   }, []);
 
@@ -512,7 +512,7 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
         /* polling remains the source of truth */
       };
     } catch {
-      /* no WebSocket support — polling only */
+      /* no WebSocket support - polling only */
     }
     return () => {
       closed = true;
@@ -588,7 +588,7 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
         const res = suggestAddressCorrection(receiver.trim(), hrp, 'ml');
         if (res.status === 'corrected' && res.corrected) {
           setReceiverSuggestion({ corrected: res.corrected, fixedChars: res.fixedChars ?? 1 });
-          setError('Address checksum failed — review the suggested correction.');
+          setError('Address checksum failed - review the suggested correction.');
           return;
         }
         if (res.status === 'invalid') {
@@ -598,10 +598,10 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
       }
     }
 
-    // Review step: bridge transfers are irreversible — one explicit
+    // Review step: bridge transfers are irreversible - one explicit
     // confirmation with the full amount/fee/destination summary.
     // Starting a new bridge while one is already in flight takes over the
-    // single tracked-bridge slot — ask before replacing it.
+    // single tracked-bridge slot - ask before replacing it.
     const existingFlight = loadInFlight();
     if (existingFlight && (!trackedProgress || trackedProgress.kind === 'in-progress')) {
       if (
@@ -674,25 +674,25 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
           }),
         });
         // Session expiry: the auth middleware answers with a 302 to /login,
-        // which fetch silently follows — the body is HTML, not JSON.
+        // which fetch silently follows - the body is HTML, not JSON.
         if (signedRes.redirected) {
           setBridgeTotp('');
           setPhase('idle');
-          setError('Your session expired — redirecting to login…');
+          setError('Your session expired - redirecting to login…');
           setTimeout(() => location.assign('/login'), 800);
           return;
         }
         if (!(signedRes.headers.get('content-type') ?? '').includes('application/json')) {
-          // Proxy interstitial / gateway error page — parse nothing.
+          // Proxy interstitial / gateway error page - parse nothing.
           bridgeTotpRef.current?.focus();
-          throw new Error(`Bridge signing failed (HTTP ${signedRes.status}) — no transaction was created.`);
+          throw new Error(`Bridge signing failed (HTTP ${signedRes.status}) - no transaction was created.`);
         }
         const signed = await signedRes.json() as { ok: boolean; error?: string; raw_transaction?: string; intent?: string; code_consumed?: boolean };
         if (!signed.ok || !signed.raw_transaction || !signed.intent) {
           // Failures after the step-up gate consumed the authenticator code:
           // clear the field so the retry starts with a fresh code.
           const consumedHint = signed.code_consumed
-            ? ' Your authenticator code was consumed — enter a fresh code to retry.'
+            ? ' Your authenticator code was consumed - enter a fresh code to retry.'
             : '';
           if (signed.code_consumed) {
             setBridgeTotp('');
@@ -714,7 +714,7 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
         trackRequest(res.bridge_request_uuid, '');
       }
     } catch (err) {
-      // Wallet rejections are user choices, not failures — an EvmError with
+      // Wallet rejections are user choices, not failures - an EvmError with
       // code 4001 renders as neutral info, everything else as a real error.
       const e = normalizeEvmRejection(err);
       if (e.code === 4001) {
@@ -769,7 +769,7 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
   }
 
   if (indexerEnabled && indexerStatus && !indexerStatus.up) {
-    // Distinguish "indexer down" from "still syncing" — both leave synced
+    // Distinguish "indexer down" from "still syncing" - both leave synced
     // false, but a down indexer would otherwise render as syncing block #0
     // (0%) forever with no hint that anything is actually wrong.
     return (
@@ -828,11 +828,11 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
             : phase === 'polling'
               ? 'Agents are processing…'
               : phase === 'done'
-                ? 'Bridge completed — tokens arrived.'
+                ? 'Bridge completed - tokens arrived.'
                 : phase === 'failed'
                   ? 'Bridge failed.'
                   : phase === 'manual'
-                    ? 'Escalated for manual review — support will look at this request.'
+                    ? 'Escalated for manual review - support will look at this request.'
                     : '';
 
   return (
@@ -1057,7 +1057,7 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
             <label htmlFor="bridge-totp" className="block text-xs text-gray-400 mb-1">2FA code</label>
             {asset && !asset.mlTokenId && (
               <p className="mb-1 text-xs text-amber-300">
-                {assetTicker} cannot be bridged ML → ETH from this wallet yet — pick a bridged token.
+                {assetTicker} cannot be bridged ML → ETH from this wallet yet - pick a bridged token.
               </p>
             )}
             <input
@@ -1071,7 +1071,7 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
               className={totpInput}
             />
             <p className="mt-1 text-xs text-gray-500">
-              Mintlayer → Ethereum signs a wallet transaction — confirm it with your authenticator.
+              Mintlayer → Ethereum signs a wallet transaction - confirm it with your authenticator.
             </p>
           </div>
         )}
@@ -1123,8 +1123,8 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
                     <span className={reached ? 'text-gray-200' : 'text-gray-500'}>
                       {terminalMismatch
                         ? trackedProgress.kind === 'manual'
-                          ? 'Needs manual processing — funds are safe, this takes longer'
-                          : 'Bridge request failed — contact support with the request ID'
+                          ? 'Needs manual processing - funds are safe, this takes longer'
+                          : 'Bridge request failed - contact support with the request ID'
                         : label}
                     </span>
                   </li>

@@ -26,7 +26,7 @@ export interface TokenMetadata {
   name?: string;
   description?: string;
   symbol?: string;
-  /** Display hint only — amount math always uses chain/fallback decimals. */
+  /** Display hint only - amount math always uses chain/fallback decimals. */
   decimals?: number;
   /** Gateway-safe icon URL ready for <img src>. */
   icon?: string;
@@ -53,7 +53,7 @@ const clipText = (value: unknown, max: number): string | undefined => {
   return trimmed.slice(0, max);
 };
 
-/** Links render as anchors — only http(s) URLs may pass through. */
+/** Links render as anchors - only http(s) URLs may pass through. */
 const clipLink = (value: unknown): string | undefined => {
   const text = clipText(value, MAX_TEXT_LENGTH);
   return text && isHttpUrl(text) ? text : undefined;
@@ -63,13 +63,13 @@ const clipLink = (value: unknown): string | undefined => {
  * Icon URLs may only be same-origin gateway paths (no protocol-relative
  * "//host", which would be cross-origin) or http(s) URLs. Note: the
  * deployed CSP restricts img-src to same-origin/data/blob, so external
- * http(s) icons fail closed at runtime — the allowance here exists for
+ * http(s) icons fail closed at runtime - the allowance here exists for
  * environments without the CSP header.
  */
 const clipIcon = (value: unknown): string | undefined => {
   if (typeof value !== 'string' || value.trim().length === 0) return undefined;
   const url = toGatewayUrl(value.trim());
-  // Overlong URLs would render broken after clipping — drop them.
+  // Overlong URLs would render broken after clipping - drop them.
   if (url.length > MAX_TEXT_LENGTH) return undefined;
   const sameOriginPath =
     url.startsWith('/') && !url.startsWith('//') && !url.includes('\\');
@@ -148,7 +148,7 @@ export function sanitizeTokenMetadata(raw: unknown): TokenMetadata | null {
 /**
  * Resolves a token's sanitized display metadata: token info →
  * metadata_uri (usually an IPFS JSON document) → sanitized fields.
- * Returns null when any step is missing or fails — the UI must
+ * Returns null when any step is missing or fails - the UI must
  * degrade to ticker-only display, never guess.
  */
 export async function resolveTokenMetadata(

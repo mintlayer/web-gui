@@ -5,7 +5,7 @@
  *
  * The daemon images are published with the same v<version> tag as the app
  * release (mintlayer-daemons.yml builds them from ML_CORE_REF on every v* tag),
- * so upgrading means moving all images to one tag — this module only reports;
+ * so upgrading means moving all images to one tag - this module only reports;
  * the feature-enabler sidecar applies.
  */
 import pkg from '../../package.json';
@@ -29,13 +29,13 @@ const TAG_RE = /^v[0-9][A-Za-z0-9.\-]*$/;
 /**
  * Stricter than TAG_RE: numeric dotted core + optional pre-release suffix.
  * Anything else (a stray "v1x" from a corrupted feed or odd mirror) must not
- * enter the version comparison at all — it would otherwise rank above every
+ * enter the version comparison at all - it would otherwise rank above every
  * real version and, with auto-install on, queue a doomed pull.
  */
 const VERSION_TAG_RE = /^v[0-9]+(\.[0-9]+){0,3}(-[0-9A-Za-z.]+)?$/;
 /**
  * Bitcoin Core versions we accept from release notes: digits first, short,
- * shell-safe. Mirrors the enabler's own check — the volume is a second
+ * shell-safe. Mirrors the enabler's own check - the volume is a second
  * boundary, but rejecting early keeps a bad marker from blocking upgrades.
  */
 const BITCOIND_VERSION_RE = /^[0-9][A-Za-z0-9._-]{0,31}$/;
@@ -161,7 +161,7 @@ async function fetchReleases(): Promise<ReleaseInfo[]> {
 /**
  * Newest applicable release (pre-releases filtered unless requested) and
  * whether it is newer than the running version. Throws on fetch/parse
- * failure — callers decide how to degrade.
+ * failure - callers decide how to degrade.
  */
 export async function checkForUpdate(includePrereleases: boolean): Promise<UpdateStatus> {
   const base: UpdateStatus = { current: CURRENT_VERSION, available: false, latest: null, checkedAt: null };

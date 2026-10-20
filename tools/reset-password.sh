@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# reset-password.sh — Reset the UI login password stored in the prefs database
+# reset-password.sh - Reset the UI login password stored in the prefs database
 #
 # Usage:
 #   ./tools/reset-password.sh              # prompts for new password (recommended)
 #
 # The password hash is written to the 'auth.password_hash' pref in
-# mintlayer-data/prefs/mintlayer_prefs.sqlite — the same store the app reads
+# mintlayer-data/prefs/mintlayer_prefs.sqlite - the same store the app reads
 # (login.astro / password-change.ts). Any UI_PASSWORD_HASH line in .env is
 # legacy and unused by the app; it is left untouched.
 
@@ -21,7 +21,7 @@ if [[ ! -f "$PREFS_DB" ]]; then
   exit 1
 fi
 
-# Get password (interactive only — argv mode leaked the password to the
+# Get password (interactive only - argv mode leaked the password to the
 # process list and shell history).
 read -rsp "New UI password: " PASSWORD
 echo
@@ -38,7 +38,7 @@ if [[ -z "$PASSWORD" ]]; then
 fi
 
 # Generate PBKDF2-SHA512 hash (matches src/lib/auth.ts format).
-# Password is passed via env — never interpolated into the script (quoting)
+# Password is passed via env - never interpolated into the script (quoting)
 # and never as argv (process list).
 HASH=$(RESET_PASSWORD="$PASSWORD" node -e "
 const crypto = require('crypto');
@@ -61,7 +61,7 @@ fi
 # 2) Revoke existing UI sessions: session tokens are stateless HMACs that
 #    embed auth.session_version. The COALESCE falls back to '1' (NOT '0'):
 #    tokens are minted with version 0 by default, so bumping an absent row to
-#    0 would be a no-op — '1' invalidates every existing session.
+#    0 would be a no-op - '1' invalidates every existing session.
 DB_OK=false
 printf "INSERT OR REPLACE INTO prefs (key, value) VALUES ('auth.password_hash', '\"%s\"');\n" "$HASH" \
   | docker run --rm -i -v "$PREFS_DIR:/prefs" alpine \
@@ -69,7 +69,7 @@ printf "INSERT OR REPLACE INTO prefs (key, value) VALUES ('auth.password_hash', 
   && DB_OK=true
 
 if ! $DB_OK; then
-  echo "Error: failed to update the prefs database — the password has NOT been changed." >&2
+  echo "Error: failed to update the prefs database - the password has NOT been changed." >&2
   exit 1
 fi
 
@@ -83,5 +83,5 @@ printf "INSERT OR REPLACE INTO prefs (key, value) VALUES ('auth.session_version'
 docker run --rm -v "$PREFS_DIR:/prefs" alpine \
   chown -R "$(id -u):$(id -g)" /prefs 2>/dev/null || true
 
-# The app re-reads the prefs on every request — no restart needed.
+# The app re-reads the prefs on every request - no restart needed.
 echo "Password updated. All existing UI sessions have been signed out."

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ⚠️  DEVELOPMENT TOOL — DO NOT USE IN PRODUCTION ⚠️
+// ⚠️  DEVELOPMENT TOOL - DO NOT USE IN PRODUCTION ⚠️
 //
 // This script exists ONLY for local development and scripted testing of the
 // wallet's TOTP login (e.g. driving E2E flows against `make dev`). It prints
@@ -7,8 +7,8 @@
 // with the secret has the second factor. Real deployments must keep secrets
 // in the user's authenticator app only.
 //
-// The secret is read interactively (hidden input) or from stdin — never from
-// argv — so it stays out of shell history and process listings. Usage:
+// The secret is read interactively (hidden input) or from stdin - never from
+// argv - so it stays out of shell history and process listings. Usage:
 //
 //   tools/totp.mjs                 # prompts for the secret (hidden)
 //   printf '%s' "$SECRET" | tools/totp.mjs   # piped, also not in history
@@ -79,7 +79,7 @@ function promptSecret() {
       resolve(value);
     };
     const onData = (chunk) => {
-      // A paste can arrive as ONE multi-char chunk — Enter included — so scan
+      // A paste can arrive as ONE multi-char chunk - Enter included - so scan
       // char by char instead of comparing the whole chunk. Terminals in raw
       // mode also wrap pastes in bracketed-paste markers (ESC[200~ … ESC[201~);
       // strip those and any other CSI escape sequences before scanning.

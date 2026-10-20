@@ -54,7 +54,7 @@ export class EvmError extends Error {
 
 /**
  * Normalize a wallet/contract rejection into an EvmError with a stable code:
- * - 4001 / ACTION_REJECTED → user rejected (info, not error — the user chose
+ * - 4001 / ACTION_REJECTED → user rejected (info, not error - the user chose
  *   to cancel and the UI should treat it as such)
  * - -32002 → a request for the same confirmation is already pending in the
  *   wallet (user should open the wallet extension)
@@ -70,7 +70,7 @@ export function normalizeEvmRejection(err: unknown): EvmError {
   }
   if (code === -32002 || /already pending/i.test(message)) {
     return new EvmError(
-      'A request is already waiting in your wallet — open the wallet extension to approve or reject it.',
+      'A request is already waiting in your wallet - open the wallet extension to approve or reject it.',
       -32002,
     );
   }
@@ -170,7 +170,7 @@ export async function depositToBridge(
   const signer = await p.getSigner();
 
   const token = new Contract(tokenAddress, ERC20_ABI, signer);
-  // The chain is the source of truth for decimals — many bridgeable
+  // The chain is the source of truth for decimals - many bridgeable
   // tokens (USDC et al.) are not 18, and the config carries no value.
   let resolvedDecimals = decimals;
   try {
@@ -184,7 +184,7 @@ export async function depositToBridge(
   const amountWei = parseUnits(amount, resolvedDecimals);
 
   // Skip the approve round-trip when the bridge already has enough
-  // allowance for this deposit (reads can fail on some providers —
+  // allowance for this deposit (reads can fail on some providers -
   // fall through to a fresh approve, the previous behaviour).
   let needsApproval = true;
   try {

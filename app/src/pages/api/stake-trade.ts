@@ -9,10 +9,10 @@ import { isValidAmount } from '@/lib/validation';
  *
  * Delegation staking/withdrawal, pool creation/decommissioning and order
  * creation/filling/cancellation all sign on-chain transactions that move
- * funds (or burn creation fees) — they require a fresh TOTP code (step-up)
+ * funds (or burn creation fees) - they require a fresh TOTP code (step-up)
  * on top of the session cookie, exactly like /api/send and /api/token-manage.
  * These methods are intentionally absent from the browser/plugin RPC
- * allowlist, so this is the only path — a stolen session cookie alone cannot
+ * allowlist, so this is the only path - a stolen session cookie alone cannot
  * stake, withdraw, create a pool, or place/fill orders.
  *
  * Accepts a single action ({action, params}) or a small ordered batch
@@ -214,7 +214,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     // dead one. `completed` says how many actions did succeed.
     if (err instanceof WalletRpcError) {
       // Transport-class failures (-32000/-32001/5xx) carry the daemon URL in
-      // their message — never forward those to the browser (mirror of the
+      // their message - never forward those to the browser (mirror of the
       // rpc.ts proxy redaction). Daemon user-actionable messages (insufficient
       // funds, orphaned transactions) still pass through.
       const transport = err.code === -32000 || err.code === -32001 || err.code >= 500;

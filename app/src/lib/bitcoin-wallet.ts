@@ -63,7 +63,7 @@ export interface BitcoinNodeInfo {
   headers: number;
   synced: boolean;
   initialBlockDownload: boolean;
-  /** True when the node discards old blocks — full-history restores are impossible. */
+  /** True when the node discards old blocks - full-history restores are impossible. */
   pruned: boolean;
   /** First available block on a pruned node; null on a full node. */
   pruneHeight: number | null;
@@ -131,7 +131,7 @@ async function sidecarRequest<T>(
     const timedOut = (err as { name?: string }).name === 'TimeoutError';
     throw new BitcoinWalletError(
       timedOut
-        ? 'BTC wallet service timed out — the operation may or may not have completed'
+        ? 'BTC wallet service timed out - the operation may or may not have completed'
         : `BTC wallet service unreachable (is the bitcoin profile running?)`,
       timedOut ? 504 : 503,
     );

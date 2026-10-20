@@ -29,7 +29,7 @@ export const POST: APIRoute = async ({ request }) => {
   }
 
   // Authority note: this endpoint persists a login credential, but it can only
-  // run with a challenge tagged purpose='registration' — register-options
+  // run with a challenge tagged purpose='registration' - register-options
   // mints those only AFTER a successful 2FA step-up burn, while the public
   // auth-options route mints 'authentication' challenges that are rejected
   // here (consumeChallenge deletes the entry either way). The challenge

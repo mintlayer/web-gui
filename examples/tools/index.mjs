@@ -610,7 +610,7 @@ function renderPage() {
         return;
       }
       if (!signData.is_complete) {
-        showModalResult('<div class="rounded-lg border border-yellow-900 bg-yellow-900/20 px-4 py-3 text-sm text-yellow-400">Partially signed — additional signatures required.</div>');
+        showModalResult('<div class="rounded-lg border border-yellow-900 bg-yellow-900/20 px-4 py-3 text-sm text-yellow-400">Partially signed - additional signatures required.</div>');
         btn.disabled = false; btn.textContent = 'Sign & Broadcast';
         return;
       }

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-# ── Build stage — runs natively on the CI host (no QEMU) ─────────────────────
+# ── Build stage - runs natively on the CI host (no QEMU) ─────────────────────
 # $BUILDPLATFORM is always the host arch (e.g. linux/amd64).
 # TypeScript/Astro compilation is pure JS so this is safe.
 FROM --platform=$BUILDPLATFORM node:22-alpine AS builder
@@ -16,7 +16,7 @@ RUN npm ci && npm rebuild better-sqlite3
 COPY . .
 RUN npm run build
 
-# ── Prod deps — still on the BUILD platform, but targeting the right arch ─────
+# ── Prod deps - still on the BUILD platform, but targeting the right arch ─────
 # npm_config_arch tells node-pre-gyp to download / compile the native addon
 # for the TARGET architecture instead of the host architecture.
 FROM --platform=$BUILDPLATFORM node:22-alpine AS prod-deps
@@ -49,7 +49,7 @@ COPY --from=builder --chown=app:app /app/scripts        ./scripts
 COPY --from=prod-deps --chown=app:app /app/node_modules ./node_modules
 
 # Writable request drop-box for the feature-enabler sidecar. The named volume
-# copies this directory's mode on first use — without it the volume would
+# copies this directory's mode on first use - without it the volume would
 # initialize root-owned 0755 and the app could not write its request files.
 # World-writable because compose lets the operator run the container as any
 # uid (ML_USER_ID), so build-time ownership can never be guaranteed to match;

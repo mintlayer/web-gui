@@ -12,7 +12,7 @@ import { isValidAmount } from '@/lib/validation';
  *
  * Amount arrives as a decimal string and is re-validated here (shared
  * validator) before the sidecar performs the authoritative checks (network +
- * precision + funds). Sidecar internals are never echoed to the client —
+ * precision + funds). Sidecar internals are never echoed to the client -
  * only whitelisted, user-fixable error classes pass through.
  */
 
@@ -67,7 +67,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
       status === 503
         ? 'Bitcoin wallet service unavailable'
         : status === 504
-          ? 'The send timed out — the transaction may or may not have been broadcast. Check History before sending again to avoid paying twice.'
+          ? 'The send timed out - the transaction may or may not have been broadcast. Check History before sending again to avoid paying twice.'
           : ((err as Error).message || 'Bitcoin send failed');
     return json(
       { ok: false, error: message },

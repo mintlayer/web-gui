@@ -41,7 +41,7 @@ services:
   # Core: Wallet RPC daemon (headless wallet)
   #
   # WALLET_RPC_CMD is written by init.sh (network only, e.g. "wallet-rpc-daemon mainnet").
-  # Wallet files are managed via the web UI — no --wallet-file flag needed.
+  # Wallet files are managed via the web UI - no --wallet-file flag needed.
   # ─────────────────────────────────────────
   wallet-rpc-daemon:
     <<: *common
@@ -93,15 +93,15 @@ services:
       # Shared with wallet-rpc-daemon's /home/mintlayer/ so uploaded wallet files
       # are accessible to the daemon at /home/mintlayer/uploads/<filename>
       - "./mintlayer-data/uploads:/app/uploads"
-      # Server-side preferences (SQLite) — persists across browsers and restarts
+      # Server-side preferences (SQLite) - persists across browsers and restarts
       - "./mintlayer-data/prefs:/app/prefs"
-      # Installed plugins — persists across restarts
+      # Installed plugins - persists across restarts
       - "./mintlayer-data/plugins:/app/plugins"
       # Optional-service enable/disable requests handed to the feature-enabler
       # sidecar (see its service below). The app writes <service>.req files;
       # the agent consumes them and writes <service>.result status back.
       - "feature-requests:/config/feature-requests"
-      # Public part of Caddy's local CA (root.crt only — never the PKI keys).
+      # Public part of Caddy's local CA (root.crt only - never the PKI keys).
       # The caddy container exports the root into this volume; see its
       # command wrapper below.
       - "ca-public:/certs:ro"
@@ -134,7 +134,7 @@ services:
       # Gate for proxy-derived headers (client IP + Origin): set true ONLY when
       # traffic arrives through the shipped caddy gateway, which overwrites
       # X-Forwarded-For with the real client IP. Direct/LAN exposure must keep
-      # it unset — X-Forwarded-* is attacker-controllable then.
+      # it unset - X-Forwarded-* is attacker-controllable then.
       TRUST_PROXY: "${TRUST_PROXY:-}"
       PORT: "4321"
     restart: unless-stopped
@@ -153,14 +153,14 @@ services:
       - "./bitcoin-data:/home/bitcoin/.bitcoin"
     command:
       - "-printtoconsole=1"
-      # Bitcoin Core's -chain wants "main", not "mainnet" — override with
+      # Bitcoin Core's -chain wants "main", not "mainnet" - override with
       # BITCOIN_CORE_CHAIN in .env (init.sh derives it).
       - "-chain=${BITCOIN_CORE_CHAIN:-${BITCOIN_NETWORK:-mainnet}}"
       - "-rpcbind=0.0.0.0:8332"
       - "-rpcallowip=0.0.0.0/0"
       - "-rpcuser=${BITCOIN_RPC_USERNAME}"
       - "-rpcpassword=${BITCOIN_RPC_PASSWORD}"
-      # Full node (BITCOIN_PRUNE=0, BITCOIN_TXINDEX=1): complete history —
+      # Full node (BITCOIN_PRUNE=0, BITCOIN_TXINDEX=1): complete history -
       # restoring an old seed rescans everything. Pruned mode (BITCOIN_PRUNE=550,
       # BITCOIN_TXINDEX=0) serves fresh wallets normally (balance/receive/send)
       # but cannot rescan history it no longer stores: restores of old seeds are
@@ -232,7 +232,7 @@ services:
     restart: unless-stopped
 
   # ─────────────────────────────────────────
-  # Optional: Watchtower — auto-update Mintlayer images  (profile: watchtower)
+  # Optional: Watchtower - auto-update Mintlayer images  (profile: watchtower)
   # Checks Docker Hub daily at 04:00 and restarts any container whose image
   # has changed. The web-gui (locally built) is intentionally excluded.
   # Start with: docker compose --profile watchtower up -d
@@ -253,7 +253,7 @@ services:
     restart: unless-stopped
 
   # ─────────────────────────────────────────
-  # Optional services enabler — lets the Settings page start/stop the bitcoin
+  # Optional services enabler - lets the Settings page start/stop the bitcoin
   # and indexer profiles without exposing the Docker socket to the web app.
   # The web-gui drops a validated <service>.req request into the shared
   # feature-requests volume; this agent applies one of a FIXED set of compose
@@ -347,7 +347,7 @@ services:
 
   api-web-server:
     image: "${ML_API_WEB_SERVER_IMAGE:-ghcr.io/mintlayer/web-gui/api-web-server:latest}"
-    # No baked-in CMD in the runtime image — pass the binary explicitly.
+    # No baked-in CMD in the runtime image - pass the binary explicitly.
     command: "/usr/bin/api-web-server"
     labels:
       com.centurylinklabs.watchtower.enable: "true"
@@ -378,7 +378,7 @@ services:
   # Caddy terminates TLS in front of web-gui using its own local Certificate
   # Authority (no public domain needed). Enable via init.sh's access-mode
   # question (or WEB_GUI_TLS=true in .env + --profile web). Browsers show a
-  # one-time warning until the CA root is imported on the client — download
+  # one-time warning until the CA root is imported on the client - download
   # it from Settings → HTTPS, which serves it out of the same volume.
   # web-gui keeps binding to 127.0.0.1 on the host; only Caddy is exposed.
   # ─────────────────────────────────────────
@@ -393,7 +393,7 @@ services:
       - "caddy-data:/data"
       - "caddy-config:/config"
       # Public export of the CA root. Caddy's PKI volume also holds the CA
-      # private keys — those stay caddy-exclusive; only root.crt crosses.
+      # private keys - those stay caddy-exclusive; only root.crt crosses.
       - "ca-public:/ca-public"
     environment:
       WEB_GUI_HOST: "${WEB_GUI_HOST:-localhost}"

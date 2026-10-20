@@ -4,7 +4,7 @@ import { bech32mDecode, bech32mEncode } from '@/lib/bridge-sdk';
 import { suggestAddressCorrection } from '@/lib/bech32-correct';
 import { ethers } from 'ethers';
 
-// Live Mintlayer testnet address (bech32m, hrp `tmt`) and BTC regtest address —
+// Live Mintlayer testnet address (bech32m, hrp `tmt`) and BTC regtest address -
 // the same cross-implementation fixtures used by bech32-correct.test.ts. If any
 // codec in the app changes its constants, this test fails.
 const ML_TESTNET_ADDRESS = 'tmt1q9rlgx4dsse920z35xh5d8s5ydlj3xl7gqeze89c';
@@ -48,7 +48,7 @@ describe('bech32 shared codec', () => {
     const tampered = ML_TESTNET_ADDRESS.slice(0, -1) + (ML_TESTNET_ADDRESS.endsWith('c') ? 'd' : 'c');
     expect(() => decode(tampered, 'bech32m')).toThrow(/checksum/);
     expect(() => bech32mDecode(tampered)).toThrow(/checksum/);
-    // The typo corrector may recover a 1-char error — but only back to the
+    // The typo corrector may recover a 1-char error - but only back to the
     // original address, never to something new.
     const result = suggestAddressCorrection(tampered, 'tmt', 'ml');
     expect(result.status === 'invalid' || result.corrected === ML_TESTNET_ADDRESS).toBe(true);

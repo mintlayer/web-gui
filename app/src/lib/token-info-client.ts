@@ -2,7 +2,7 @@
  * Batched token-info resolution for browser components.
  *
  * `node_get_tokens_info` does not preserve input order, but every result
- * carries its own `content.token_id` — so instead of one RPC per token
+ * carries its own `content.token_id` - so instead of one RPC per token
  * we call it in chunks and align the answers by that field.
  */
 
@@ -36,7 +36,7 @@ export async function getTokensInfoByIds(
       const infos = await rpc<(TokenInfo | null)[]>('node_get_tokens_info', {
         token_ids: chunk,
       });
-      // Order is not preserved — index the answers by their own token id.
+      // Order is not preserved - index the answers by their own token id.
       const byId = new Map<string, TokenInfo | null>();
       for (const info of infos ?? []) {
         const tid = tokenIdOf(info);
@@ -46,7 +46,7 @@ export async function getTokensInfoByIds(
         if (byId.has(id)) out.set(id, byId.get(id) ?? null);
       }
     } catch {
-      // Chunk failed — remaining ids stay null; other chunks still resolve.
+      // Chunk failed - remaining ids stay null; other chunks still resolve.
     }
   }
   return out;

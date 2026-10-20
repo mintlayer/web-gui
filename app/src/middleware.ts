@@ -111,7 +111,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
   // version check, so a version bump still invalidates the session cleanly.
   //
   // Re-read the version AFTER the page ran: a bump mid-request (password
-  // change, logout-all) must not be rolled forward onto a stale token —
+  // change, logout-all) must not be rolled forward onto a stale token -
   // that would hand back a cookie for a revoked session and make the next
   // navigation fail after the page already said "Password updated".
   const sessionVersionNow = getPref<number>('auth.session_version') ?? 0;

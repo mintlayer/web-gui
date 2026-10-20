@@ -43,12 +43,12 @@ function TxToastItem({ toast }: { toast: TxToast }) {
       {/* Content */}
       <div className="flex-1 min-w-0">
         <p className={`text-xs font-semibold mb-1 ${isConfirmed ? "text-mint-400" : isFailed ? "text-red-400" : isUntracked ? "text-gray-400" : "text-gray-300"}`}>
-          {isPending   && (toast.stale ? "Still pending — check the explorer for status." : "Transaction pending…")}
+          {isPending   && (toast.stale ? "Still pending - check the explorer for status." : "Transaction pending…")}
           {isConfirmed && (toast.blockHeight != null
             ? `Confirmed at block #${toast.blockHeight.toLocaleString()}`
             : "Confirmed")}
           {isFailed    && `Failed: ${toast.errorMessage ?? "unknown error"}`}
-          {isUntracked && (toast.errorMessage ?? "Confirmation not tracked — check the explorer.")}
+          {isUntracked && (toast.errorMessage ?? "Confirmation not tracked - check the explorer.")}
         </p>
         <a
           href={toast.explorerUrl}

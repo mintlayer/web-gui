@@ -22,7 +22,7 @@ import { getPref } from '@/lib/prefs-db';
 
 const INDEXER_URL = process.env.INDEXER_URL ?? 'http://api-web-server:3000';
 
-// One upstream indexer request per address — cap the fan-out like
+// One upstream indexer request per address - cap the fan-out like
 // address-tokens.ts so a runaway tab can't hammer the indexer.
 const MAX_ADDRESSES = 200;
 

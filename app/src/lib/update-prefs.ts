@@ -5,7 +5,7 @@ import { getPref, setPref } from '@/lib/prefs-db';
  *
  * - auto-install: when on, a release check that finds a newer applicable
  *   version queues the upgrade for the enabler sidecar (lazy, on the next
- *   status GET — no cron, no telemetry). Default OFF: unattended upgrades
+ *   status GET - no cron, no telemetry). Default OFF: unattended upgrades
  *   restart the whole stack, so this must be an explicit decision.
  * - include-prereleases: rc/beta tags count as "newer". Default OFF. Auto
  *   installs never jump to a pre-release unless this is also on.

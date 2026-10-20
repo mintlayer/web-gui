@@ -32,7 +32,7 @@ describe('csp connect-src derivation', () => {
 
   it('follows PUBLIC_BRIDGE_API_URL overrides in both schemes', () => {
     // vi.stubEnv only writes process.env (see bridge-sdk/config.test.ts)
-    // — which is exactly what the CSP builder reads for overrides.
+    // - which is exactly what the CSP builder reads for overrides.
     vi.stubEnv('PUBLIC_BRIDGE_API_URL', 'https://bridge.example/api/v1/');
     const sources = cspConnectSrc().split(' ');
     expect(sources).toContain('https://bridge.example');
@@ -54,7 +54,7 @@ describe('csp connect-src derivation', () => {
     expect(sources).toContain('https://mirror.example');
     expect(sources).not.toContain('not-an-origin');
     expect(sources).not.toContain('javascript:alert(1)');
-    // Paths are rejected — an origin has no path component.
+    // Paths are rejected - an origin has no path component.
     expect(sources).not.toContain('https://paths.example/with/path');
   });
 

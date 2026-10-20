@@ -12,7 +12,7 @@ export function CopyButton({ value, title = 'Copy' }: { value: string; title?: s
           setCopied(true);
           setTimeout(() => setCopied(false), 1500);
         }).catch((err: unknown) => {
-          // Clipboard can be denied (permissions/insecure context) — don't
+          // Clipboard can be denied (permissions/insecure context) - don't
           // leave an unhandled rejection; the icon simply stays idle.
           console.warn('clipboard write failed', err);
         });

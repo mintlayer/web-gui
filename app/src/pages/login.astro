@@ -31,7 +31,7 @@ const totpSecret   = getStringPref('auth.totp_secret');
 const unconfigured = !passwordHash || !totpSecret;
 
 // ── First-run credential bootstrap ──────────────────────────────────────────
-// The /setup wizard only creates the WALLET — its password field encrypts the
+// The /setup wizard only creates the WALLET - its password field encrypts the
 // wallet file for the daemon, not the web login. On a fresh install there is
 // no web credential source (init.sh only ships secrets for deployments), so
 // the login page bootstraps them in two steps: (1) choose a password,
@@ -115,7 +115,7 @@ if (Astro.request.method === 'POST' && !unconfigured) {
     // Always evaluate both factors to avoid timing side-channels.
     // Deliberately raw verifyTOTP, NOT verifyAndBurnTotpCode: login is already
     // IP-throttled by the login limiter, and burning here would consume the
-    // code the user needs seconds later for a step-up (or vice versa — a send
+    // code the user needs seconds later for a step-up (or vice versa - a send
     // would lock them out of logging in for ~60s).
     const [passwordOk, totpOk] = await Promise.all([
       verifyPassword(password, passwordHash),
@@ -378,7 +378,7 @@ if (Astro.request.method === 'POST' && !unconfigured) {
       } catch (err: unknown) {
         const e = err as { name?: string; message?: string };
         // AbortError: caller cancelled. NotAllowedError: the user dismissed
-        // the OS prompt or it timed out — a routine action, not an error;
+        // the OS prompt or it timed out - a routine action, not an error;
         // silently reset so the user can retry.
         if (e?.name !== 'AbortError' && e?.name !== 'NotAllowedError') {
           showError(e?.message ?? 'Passkey authentication failed.');

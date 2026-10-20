@@ -27,7 +27,7 @@ export interface InFlightBridge {
   /**
    * Mintlayer-side deposit tx id, backfilled from polling. ML→ETH
    * deposits have no hash at submit time (the Mojito wallet broadcasts
-   * the deposit) — the id only becomes visible once the API echoes it.
+   * the deposit) - the id only becomes visible once the API echoes it.
    */
   depositTxHash?: string;
   asset: string;
@@ -43,7 +43,7 @@ export const saveInFlight = (record: InFlightBridge): void => {
   try {
     localStorage.setItem(IN_FLIGHT_KEY, JSON.stringify(record));
   } catch {
-    /* storage unavailable — the card just won't survive a refresh */
+    /* storage unavailable - the card just won't survive a refresh */
   }
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new Event(IN_FLIGHT_EVENT));
@@ -76,7 +76,7 @@ export const loadInFlight = (): InFlightBridge | null => {
       return null;
     }
     // A tampered/legacy record without a usable lastStep would swallow
-    // every future transition — normalize it.
+    // every future transition - normalize it.
     const lastStep = Number.isFinite(parsed.lastStep)
       ? (parsed.lastStep as number)
       : 0;
@@ -144,14 +144,14 @@ const MANUAL_STATUSES = new Set([
 
 // Mintlayer transaction ids are 64 hex chars (optionally 0x-prefixed).
 // The hash is linkified into the explorer URL, so only well-formed ids
-// pass — a hostile API response must not be able to inject an arbitrary
+// pass - a hostile API response must not be able to inject an arbitrary
 // path into the explorer link.
 const ML_TX_HASH_RE = /^(?:0x)?[0-9a-fA-F]{64}$/;
 
 const isHashLike = (value: unknown): value is string =>
   typeof value === 'string' && ML_TX_HASH_RE.test(value);
 
-/** 64 hex chars, optionally 0x-prefixed — either chain's tx id shape. */
+/** 64 hex chars, optionally 0x-prefixed - either chain's tx id shape. */
 export const isTxHashLike = isHashLike;
 
 /** EVM transaction hashes: strictly 0x + 64 hex chars. */
@@ -166,7 +166,7 @@ const getDeposits = (
     : [];
 
 /** First well-formed deposit tx hash on the request, if any. Each
- *  candidate key is validated independently — a malformed primary key
+ *  candidate key is validated independently - a malformed primary key
  *  must not shadow a valid fallback in the same entry. */
 const firstDepositHash = (request: BridgeRequestDetail): string | null => {
   for (const deposit of getDeposits(request)) {
@@ -205,13 +205,13 @@ const depositConfirmed = (request: BridgeRequestDetail): boolean =>
 
 /**
  * Maps a bridge request onto the user-facing progress steps. Unknown
- * statuses count as "in progress" — never as errors.
+ * statuses count as "in progress" - never as errors.
  */
 export const deriveProgress = (
   request: BridgeRequestDetail,
 ): BridgeProgress => {
   const raw = request as unknown as Record<string, unknown>;
-  // Capped — rawStatus is persisted and rendered as a chip label.
+  // Capped - rawStatus is persisted and rendered as a chip label.
   const rawStatus = String(raw.status ?? '')
     .toLowerCase()
     .slice(0, 64);

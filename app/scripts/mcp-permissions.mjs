@@ -1,9 +1,9 @@
 /**
  * MCP access tiers. Mirrors src/lib/rpc-allowlist.ts but adds risk tiers so
  * the settings panel can gate what AI clients may do:
- *   read    — available whenever MCP is enabled
- *   actions — harmless writes, gated by mcp.allow_actions
- *   spend   — moves funds, gated by mcp.allow_spend
+ *   read    - available whenever MCP is enabled
+ *   actions - harmless writes, gated by mcp.allow_actions
+ *   spend   - moves funds, gated by mcp.allow_spend
  * Methods absent from this map (seed phrase, key unlock, wallet open/create)
  * are never callable via MCP regardless of settings.
  */
