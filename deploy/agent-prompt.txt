@@ -80,9 +80,11 @@ Notes:
                                             %USERPROFILE%\mintlayer)
   docker compose ps                         # node-daemon, wallet-rpc-daemon
                                             # and web-gui listed as running
-  curl -sI http://localhost:4321            # web GUI answers HTTP 200
-                                            # (bound to 127.0.0.1 only; on
-                                            # Windows use curl.exe or Invoke-WebRequest)
+  curl -sI http://localhost:4321            # web GUI answers HTTP 302
+                                            # (redirect to /login while
+                                            # unauthenticated; bound to
+                                            # 127.0.0.1 only; on Windows use
+                                            # curl.exe or Invoke-WebRequest)
   docker compose logs --tail 20 node-daemon # block height increasing = syncing
 
 First mainnet sync takes hours. Report the current height and move on;

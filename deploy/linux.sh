@@ -164,7 +164,11 @@ rand_pass() {
   if command -v openssl &>/dev/null; then
     openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 32
   else
-    cat /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 32
+    # Bounded urandom read: an unbounded 'cat /dev/urandom | tr | head'
+    # SIGPIPEs under 'set -o pipefail' (head exits early, the producer
+    # dies mid-write, the script aborts). 512 bytes yield ~120 alnum
+    # chars, far more than needed, and small enough to fit a pipe buffer.
+    head -c 512 /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 32
   fi
 }
 
@@ -298,6 +302,10 @@ services:
       BITCOIN_WALLET_PASSWORD: "${BITCOIN_WALLET_HTTP_PASSWORD:-}"
       BITCOIN_EXPLORER_URL: "${BITCOIN_EXPLORER_URL:-}"
       HOST: "0.0.0.0"
+      # caddy terminates TLS in the HTTPS flavors, so the app must trust
+      # its X-Forwarded-Proto/Host or every form POST fails the CSRF
+      # origin check (browser says https, raw socket says http).
+      TRUST_PROXY: "true"
       PORT: "4321"
     restart: unless-stopped
 
@@ -428,7 +436,7 @@ services:
       - "./bitcoin-data:/home/bitcoin/.bitcoin"
     command:
       - "-printtoconsole=1"
-      - "-chain=${BITCOIN_CORE_CHAIN:-${BITCOIN_NETWORK:-mainnet}}"
+      - "-chain=${BITCOIN_CORE_CHAIN:-main}"
       - "-rpcbind=0.0.0.0:8332"
       - "-rpcallowip=0.0.0.0/0"
       - "-rpcuser=${BITCOIN_RPC_USERNAME}"
@@ -441,7 +449,7 @@ services:
     restart: unless-stopped
 
   btc-explorer:
-    image: "${BTC_EXPLORER_IMAGE:-mintlayer/web-gui/btc-explorer:latest}"
+    image: "${BTC_EXPLORER_IMAGE:-ghcr.io/mintlayer/web-gui/btc-explorer:latest}"
     depends_on:
       - bitcoind
     environment:
@@ -456,7 +464,7 @@ services:
     restart: unless-stopped
 
   bdk-wallet:
-    image: "${BDK_WALLET_IMAGE:-mintlayer/web-gui/bdk-wallet:latest}"
+    image: "${BDK_WALLET_IMAGE:-ghcr.io/mintlayer/web-gui/bdk-wallet:latest}"
     user: "${ML_USER_ID:-1000}:${ML_GROUP_ID:-1000}"
     depends_on:
       - bitcoind
@@ -1418,7 +1426,13 @@ if [[ "$START" == "yes" ]]; then
     fi
   fi
 
-  $COMPOSE pull --quiet
+  # A failed pull must not abort: .env + prefs are already seeded, and
+  # dying here leaves a half-installed system whose rerun regenerates all
+  # secrets (the previously printed password/TOTP would go dead). Warn and
+  # let 'up' surface the real per-service error instead.
+  if ! $COMPOSE pull --quiet; then
+    warn "Image pull failed - check your network and the registry; continuing with 'up'"
+  fi
   $COMPOSE $PROFILES up -d
 
   ok "Services started"

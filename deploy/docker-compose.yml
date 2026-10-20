@@ -1,3 +1,7 @@
+# NOTE: this packaged file is the legacy minimal flavor (Hub images, no
+# bitcoin stack, no service sidecar). The install scripts (deploy/linux.sh,
+# deploy/windows.ps1) embed their own newer compose - if you change service
+# wiring, update those heredocs, not just this file.
 x-common: &common
   volumes:
     - "./mintlayer-data:/home/mintlayer"

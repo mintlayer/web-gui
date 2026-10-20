@@ -91,7 +91,11 @@ rand_pass() {
   if command -v openssl &>/dev/null; then
     openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 32
   else
-    cat /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 32
+    # Bounded urandom read: an unbounded 'cat /dev/urandom | tr | head'
+    # SIGPIPEs under 'set -o pipefail' (head exits early, the producer
+    # dies mid-write, the script aborts). 512 bytes yield ~120 alnum
+    # chars, far more than needed, and small enough to fit a pipe buffer.
+    head -c 512 /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 32
   fi
 }
 

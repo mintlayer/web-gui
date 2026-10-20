@@ -42,6 +42,13 @@ MAX_ERR_CHARS=400
 
 log() { printf '[feature-enabler] %s\n' "$*"; }
 
+# rand_pass - 32 alnum chars from a bounded urandom read. Bounded input
+# matters: unbounded 'cat /dev/urandom | tr | head' SIGPIPEs under
+# 'set -o pipefail' (head exits early, the producer dies mid-write).
+rand_pass() {
+    head -c 512 /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 32
+}
+
 compose() {
     # shellcheck disable=SC2086
     # --env-file pins interpolation to the same file the toggles rewrite, so
@@ -143,7 +150,12 @@ image_base() { printf '%s' "$1" | sed 's/:[^:]*$//' ; }
 pf_add() {
     _pf_name="$1"
     _pf_cur=$(get_env_key COMPOSE_PROFILES)
-    [ -n "$_pf_cur" ] || return 0
+    # Missing OR empty key: installers legitimately write an empty
+    # COMPOSE_PROFILES= (no optionals chosen) and pf_remove deletes the key
+    # when the last profile is toggled off - both must seed the first
+    # profile instead of no-oping, or the next enable silently starts
+    # nothing on later host-side 'up's.
+    [ -n "$_pf_cur" ] || { set_env_key "$ENV_FILE" COMPOSE_PROFILES "$_pf_name"; return 0; }
     case ",$_pf_cur," in *",$_pf_name,"*) return 0 ;; esac
     set_env_key "$ENV_FILE" COMPOSE_PROFILES "$_pf_cur,$_pf_name"
 }
@@ -323,6 +335,14 @@ apply_request() {
             ;;
         enable:indexer)
             [ -f "$ENV_FILE" ] || { log "env file missing: $ENV_FILE"; return 1; }
+            # A first-time indexer enable needs a postgres password: the
+            # installers only generate one when the indexer was chosen at
+            # install time, and an empty POSTGRES_PASSWORD makes postgres
+            # initdb refuse to start (crash-loop, opaque from here).
+            if [ -z "$(get_env_key POSTGRES_PASSWORD)" ]; then
+                set_env_key "$ENV_FILE" POSTGRES_PASSWORD "$(rand_pass)"
+                log "generated a POSTGRES_PASSWORD in $ENV_FILE"
+            fi
             set_env_key "$ENV_FILE" INDEXER_ENABLED true
             pf_add indexer
             log "enabling indexer, starting containers"

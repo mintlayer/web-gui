@@ -435,6 +435,10 @@ services:
       BITCOIN_WALLET_PASSWORD: "${BITCOIN_WALLET_HTTP_PASSWORD:-}"
       BITCOIN_EXPLORER_URL: "${BITCOIN_EXPLORER_URL:-}"
       HOST: "0.0.0.0"
+      # caddy terminates TLS in the HTTPS flavors, so the app must trust
+      # its X-Forwarded-Proto/Host or every form POST fails the CSRF
+      # origin check (browser says https, raw socket says http).
+      TRUST_PROXY: "true"
       PORT: "4321"
     restart: unless-stopped
 
@@ -560,7 +564,7 @@ services:
       - "./bitcoin-data:/home/bitcoin/.bitcoin"
     command:
       - "-printtoconsole=1"
-      - "-chain=${BITCOIN_CORE_CHAIN:-${BITCOIN_NETWORK:-mainnet}}"
+      - "-chain=${BITCOIN_CORE_CHAIN:-main}"
       - "-rpcbind=0.0.0.0:8332"
       - "-rpcallowip=0.0.0.0/0"
       - "-rpcuser=${BITCOIN_RPC_USERNAME}"
@@ -573,7 +577,7 @@ services:
     restart: unless-stopped
 
   btc-explorer:
-    image: "${BTC_EXPLORER_IMAGE:-mintlayer/web-gui/btc-explorer:latest}"
+    image: "${BTC_EXPLORER_IMAGE:-ghcr.io/mintlayer/web-gui/btc-explorer:latest}"
     depends_on:
       - bitcoind
     environment:
@@ -588,7 +592,7 @@ services:
     restart: unless-stopped
 
   bdk-wallet:
-    image: "${BDK_WALLET_IMAGE:-mintlayer/web-gui/bdk-wallet:latest}"
+    image: "${BDK_WALLET_IMAGE:-ghcr.io/mintlayer/web-gui/bdk-wallet:latest}"
     user: "${ML_USER_ID:-1000}:${ML_GROUP_ID:-1000}"
     depends_on:
       - bitcoind
@@ -1124,8 +1128,8 @@ if ($FilebaseToken)    { $sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('ip
 if ($PinataJwt)        { $sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('ipfs.pinata_jwt',     '`"$(sql_lit $PinataJwt)`"');") }
 if ($TelegramBotToken) { $sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('telegram.bot_token',  '`"$(sql_lit $TelegramBotToken)`"');") }
 if ($TelegramChatId)   { $sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('telegram.chat_id',    '`"$(sql_lit $TelegramChatId)`"');") }
-# A partially-seeded DB must not pass silently.
-if ($LASTEXITCODE -ne 0) { throw "prefs seeding failed (sqlite3 exit $LASTEXITCODE)" }
+# (The real $LASTEXITCODE check lives after the docker-run seeding step
+# below - checking before the command would read a stale status.)
 
 $sql     = $sqlLines -join "`n"
 $sqlFile = [System.IO.Path]::GetTempFileName()
@@ -1178,8 +1182,11 @@ if ($start -eq 'yes') {
     if ($httpsSetup -eq 'yes')           { $profiles += '--profile', 'https' }
     if ($DuckdnsSubdomain)               { $profiles += '--profile', 'duckdns' }
 
+    # A failed pull must not abort: .env + prefs are already seeded, and
+    # dying here leaves a half-installed system whose rerun regenerates all
+    # secrets. Warn and let 'up' surface the real per-service error.
     docker compose pull --quiet
-    if ($LASTEXITCODE -ne 0) { throw "image pull failed (docker compose pull exit $LASTEXITCODE)" }
+    if ($LASTEXITCODE -ne 0) { Write-Host "${YELLOW}Image pull failed - continuing with 'up'; check the registry if services fail to start${RESET}" }
     & docker compose @($profiles + @('up', '-d'))
     if ($LASTEXITCODE -ne 0) { throw "stack start failed (docker compose up exit $LASTEXITCODE)" }
     Ok-ML "Services started"

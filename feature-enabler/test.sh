@@ -93,8 +93,12 @@ pass "compose failure reported"
 : > "$DOCKER_LOG"
 # Installer .env files carry COMPOSE_PROFILES; a UI-disable must drop the
 # service from it or the next host-side `docker compose up -d` resurrects
-# what the user just switched off.
-printf 'COMPOSE_PROFILES=indexer,bitcoin,watchtower\n' >> "$PROJ/.env"
+# what the user just switched off. pf_add seeds the key when missing (a
+# fresh .env has no profile line), so normalize instead of appending - a
+# blind append would leave TWO COMPOSE_PROFILES lines and get_env_key
+# reads only the first.
+sed -i 's/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=indexer,bitcoin,watchtower/' "$PROJ/.env"
+grep -q '^COMPOSE_PROFILES=' "$PROJ/.env" || printf 'COMPOSE_PROFILES=indexer,bitcoin,watchtower\n' >> "$PROJ/.env"
 req bitcoin.req '{"action":"disable","service":"bitcoin"}'
 run_enabler || fail "enabler exited non-zero (case 5)"
 grep -q 'stop bitcoind btc-explorer bdk-wallet' "$DOCKER_LOG" || fail "stop services missing (case 5)"
@@ -319,5 +323,23 @@ grep -q 'digest-pinned' "$REQ/web-gui.result" || fail "digest pin reason (case 2
 [ -s "$DOCKER_LOG" ] && fail "docker called on digest-pinned install (case 21)"
 grep -q 'SESSION_SECRET=secret-do-not-touch' "$PROJ/.env" || fail ".env secrets damaged (case 21)"
 pass "digest-pinned image aborts upgrade"
+
+# 23. pf_add seeds COMPOSE_PROFILES when missing/empty; indexer enable on a
+# fresh install generates a POSTGRES_PASSWORD (empty one crash-loops postgres).
+W="$WORK/case23"; mkdir -p "$W/bin" "$W/proj" "$W/req"
+printf '#!/bin/sh\nexit 0\n' > "$W/bin/docker"; chmod +x "$W/bin/docker"
+touch "$W/proj/docker-compose.yml"
+printf 'SESSION_SECRET=x\nCOMPOSE_PROFILES=\n' > "$W/proj/.env"
+printf '{"action":"enable","service":"bitcoin","network":"mainnet"}' > "$W/req/bitcoin.req"
+PATH="$W/bin:$PATH" PROJECT_DIR="$W/proj" ENV_FILE="$W/proj/.env" COMPOSE_FILES=docker-compose.yml REQUESTS_DIR="$W/req" sh "$HERE/enabler.sh" --once >/dev/null || fail "enabler exited non-zero (case 23)"
+grep -q '^COMPOSE_PROFILES=bitcoin$' "$W/proj/.env" || fail "pf_add did not seed the empty key (case 23)"
+printf '{"action":"disable","service":"bitcoin"}' > "$W/req/bitcoin.req"
+PATH="$W/bin:$PATH" PROJECT_DIR="$W/proj" ENV_FILE="$W/proj/.env" COMPOSE_FILES=docker-compose.yml REQUESTS_DIR="$W/req" sh "$HERE/enabler.sh" --once >/dev/null
+printf '{"action":"enable","service":"indexer"}' > "$W/req/indexer.req"
+PATH="$W/bin:$PATH" PROJECT_DIR="$W/proj" ENV_FILE="$W/proj/.env" COMPOSE_FILES=docker-compose.yml REQUESTS_DIR="$W/req" sh "$HERE/enabler.sh" --once >/dev/null || fail "re-enable exited non-zero (case 23)"
+grep -q '^COMPOSE_PROFILES=indexer$' "$W/proj/.env" || fail "re-enable after key deletion did not re-seed (case 23)"
+grep -qE '^POSTGRES_PASSWORD=[A-Za-z0-9]{32}$' "$W/proj/.env" || fail "indexer enable did not generate a POSTGRES_PASSWORD (case 23)"
+rm -rf "$W"
+pass "pf_add seeds missing profiles key; indexer enable generates POSTGRES_PASSWORD"
 
 printf 'ALL ENABLER TESTS PASSED\n'
