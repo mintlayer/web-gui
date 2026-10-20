@@ -4,6 +4,7 @@ import { CopyButton } from '@/components/CopyButton';
 import TokenManagePanel from '@/components/TokenManagePanel';
 import { TokenIdTooltip } from '@/components/TokenIdTooltip';
 import { rpc } from '@/lib/client-rpc';
+import { getTokensInfoByIds } from '@/lib/token-info-client';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -43,7 +44,10 @@ const LS_KEY = 'ml_issued_tokens';
 
 function loadStored(): StoredToken[] {
   try {
-    return JSON.parse(localStorage.getItem(LS_KEY) ?? '[]') as StoredToken[];
+    // Array.isArray guards against legacy shapes: JSON.parse('null') and
+    // JSON.parse('5') do not throw but are not token lists either.
+    const parsed: unknown = JSON.parse(localStorage.getItem(LS_KEY) ?? '[]');
+    return Array.isArray(parsed) ? (parsed as StoredToken[]) : [];
   } catch {
     return [];
   }
@@ -88,14 +92,26 @@ export default function IssuedTokensPanel({ network }: Props) {
 
   async function fetchLiveInfos(ids: string[]): Promise<Map<string, TokenLiveInfo>> {
     if (ids.length === 0) return new Map();
-    const results = await rpc<TokenLiveInfo[]>('node_get_tokens_info', { token_ids: ids });
+    // getTokensInfoByIds chunks the RPC and aligns answers by their own
+    // content.token_id - node_get_tokens_info does NOT preserve input
+    // order, so zipping by index attributed metadata to the wrong tokens.
+    const infoMap = await getTokensInfoByIds(ids);
     const map = new Map<string, TokenLiveInfo>();
-    ids.forEach((id, i) => map.set(id, results[i] ?? null));
+    infoMap.forEach((info, id) => {
+      map.set(id, info !== null && info.type === 'FungibleToken' ? info : null);
+    });
     return map;
   }
 
   async function checkFailedTxs(tokens: StoredToken[], map: Map<string, TokenLiveInfo>) {
-    const pendingWithTx = tokens.filter(t => map.get(t.tokenId) === null && t.txId);
+    // Grace window: a tx that confirmed between the info fetch and the
+    // pending-list check is absent from both (confirmation removes it from
+    // pending before the token index catches up), which used to flash a
+    // false "tx failed" badge. Fresh issuances are never marked failed.
+    const FAILURE_GRACE_MS = 10 * 60 * 1000;
+    const pendingWithTx = tokens.filter(
+      t => map.get(t.tokenId) === null && t.txId && Date.now() - t.issuedAt > FAILURE_GRACE_MS,
+    );
     if (pendingWithTx.length === 0) return;
     try {
       const pendingTxIds = await rpc<string[]>('transaction_list_pending', { account: 0 });
@@ -172,9 +188,15 @@ export default function IssuedTokensPanel({ network }: Props) {
         return { tokenId: id, ticker, decimals, issuedAt: Date.now() };
       });
 
-      const merged = [...current, ...newEntries];
-      saveStored(merged);
-      setStored(merged);
+      // Merge functionally off the latest state (mirrors augmentFromWallet):
+      // a wallet scan that resolved while the indexer fetch was in flight
+      // must not be dropped by a stale-snapshot overwrite.
+      setStored(prev => {
+        const prevIds = new Set(prev.map(t => t.tokenId));
+        const merged = [...prev, ...newEntries.filter(e => !prevIds.has(e.tokenId))];
+        saveStored(merged);
+        return merged;
+      });
       setLiveInfos(prev => {
         const next = new Map(prev);
         infoMap.forEach((v, k) => next.set(k, v));

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { TokenInfo } from '@/lib/wallet-rpc';
 import { hexToText } from '@/lib/token-utils';
 import { safeImageUri } from '@/lib/safe-uri';
@@ -158,6 +158,8 @@ export default function TokenSearch({ network }: Props) {
   const [searched, setSearched] = useState(false);
   const [indexerAvailable, setIndexerAvailable] = useState(true);
   const [favourites, setFavourites] = useState<FavouriteEntry[]>([]);
+  // Monotonic sequence for search responses (stale-response guard).
+  const searchSeqRef = useRef(0);
   const [favInfos, setFavInfos] = useState<Map<string, TokenInfo | null>>(new Map());
   const [favLoading, setFavLoading] = useState(false);
 
@@ -192,6 +194,18 @@ export default function TokenSearch({ network }: Props) {
       })
       .catch(() => {});
   }, []);
+
+  /** Latest favourites straight from the server (avoids lost updates). */
+  async function fetchCurrentFavourites(): Promise<FavouriteEntry[]> {
+    try {
+      const res = await fetch('/api/prefs');
+      const data = await res.json() as { ok: boolean; value?: FavouriteEntry[] };
+      if (data.ok && Array.isArray(data.value)) return data.value;
+    } catch {
+      // Fall back to the render snapshot below.
+    }
+    return favourites;
+  }
 
   async function fetchFavInfos(ids: string[]) {
     if (ids.length === 0) return;
@@ -255,6 +269,9 @@ export default function TokenSearch({ network }: Props) {
     const q = query.trim();
     if (!q) return;
 
+    // Sequence guard: a slow earlier search must never overwrite a newer
+    // one's results (stale-response race).
+    const seq = ++searchSeqRef.current;
     setLoading(true);
     setError(null);
     setResults([]);
@@ -273,6 +290,7 @@ export default function TokenSearch({ network }: Props) {
         }
         const res = await fetch(`/api/token-search?ticker=${encodeURIComponent(q)}`);
         const data = await res.json() as { ok: boolean; result?: string[]; error?: string };
+        if (seq !== searchSeqRef.current) return;
         if (!data.ok) throw new Error(data.error ?? 'Search failed');
         tokenIds = data.result ?? [];
       }
@@ -289,11 +307,12 @@ export default function TokenSearch({ network }: Props) {
 
       // Batched calls, aligned by each result's own token_id.
       const infoMap = await getTokensInfoByIds(tokenIds);
+      if (seq !== searchSeqRef.current) return;
       setResults(tokenIds.map(id => ({ tokenId: id, info: infoMap.get(id) ?? null })));
     } catch (err) {
-      setError((err as Error).message);
+      if (seq === searchSeqRef.current) setError((err as Error).message);
     } finally {
-      setLoading(false);
+      if (seq === searchSeqRef.current) setLoading(false);
     }
   }
 
@@ -324,16 +343,22 @@ export default function TokenSearch({ network }: Props) {
     setVtImporting(true);
     setVtNote(null);
     try {
-      const existing = new Set(favourites.map(f => f.tokenId));
+      // Re-read the server state before merging: a toggleFavourite POST that
+      // landed while the verified-token dialog was open would otherwise be
+      // clobbered by this full-array write (lost-update race).
+      const base = await fetchCurrentFavourites();
+      const existing = new Set(base.map(f => f.tokenId));
       const additions = picked.filter(r => !existing.has(r.tokenId));
-      const room = Math.max(0, FAVOURITES_CAP - favourites.length);
+      const room = Math.max(0, FAVOURITES_CAP - base.length);
       const accepted = additions.slice(0, room);
       if (accepted.length === 0) {
-        setVtNote('Nothing to import - these tokens are already in your list.');
+        setVtNote(room === 0
+          ? 'The favourites cap was reached - remove a token from your list first.'
+          : 'Nothing to import - these tokens are already in your list.');
         return;
       }
       const next: FavouriteEntry[] = [
-        ...favourites,
+        ...base,
         ...accepted.map(r => ({ tokenId: r.tokenId, ticker: r.ticker })),
       ];
       const res = await fetch('/api/prefs', {

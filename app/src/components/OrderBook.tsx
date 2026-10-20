@@ -10,6 +10,7 @@ import { getTokensInfoByIds } from '@/lib/token-info-client';
 import { stakeTrade } from '@/lib/stake-trade-client';
 import { TotpField } from '@/components/ui/TotpField';
 import { aggregateLevels, fmtQty } from '@/components/orderBookDepth';
+import { mulDecimal, divDecimal } from '@/lib/decimal';
 
 // Raw shape returned by order_list_all_active (flat, no existing_order_data wrapper)
 interface ActiveOrderRaw {
@@ -124,13 +125,10 @@ function formatTimestamp(ts: number): string {
 
 /** Price in ML per token unit */
 function calcPrice(mlDecimal: string, tokenDecimal: string): string {
-  const ml = parseFloat(mlDecimal);
-  const tok = parseFloat(tokenDecimal);
-  if (!tok || !ml) return "-";
-  // Plain decimal formatting: toPrecision(6) switches to exponent notation
-  // for large prices ("1.50000e+6") and the trailing-zero strip turns
-  // 100000 into "1" - both mangled what the user can click "Fill" on.
-  return (ml / tok).toLocaleString("en-US", { maximumFractionDigits: 8 });
+  // Exact BigInt division (no float rounding, no exponent notation, and no
+  // thousands separators: a comma-grouped string pasted into the number
+  // input below would parseFloat-truncate at the comma - "1,234.5" -> 1).
+  return divDecimal(mlDecimal, tokenDecimal, 8) ?? "-";
 }
 
 // ── Buy / Sell panel ──────────────────────────────────────────────────────────
@@ -193,16 +191,17 @@ function BuySellPanel({
     ? calcPrice(bestBid.existing_order_data.give_balance.decimal, bestBid.existing_order_data.ask_balance.decimal)
     : null;
 
-  const totalML = amount && price
-    ? (parseFloat(amount) * parseFloat(price)).toPrecision(8).replace(/\.?0+$/, "")
-    : "";
+  // Exact decimal product: what this shows is what the order submits, so a
+  // user buying 1,000,000 tokens at price 10 sees 10000000 - not the "1"
+  // the old float-toPrecision+strip produced.
+  const totalML = amount && price ? mulDecimal(amount, price) : null;
 
   const estTokens = mlAmount && bestAskPrice && bestAskPrice !== "-"
-    ? (parseFloat(mlAmount) / parseFloat(bestAskPrice)).toPrecision(6).replace(/\.?0+$/, "")
+    ? divDecimal(mlAmount, bestAskPrice, 6)
     : null;
 
   const estML = amount && bestBidPrice && bestBidPrice !== "-"
-    ? (parseFloat(amount) * parseFloat(bestBidPrice)).toPrecision(6).replace(/\.?0+$/, "")
+    ? mulDecimal(amount, bestBidPrice)
     : null;
 
   const canSubmit = !loading && !!effectiveTokenId && totp.length === 6 && (
@@ -227,7 +226,10 @@ function BuySellPanel({
     try {
       await submitWithToast(async () => {
         if (type === "limit") {
-          const total = (parseFloat(amount) * parseFloat(price)).toString();
+          // Exact product, no float artifacts: 0.1 * 0.3 is "0.03", not the
+          // "0.30000000000000004" the daemon rejects after a wasted TOTP code.
+          const total = mulDecimal(amount, price);
+          if (total === null) throw new Error("Invalid amount or price");
           // conclude_address is required - fetch a fresh receive address
           const addrRes = await rpc<{ address: string }>("address_new", { account: 0 });
           const r = await stakeTrade({

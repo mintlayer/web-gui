@@ -410,6 +410,7 @@ export default function NFTMarketplace({
   // My listings state
   const [myListings, setMyListings] = useState<NFTListing[]>([]);
   const [myListingsLoading, setMyListingsLoading] = useState(false);
+  const [myListingsError, setMyListingsError] = useState<string | null>(null);
 
   // Shared 2FA code for buying (browse tab) and cancelling (sell tab) - both
   // move funds and burn a code server-side via /api/stake-trade.
@@ -566,7 +567,9 @@ export default function NFTMarketplace({
         })
         .map(o => {
           const id = (o.initially_given as { type: "Token"; content: { id: string } }).content.id;
-          const meta = metaMap.get(id)!;
+          // Own listings must survive unresolvable metadata (RPC glitch, unknown
+          // collection) - dropping them hides the only Cancel affordance.
+          const meta = metaMap.get(id) ?? { name: id.slice(0, 8) + "…", ticker: "", iconUri: null };
           const data = o.existing_order_data!;
           return {
             orderId: o.order_id,
@@ -580,8 +583,10 @@ export default function NFTMarketplace({
         });
 
       setMyListings(enriched);
-    } catch {
-      // non-critical, silently ignore
+    } catch (err) {
+      // The cancel affordance lives here - a silent empty list would hide
+      // the user's own open orders behind an unrelated RPC hiccup.
+      setMyListingsError(friendlyError(err));
     } finally {
       setMyListingsLoading(false);
     }
@@ -730,7 +735,13 @@ export default function NFTMarketplace({
               <div className="py-8 text-center text-gray-600 text-sm">Loading…</div>
             )}
 
-            {!myListingsLoading && myListings.length === 0 && (
+            {myListingsError && (
+              <div className="rounded-lg border border-amber-700/50 bg-amber-900/20 px-4 py-3 text-sm text-amber-300">
+                Could not load your listings: {myListingsError}
+              </div>
+            )}
+
+            {!myListingsLoading && !myListingsError && myListings.length === 0 && (
               <div className="py-8 text-center text-gray-600 text-sm">
                 No active NFT listings.
               </div>
