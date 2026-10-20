@@ -49,6 +49,14 @@ function isValidChainPayload(_hrp: string, data: number[], encoding: Bech32Encod
     // so a 20-byte P2WPKH program is 32 symbols and a 32-byte P2WSH is
     // 52 - comparing against byte counts rejected valid P2WSH addresses.
     const programLen = data.length - 7;
+    // BIP-173: the final converted group's padding bits must be zero.
+    // Only bites the 52-symbol (32-byte) P2WSH case: 52*5 = 260 bits for
+    // 256 bytes of payload leaves 4 padding bits; the 32-symbol P2WPKH
+    // case has none. A nonzero-pad string has a valid checksum but Core's
+    // segwit decoder rejects it, so the validator must too.
+    const bits = programLen * 5;
+    const padBits = bits - Math.floor(bits / 8) * 8;
+    if (padBits > 0 && (data[programLen] & ((1 << padBits) - 1)) !== 0) return false;
     if (version === 0) {
       if (encoding !== "bech32") return false;
       if (programLen !== 32 && programLen !== 52) return false;
@@ -56,10 +64,6 @@ function isValidChainPayload(_hrp: string, data: number[], encoding: Bech32Encod
       if (encoding !== "bech32m") return false;
       // program length in symbols: 2..40 bytes -> ceil(bytes*8/5) symbols
       if (programLen < Math.ceil((2 * 8) / 5) || programLen > Math.ceil((40 * 8) / 5)) return false;
-      // BIP-173: the final converted group's padding bits must be zero
-      const bits = programLen * 5;
-      const padBits = bits - Math.floor(bits / 8) * 8;
-      if (padBits > 0 && (data[programLen] & ((1 << padBits) - 1)) !== 0) return false;
     }
   }
   // ML: final payload validation is the wallet daemon's job on submit.
