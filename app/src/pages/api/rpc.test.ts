@@ -142,9 +142,25 @@ describe('allowlist enforcement - allowed methods', () => {
   });
 
   it.each(ALLOWED_METHODS)('allows method "%s"', async (method) => {
-    const { status, json } = await postRpc({ method, params: {} });
+    // wallet_set_lookahead_size is server-clamped to [0, 10000]; empty
+    // params would be rejected before the proxy call.
+    const params = method === 'wallet_set_lookahead_size' ? { lookahead_size: 100 } : {};
+    const { status, json } = await postRpc({ method, params });
     expect(status).toBe(200);
     expect(json).toMatchObject({ ok: true });
+  });
+
+  it('clamps wallet_set_lookahead_size to a sane maximum', async () => {
+    const tooBig = await postRpc({ method: 'wallet_set_lookahead_size', params: { lookahead_size: 999999 } });
+    expect(tooBig.status).toBe(400);
+    expect(rpcCall).not.toHaveBeenCalled();
+
+    const nonInt = await postRpc({ method: 'wallet_set_lookahead_size', params: { lookahead_size: 'big' } });
+    expect(nonInt.status).toBe(400);
+
+    const ok = await postRpc({ method: 'wallet_set_lookahead_size', params: { lookahead_size: 250 } });
+    expect(ok.status).toBe(200);
+    expect(rpcCall).toHaveBeenCalledWith('wallet_set_lookahead_size', { lookahead_size: 250 });
   });
 });
 

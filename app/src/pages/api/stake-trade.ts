@@ -64,7 +64,10 @@ function isCoinAmount(v: unknown): boolean {
   if (!isObj(v)) return false;
   const a = v as Params;
   if (typeof a.decimal === 'string') return isValidAmount(a.decimal, 18);
-  return typeof a.atoms === 'string' && /^\d{1,40}$/.test(a.atoms);
+  // Atoms path must be a positive integer string: a zero amount is rejected
+  // daemon-side as a zero-value order, which would burn a TOTP code on a
+  // knowable 400 (the decimal path already enforces > 0 via isValidAmount).
+  return typeof a.atoms === 'string' && /^[1-9][0-9]{0,39}$/.test(a.atoms);
 }
 
 // give/ask leg: Coin (ML) or Token (id + amount)
@@ -122,14 +125,14 @@ function validateParams(action: string, p: Params): string | null {
           parseFloat(p.margin_ratio_per_thousand) <= 0 ||
           parseFloat(p.margin_ratio_per_thousand) > 1000) return 'margin_ratio_per_thousand must be a ratio in (0, 1000]';
       if (!isStr(p.decommission_address, ID_RE)) return 'decommission_address is required';
-      if (p.staker_address !== null) return 'staker_address must be null';
-      if (p.vrf_public_key !== null) return 'vrf_public_key must be null';
+      if (p.staker_address !== undefined && p.staker_address !== null) return 'staker_address must be null';
+      if (p.vrf_public_key !== undefined && p.vrf_public_key !== null) return 'vrf_public_key must be null';
       return null;
     }
     case 'staking_decommission_pool': {
       if (p.account !== 0) return 'account must be 0';
       if (!isStr(p.pool_id, ID_RE)) return 'pool_id is required';
-      if (p.output_address !== null) return 'output_address must be null';
+      if (p.output_address !== undefined && p.output_address !== null) return 'output_address must be null';
       return null;
     }
     case 'order_create': {
@@ -143,7 +146,7 @@ function validateParams(action: string, p: Params): string | null {
       if (p.account !== 0) return 'account must be 0';
       if (!isStr(p.order_id, ID_RE)) return 'order_id is required';
       if (!isAmountField(p.fill_amount_in_ask_currency)) return 'fill amount is invalid';
-      if (p.output_address !== null) return 'output_address must be null';
+      if (p.output_address !== undefined && p.output_address !== null) return 'output_address must be null';
       return null;
     }
     case 'order_conclude': {
@@ -193,6 +196,23 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     const invalid = validateParams(item.action, item.params);
     if (invalid) {
       return json({ ok: false, error: `${item.action}: ${invalid}` }, 400);
+    }
+  }
+
+  // The daemon's jsonrpsee layer decodes named params into structs with no
+  // field defaults: `options` is REQUIRED on every tx method and optional
+  // address fields must still be PRESENT as null. Older UI call sites omit
+  // them, which made cancel/conclude/decommission fail with "missing field
+  // options" AFTER the TOTP code was burned. Inject the safe defaults here
+  // so a knowable daemon rejection never consumes a code.
+  for (const item of items) {
+    if (item.params.options === undefined) item.params.options = {};
+    if (item.action === 'staking_create_pool') {
+      if (item.params.staker_address === undefined) item.params.staker_address = null;
+      if (item.params.vrf_public_key === undefined) item.params.vrf_public_key = null;
+    }
+    if (item.action === 'staking_decommission_pool' || item.action === 'order_fill' || item.action === 'order_conclude') {
+      if (item.params.output_address === undefined) item.params.output_address = null;
     }
   }
 

@@ -151,8 +151,11 @@ export const GET: APIRoute = async () => {
     }
 
     return json({ ok: true, fungible: fungibleResult, nfts: nftResult }, 200);
-  } catch {
-    // Best-effort - never crash the page
-    return json({ ok: true, fungible: [], nfts: [] }, 200);
+  } catch (err) {
+    // A broken backend must not masquerade as "no issuances": transport
+    // failures return ok:false so the UI can show an error state instead
+    // of an empty wallet. The original is logged for diagnosis.
+    console.error('[scan-issued-tokens]', err);
+    return json({ ok: false, error: 'The wallet service is unavailable.', fungible: [], nfts: [] }, 502);
   }
 };

@@ -15,7 +15,19 @@ const TIP_URLS: Record<string, string> = {
 
 export const GET: APIRoute = async () => {
   const network = (process.env.NETWORK ?? 'mainnet').toLowerCase();
-  const url = TIP_URLS[network] ?? TIP_URLS['mainnet'];
+  const url = TIP_URLS[network];
+
+  // regtest/signet have no public indexer: silently substituting the
+  // mainnet tip made dev deployments show a permanently wrong
+  // "behind/syncing" verdict. The consumers ignore responses without a
+  // numeric height, so an explicit no-indexer status is a clean degraded
+  // state there.
+  if (!url) {
+    return new Response(JSON.stringify({ error: `no public indexer for network "${network}"` }), {
+      status: 404,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
 
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(5000) });

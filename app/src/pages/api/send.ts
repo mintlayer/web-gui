@@ -82,7 +82,18 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     // broadcast. Flag it so the UI can tell the user to enter a FRESH code
     // instead of silently retrying the dead one.
     if (err instanceof WalletRpcError) {
-      return json({ ok: false, error: err.message, code_consumed: true }, 502);
+      // Transport-class failures (-32000/-32001/5xx, and daemon HTTP status
+      // codes) carry the daemon URL in their message - never forward those
+      // to the browser (mirror of the rpc.ts proxy redaction). Daemon
+      // user-actionable messages (insufficient funds, amount too small)
+      // still pass through.
+      const transport = err.code === -32000 || err.code === -32001 || err.code >= 500;
+      if (transport) console.error('[send]', err.message);
+      return json({
+        ok: false,
+        error: transport ? 'The wallet service is unavailable. Check that all services are running.' : err.message,
+        code_consumed: true,
+      }, 502);
     }
     console.error('[send]', err);
     return json({ ok: false, error: 'Send failed', code_consumed: true }, 500);

@@ -20,7 +20,12 @@ export function getWalletRpcWsUrl(): string {
  * wallet_recover). Override via WALLET_RPC_TIMEOUT_MS.
  */
 export function getWalletRpcTimeoutMs(): number {
-  const raw = Number(process.env.WALLET_RPC_TIMEOUT_MS);
+  // Empty/whitespace values (a common .env/compose accident) must fall back
+  // to the default rather than parse as 0 = "timeout disabled" for every
+  // call. An explicit "0" stays the intentional disable.
+  const text = (process.env.WALLET_RPC_TIMEOUT_MS ?? '').trim();
+  if (text === '') return 30_000;
+  const raw = Number(text);
   return Number.isFinite(raw) && raw >= 0 ? raw : 30_000;
 }
 

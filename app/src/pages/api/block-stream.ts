@@ -32,6 +32,20 @@ export const GET: APIRoute = async ({ request }) => {
 
   const encoder = new TextEncoder();
 
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
+  let upstream: WebSocket | null = null;
+
+  // Shared teardown: the abort listener covers normal client disconnects;
+  // cancel() covers runtimes that drop the response body without firing
+  // request.signal (otherwise the upstream ws + heartbeat leak per viewer).
+  const teardown = () => {
+    if (heartbeat !== undefined) {
+      clearInterval(heartbeat);
+      heartbeat = undefined;
+    }
+    upstream?.close();
+  };
+
   const body = new ReadableStream({
     start(controller) {
       const send = (data: Record<string, unknown>) => {
@@ -52,6 +66,7 @@ export const GET: APIRoute = async ({ request }) => {
         controller.close();
         return;
       }
+      upstream = ws;
 
       ws.on('open', () => {
         ws.send(JSON.stringify({
@@ -91,7 +106,7 @@ export const GET: APIRoute = async ({ request }) => {
 
       // Comment-style heartbeat: keeps intermediaries from idling out the
       // connection; ignored by EventSource (nit - low impact, but free).
-      const heartbeat = setInterval(() => {
+      heartbeat = setInterval(() => {
         try { controller.enqueue(encoder.encode(': ping\n\n')); } catch { /* closed */ }
       }, 30_000);
 
@@ -107,11 +122,11 @@ export const GET: APIRoute = async ({ request }) => {
       });
 
       // Clean up when the browser disconnects
-      request.signal.addEventListener('abort', () => {
-        clearInterval(heartbeat);
-        ws.close();
-        try { controller.close(); } catch { /* already closed */ }
-      });
+      request.signal.addEventListener('abort', teardown);
+    },
+
+    cancel() {
+      teardown();
     },
   });
 
