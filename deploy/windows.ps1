@@ -734,7 +734,7 @@ if ($script:NonInteractive) {
     Ok-ML "Password hashed"
     $UiTotpSecret  = New-TotpSecret
     $SessionSecret = New-SessionSecret
-    $TotpUri       = "otpauth://totp/Mintlayer%20GUI-X?secret=${UiTotpSecret}&issuer=Mintlayer"
+    $TotpUri       = "otpauth://totp/Mintlayer%20Nexus?secret=${UiTotpSecret}&issuer=Mintlayer"
     Ok-ML "TOTP secret generated"
     Hint-ML "TOTP secret will be written to mintlayer-totp.txt (not shown on screen)"
     Divider-ML
@@ -762,7 +762,7 @@ if ($script:NonInteractive) {
 
     $UiTotpSecret  = New-TotpSecret
     $SessionSecret = New-SessionSecret
-    $TotpUri       = "otpauth://totp/Mintlayer%20GUI-X?secret=${UiTotpSecret}&issuer=Mintlayer"
+    $TotpUri       = "otpauth://totp/Mintlayer%20Nexus?secret=${UiTotpSecret}&issuer=Mintlayer"
 
     Write-Host "${CYAN}│${RESET}"
     Ok-ML "TOTP secret generated"
@@ -816,7 +816,8 @@ if ($script:NonInteractive) {
         if ($domainType -like "*domain name*") {
             Ask-ML "Domain name"
             Hint-ML "e.g. wallet.example.com - DNS must already resolve to this server"
-            do { $Domain = Prompt-ML "Domain:" } while ([string]::IsNullOrEmpty($Domain))
+            # Whitespace here breaks the caddy --from argument and the .env line.
+            do { $Domain = Prompt-ML "Domain:" } while ([string]::IsNullOrEmpty($Domain) -or ($Domain -notmatch '^[A-Za-z0-9.-]+$'))
             Ok-ML "Domain: $Domain"
         } else {
             Ask-ML "DuckDNS setup"
@@ -1112,14 +1113,19 @@ New-Item -ItemType Directory -Force -Path (Join-Path $script:InstallDir 'mintlay
 New-Item -ItemType Directory -Force -Path (Join-Path $script:InstallDir 'mintlayer-data\plugins') | Out-Null
 
 $sqlLines = [System.Collections.Generic.List[string]]::new()
+# sql_lit: escape a value for use inside a single-quoted SQL literal -
+# embedded quotes must not terminate the statement mid-seed.
+function sql_lit([string]$v) { return $v.Replace("'", "''") }
 $sqlLines.Add("CREATE TABLE IF NOT EXISTS prefs (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
-$sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('auth.password_hash', '`"$UiPasswordHash`"');")
-$sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('auth.totp_secret',   '`"$UiTotpSecret`"');")
-if ($IpfsProvider)     { $sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('ipfs.provider',       '`"$IpfsProvider`"');") }
-if ($FilebaseToken)    { $sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('ipfs.filebase_token', '`"$FilebaseToken`"');") }
-if ($PinataJwt)        { $sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('ipfs.pinata_jwt',     '`"$PinataJwt`"');") }
-if ($TelegramBotToken) { $sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('telegram.bot_token',  '`"$TelegramBotToken`"');") }
-if ($TelegramChatId)   { $sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('telegram.chat_id',    '`"$TelegramChatId`"');") }
+$sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('auth.password_hash', '`"$(sql_lit $UiPasswordHash)`"');")
+$sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('auth.totp_secret',   '`"$(sql_lit $UiTotpSecret)`"');")
+if ($IpfsProvider)     { $sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('ipfs.provider',       '`"$(sql_lit $IpfsProvider)`"');") }
+if ($FilebaseToken)    { $sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('ipfs.filebase_token', '`"$(sql_lit $FilebaseToken)`"');") }
+if ($PinataJwt)        { $sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('ipfs.pinata_jwt',     '`"$(sql_lit $PinataJwt)`"');") }
+if ($TelegramBotToken) { $sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('telegram.bot_token',  '`"$(sql_lit $TelegramBotToken)`"');") }
+if ($TelegramChatId)   { $sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('telegram.chat_id',    '`"$(sql_lit $TelegramChatId)`"');") }
+# A partially-seeded DB must not pass silently.
+if ($LASTEXITCODE -ne 0) { throw "prefs seeding failed (sqlite3 exit $LASTEXITCODE)" }
 
 $sql     = $sqlLines -join "`n"
 $sqlFile = [System.IO.Path]::GetTempFileName()
@@ -1132,6 +1138,7 @@ docker run --rm `
     -v "${prefsDirDocker}:/prefs" `
     -v "${sqlFileDocker}:/init.sql:ro" `
     alpine sh -c 'apk add -q --no-progress sqlite >/dev/null 2>&1 && sqlite3 /prefs/mintlayer_prefs.sqlite < /init.sql'
+if ($LASTEXITCODE -ne 0) { throw "prefs seeding failed (sqlite3 exit $LASTEXITCODE)" }
 
 Remove-Item $sqlFile -ErrorAction SilentlyContinue
 
@@ -1172,7 +1179,9 @@ if ($start -eq 'yes') {
     if ($DuckdnsSubdomain)               { $profiles += '--profile', 'duckdns' }
 
     docker compose pull --quiet
+    if ($LASTEXITCODE -ne 0) { throw "image pull failed (docker compose pull exit $LASTEXITCODE)" }
     & docker compose @($profiles + @('up', '-d'))
+    if ($LASTEXITCODE -ne 0) { throw "stack start failed (docker compose up exit $LASTEXITCODE)" }
     Ok-ML "Services started"
 }
 

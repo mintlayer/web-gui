@@ -790,11 +790,12 @@ import os, base64
 print(base64.b32encode(os.urandom(20)).decode(), end='')
 ")
 
-  # Generate session signing secret
-  SESSION_SECRET=$(openssl rand -hex 32)
+  # Generate session signing secret (urandom fallback: openssl can be
+  # absent on minimal hosts and this runs after every question was answered)
+  SESSION_SECRET=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
 
   # Construct the otpauth URI
-  TOTP_URI="otpauth://totp/Mintlayer%20GUI-X?secret=${UI_TOTP_SECRET}&issuer=Mintlayer"
+  TOTP_URI="otpauth://totp/Mintlayer%20Nexus?secret=${UI_TOTP_SECRET}&issuer=Mintlayer"
 
   printf "${CYAN}│${RESET}\n"
   ok "TOTP secret generated"
@@ -938,8 +939,9 @@ if [[ "$HTTPS_SETUP" == "yes" ]]; then
       ask "Domain name"
       hint "e.g. wallet.example.com - DNS must already resolve to this server"
       prompt DOMAIN "Domain:"
-      while [[ -z "$DOMAIN" ]]; do
-        printf "${CYAN}│${RESET}  ${RED}Domain cannot be empty${RESET}\n"
+      # Whitespace here breaks the caddy --from argument and the .env line.
+      while [[ -z "$DOMAIN" ]] || ! [[ "$DOMAIN" =~ ^[A-Za-z0-9.-]+$ ]]; do
+        printf "${CYAN}│${RESET}  ${RED}Enter a valid domain (letters, digits, dots, hyphens)${RESET}\n"
         prompt DOMAIN "Domain:"
       done
       ok "Domain: ${DOMAIN}"
@@ -1352,15 +1354,19 @@ fi
 # bind-mount dirs as root, which the containers (running as ML_USER_ID) then
 # cannot write (uploads/ receives file uploads; prefs/ holds the SQLite DB).
 mkdir -p mintlayer-data/prefs mintlayer-data/plugins mintlayer-data/uploads
+# sql_lit VALUE -> stdout: VALUE as a single-quoted SQL literal. Token and
+# hash values are user input; an embedded quote must not terminate the
+# statement mid-seed (a broken seed aborts the install half-done).
+sql_lit() { printf "%s" "$1" | sed "s/'/''/g"; }
 {
   echo "CREATE TABLE IF NOT EXISTS prefs (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
-  echo "INSERT OR REPLACE INTO prefs VALUES ('auth.password_hash', '\"${UI_PASSWORD_HASH}\"');"
-  echo "INSERT OR REPLACE INTO prefs VALUES ('auth.totp_secret',   '\"${UI_TOTP_SECRET}\"');"
-  [ -n "$IPFS_PROVIDER"      ] && echo "INSERT OR REPLACE INTO prefs VALUES ('ipfs.provider',       '\"${IPFS_PROVIDER}\"');" || true
-  [ -n "$FILEBASE_TOKEN"     ] && echo "INSERT OR REPLACE INTO prefs VALUES ('ipfs.filebase_token', '\"${FILEBASE_TOKEN}\"');" || true
-  [ -n "$PINATA_JWT"         ] && echo "INSERT OR REPLACE INTO prefs VALUES ('ipfs.pinata_jwt',     '\"${PINATA_JWT}\"');" || true
-  [ -n "$TELEGRAM_BOT_TOKEN" ] && echo "INSERT OR REPLACE INTO prefs VALUES ('telegram.bot_token',  '\"${TELEGRAM_BOT_TOKEN}\"');" || true
-  [ -n "$TELEGRAM_CHAT_ID"   ] && echo "INSERT OR REPLACE INTO prefs VALUES ('telegram.chat_id',    '\"${TELEGRAM_CHAT_ID}\"');" || true
+  printf "INSERT OR REPLACE INTO prefs VALUES ('auth.password_hash', '%s');\n" "$(sql_lit "${UI_PASSWORD_HASH}")"
+  printf "INSERT OR REPLACE INTO prefs VALUES ('auth.totp_secret', '%s');\n" "$(sql_lit "${UI_TOTP_SECRET}")"
+  [ -n "$IPFS_PROVIDER"      ] && printf "INSERT OR REPLACE INTO prefs VALUES ('ipfs.provider', '%s');\n" "$(sql_lit "${IPFS_PROVIDER}")" || true
+  [ -n "$FILEBASE_TOKEN"     ] && printf "INSERT OR REPLACE INTO prefs VALUES ('ipfs.filebase_token', '%s');\n" "$(sql_lit "${FILEBASE_TOKEN}")" || true
+  [ -n "$PINATA_JWT"         ] && printf "INSERT OR REPLACE INTO prefs VALUES ('ipfs.pinata_jwt', '%s');\n" "$(sql_lit "${PINATA_JWT}")" || true
+  [ -n "$TELEGRAM_BOT_TOKEN" ] && printf "INSERT OR REPLACE INTO prefs VALUES ('telegram.bot_token', '%s');\n" "$(sql_lit "${TELEGRAM_BOT_TOKEN}")" || true
+  [ -n "$TELEGRAM_CHAT_ID"   ] && printf "INSERT OR REPLACE INTO prefs VALUES ('telegram.chat_id', '%s');\n" "$(sql_lit "${TELEGRAM_CHAT_ID}")" || true
 } | docker run --rm -i \
     -v "$(pwd)/mintlayer-data/prefs:/prefs" \
     alpine \

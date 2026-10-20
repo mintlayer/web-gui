@@ -14,7 +14,12 @@ RUN apk add --no-cache git
 WORKDIR /app
 RUN git clone --depth 1 --branch ${BTC_RPC_EXPLORER_REF} \
       https://github.com/janoside/btc-rpc-explorer.git . \
-    && npm ci --omit=dev && npm cache clean --force
+    && npm ci --omit=dev && npm cache clean --force \
+    && chown -R node:node /app
+
+# The explorer parses untrusted chain data; drop root (node:22-alpine
+# ships the "node" user). Compose only publishes this on 127.0.0.1.
+USER node
 
 ENV BTCEXP_HOST=0.0.0.0 \
     BTCEXP_PORT=3002 \

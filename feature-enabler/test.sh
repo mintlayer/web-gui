@@ -91,12 +91,24 @@ pass "compose failure reported"
 
 # 5. disable bitcoin stops services and recreates web-gui
 : > "$DOCKER_LOG"
+# Installer .env files carry COMPOSE_PROFILES; a UI-disable must drop the
+# service from it or the next host-side `docker compose up -d` resurrects
+# what the user just switched off.
+printf 'COMPOSE_PROFILES=indexer,bitcoin,watchtower\n' >> "$PROJ/.env"
 req bitcoin.req '{"action":"disable","service":"bitcoin"}'
 run_enabler || fail "enabler exited non-zero (case 5)"
 grep -q 'stop bitcoind btc-explorer bdk-wallet' "$DOCKER_LOG" || fail "stop services missing (case 5)"
 grep -q 'up -d web-gui' "$DOCKER_LOG" || fail "web-gui recreate missing (case 5)"
 envhas BITCOIN_ENABLED false || fail "BITCOIN_ENABLED not disabled (case 5)"
+envhas COMPOSE_PROFILES indexer,watchtower || fail "COMPOSE_PROFILES still names bitcoin (case 5)"
 pass "disable bitcoin"
+
+# 5b. enable bitcoin adds the profile back
+: > "$DOCKER_LOG"
+req bitcoin.req '{"action":"enable","service":"bitcoin","network":"mainnet","pruned":false}'
+run_enabler || fail "enabler exited non-zero (case 5b)"
+envhas COMPOSE_PROFILES indexer,watchtower,bitcoin || fail "COMPOSE_PROFILES missing bitcoin (case 5b)"
+pass "enable bitcoin keeps COMPOSE_PROFILES in sync"
 
 # 6. indexer enable/disable
 : > "$DOCKER_LOG"
@@ -197,9 +209,15 @@ pass "upgrade pulls first, pins moved, core bumped"
 touch "$WORK/fail"
 export DOCKER_FAIL="$WORK/fail"
 req web-gui.req '{"action":"upgrade","service":"web-gui","tag":"v1.0.0-rc4"}'
+# The whole .env must be byte-identical: the buggy code used to write
+# PREVIOUS_ anchors and flip the active pin on a failed pull (a bare
+# ':v1.0.0-rc3' grep passed vacuously off its own anchor line). Anchors
+# from earlier successful cases are expected to persist, hence the diff.
+cp "$PROJ/.env" "$WORK/env-before-case14"
 run_enabler || fail "enabler exited non-zero (case 14)"
 grep -q '"ok":false' "$REQ/web-gui.result" || fail "failed pull not reported (case 14)"
-grep -q ':v1.0.0-rc3' "$PROJ/.env" || fail "env changed despite failed pull (case 14)"
+cp "$PROJ/.env" "$WORK/env-after-case14"
+diff -u "$WORK/env-before-case14" "$WORK/env-after-case14" >/dev/null || fail "env changed despite failed pull (case 14)"
 unset DOCKER_FAIL
 pass "failed pull aborts before env write"
 

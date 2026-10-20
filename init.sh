@@ -337,8 +337,9 @@ UI_TOTP_SECRET=$(node -e "
   process.stdout.write(result);
 ")
 
-# Generate session signing secret
-SESSION_SECRET=$(openssl rand -hex 32)
+# Generate session signing secret (urandom fallback: openssl can be
+# absent on minimal hosts and this runs after every question was answered)
+SESSION_SECRET=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
 
 # Construct the otpauth URI
 TOTP_URI="otpauth://totp/Mintlayer%20Nexus?secret=${UI_TOTP_SECRET}&issuer=Mintlayer"
@@ -494,6 +495,12 @@ if [[ "$ENABLE_INDEXER" == "yes" ]]; then
 
   ask "Port for the blockchain REST API"
   prompt API_WEB_SERVER_PORT "Port:" "3000"
+  # Same validation as the web GUI port: garbage here breaks the compose
+  # port mapping (127.0.0.1:${API_WEB_SERVER_PORT:-3000}:3000).
+  while ! [[ "$API_WEB_SERVER_PORT" =~ ^[0-9]+$ ]] || (( API_WEB_SERVER_PORT < 1 || API_WEB_SERVER_PORT > 65535 )); do
+    printf "${CYAN}│${RESET}  ${RED}Enter a valid port number (1-65535)${RESET}\n"
+    prompt API_WEB_SERVER_PORT "Port:" "3000"
+  done
 fi
 
 divider
@@ -868,18 +875,25 @@ ok ".env written"
 # uploads/ is bind-mounted into web-gui; pre-create it here so it is owned by
 # this user (docker creates missing bind-mount dirs as root).
 mkdir -p mintlayer-data/prefs mintlayer-data/plugins mintlayer-data/uploads
-# Rootless docker maps the container uid to an unrelated host uid; the bind-
-# mounted prefs dir must stay world-writable or the app cannot open its sqlite.
+# Rootless docker maps the container uid to an unrelated host uid, so the
+# seeding container needs write access to this bind mount. 0777 applies to
+# the seeding window only - the alpine container tightens it to 0700 (and
+# chowns the DB to this user) a few lines down; do not 'fix' this to 0770,
+# rootless hosts have no shared group to grant it to.
 chmod 0777 mintlayer-data/prefs
+# sql_lit VALUE -> stdout: VALUE as a single-quoted SQL literal. Token and
+# hash values are user input; an embedded quote must not terminate the
+# statement mid-seed (a broken seed aborts the install half-done).
+sql_lit() { printf "%s" "$1" | sed "s/'/''/g"; }
 {
   echo "CREATE TABLE IF NOT EXISTS prefs (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
-  echo "INSERT OR REPLACE INTO prefs VALUES ('auth.password_hash', '\"${UI_PASSWORD_HASH}\"');"
-  echo "INSERT OR REPLACE INTO prefs VALUES ('auth.totp_secret',   '\"${UI_TOTP_SECRET}\"');"
-  [ -n "$IPFS_PROVIDER"      ] && echo "INSERT OR REPLACE INTO prefs VALUES ('ipfs.provider',       '\"${IPFS_PROVIDER}\"');" || true
-  [ -n "$FILEBASE_TOKEN"     ] && echo "INSERT OR REPLACE INTO prefs VALUES ('ipfs.filebase_token', '\"${FILEBASE_TOKEN}\"');" || true
-  [ -n "$PINATA_JWT"         ] && echo "INSERT OR REPLACE INTO prefs VALUES ('ipfs.pinata_jwt',     '\"${PINATA_JWT}\"');" || true
-  [ -n "$TELEGRAM_BOT_TOKEN" ] && echo "INSERT OR REPLACE INTO prefs VALUES ('telegram.bot_token',  '\"${TELEGRAM_BOT_TOKEN}\"');" || true
-  [ -n "$TELEGRAM_CHAT_ID"   ] && echo "INSERT OR REPLACE INTO prefs VALUES ('telegram.chat_id',    '\"${TELEGRAM_CHAT_ID}\"');" || true
+  printf "INSERT OR REPLACE INTO prefs VALUES ('auth.password_hash', '%s');\n" "$(sql_lit "${UI_PASSWORD_HASH}")"
+  printf "INSERT OR REPLACE INTO prefs VALUES ('auth.totp_secret', '%s');\n" "$(sql_lit "${UI_TOTP_SECRET}")"
+  [ -n "$IPFS_PROVIDER"      ] && printf "INSERT OR REPLACE INTO prefs VALUES ('ipfs.provider', '%s');\n" "$(sql_lit "${IPFS_PROVIDER}")" || true
+  [ -n "$FILEBASE_TOKEN"     ] && printf "INSERT OR REPLACE INTO prefs VALUES ('ipfs.filebase_token', '%s');\n" "$(sql_lit "${FILEBASE_TOKEN}")" || true
+  [ -n "$PINATA_JWT"         ] && printf "INSERT OR REPLACE INTO prefs VALUES ('ipfs.pinata_jwt', '%s');\n" "$(sql_lit "${PINATA_JWT}")" || true
+  [ -n "$TELEGRAM_BOT_TOKEN" ] && printf "INSERT OR REPLACE INTO prefs VALUES ('telegram.bot_token', '%s');\n" "$(sql_lit "${TELEGRAM_BOT_TOKEN}")" || true
+  [ -n "$TELEGRAM_CHAT_ID"   ] && printf "INSERT OR REPLACE INTO prefs VALUES ('telegram.chat_id', '%s');\n" "$(sql_lit "${TELEGRAM_CHAT_ID}")" || true
 } | docker run --rm -i \
     -v "$(pwd)/mintlayer-data/prefs:/prefs" \
     alpine \
