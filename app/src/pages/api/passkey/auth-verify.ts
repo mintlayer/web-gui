@@ -42,6 +42,11 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
   } catch {
     return json({ error: 'Invalid request body.' }, 400);
   }
+  // request.json() parses successfully for JSON literals like `null`; the
+  // property reads below need a real object.
+  if (body == null || typeof body !== 'object') {
+    return json({ error: 'Invalid request body.' }, 400);
+  }
 
   const creds = getCredentials();
   const storedCred = creds.find((c) => c.id === body.id);
@@ -63,7 +68,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
         id: storedCred.id,
         publicKey: Buffer.from(storedCred.publicKey, 'base64url'),
         counter: storedCred.counter,
-        transports: ['internal', 'hybrid'] as AuthenticatorTransport[],
+        ...(storedCred.transports ? { transports: storedCred.transports } : {}),
       },
     });
   } catch (err) {

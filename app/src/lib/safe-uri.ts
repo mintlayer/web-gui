@@ -8,6 +8,20 @@
  * else degrades to plain text.
  */
 
+/**
+ * Sanitize a user-supplied relative redirect target (the login `next=`
+ * parameter). Returns the path only when it is a same-origin relative URL;
+ * anything else degrades to '/'.
+ *
+ * Protocol-relative '//host' is rejected, and so is any backslash form:
+ * WHATWG URL parsing treats '\' as '/' for special schemes, so '/\\evil.com'
+ * and '/\\/evil.com' resolve cross-origin even though they start with '/'
+ * (new URL('/\\evil.com', 'http://x.test').href === 'http://evil.com/').
+ */
+export function safeRelativePath(raw: string): string {
+  return raw.startsWith('/') && !raw.startsWith('//') && !raw.startsWith('/\\') ? raw : '/';
+}
+
 export const DEFAULT_IPFS_GATEWAY = 'https://ipfs.io/ipfs/';
 
 export function getIpfsGateway(): string {

@@ -13,6 +13,7 @@
  */
 
 import crypto from 'node:crypto';
+import type { AuthenticatorTransport } from '@simplewebauthn/server';
 import { getPref, setPref } from '@/lib/prefs-db';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -23,6 +24,11 @@ export interface StoredCredential {
   counter: number;   // signature counter (anti-replay)
   name: string;      // user-supplied label
   createdAt: number; // Unix ms
+  // Transports the authenticator reported at registration (usb, nfc, ble,
+  // internal, hybrid, cable). Old records may be undefined; callers must
+  // omit the hint then so browsers probe every transport instead of
+  // filtering out plugged-in hardware keys.
+  transports?: AuthenticatorTransport[];
 }
 
 // ── Credential storage ─────────────────────────────────────────────────────────

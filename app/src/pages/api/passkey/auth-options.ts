@@ -28,9 +28,16 @@ export const GET: APIRoute = async ({ request, clientAddress }) => {
     rpID: rpId,
     allowCredentials: creds.map((c) => ({
       id: c.id,
-      transports: ['internal', 'hybrid'] as AuthenticatorTransport[],
+      // Replay the transports the key reported at registration. Omitting
+      // the hint (legacy records) makes browsers probe every transport, so
+      // USB/NFC keys enrolled before this field existed keep working.
+      ...(c.transports && c.transports.length > 0 ? { transports: c.transports } : {}),
     })),
-    userVerification: 'preferred',
+    // Verification is required by verifyAuthenticationResponse's default,
+    // so the ceremony must ask the authenticator for it up front; asking
+    // for 'preferred' would let non-UV assertions in that then fail
+    // verification (dead-end loop that burns a TOTP code per retry).
+    userVerification: 'required',
   });
 
   const token = createChallenge(options.challenge, 'authentication');

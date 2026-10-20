@@ -66,8 +66,8 @@ export function isTotpThrottled(key: string, now: number = Date.now()): boolean 
 /**
  * Verify a TOTP code against `secret` and burn it (single use per window).
  * verifyTOTP accepts T-1..T+1, so the code is burned for the candidate
- * periods (~90s). Shared by the web step-up gate and the Telegram bot so a
- * code leaked via either channel cannot be replayed at the other.
+ * periods (~90s). Shared by web login, the step-up gate and the Telegram
+ * bot so a code observed at one channel cannot be replayed at another.
  */
 export function verifyAndBurnTotpCode(
   code: string,

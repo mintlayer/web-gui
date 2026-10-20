@@ -41,11 +41,14 @@ if (Astro.request.method === 'POST') {
   } else if (section === 'password') {
     // Shared logic with /api/settings/password (single source of truth).
     const str = (v: FormDataEntryValue | null) => (typeof v === 'string' ? v : '');
-    const decision = await resolvePasswordChange({
-      currentPassword: str(form.get('current_password')),
-      newPassword:     str(form.get('new_password')),
-      confirmPassword: str(form.get('confirm_password')),
-    });
+    const decision = await resolvePasswordChange(
+      {
+        currentPassword: str(form.get('current_password')),
+        newPassword:     str(form.get('new_password')),
+        confirmPassword: str(form.get('confirm_password')),
+      },
+      getClientAddress(Astro.request, Astro.clientAddress as string | undefined),
+    );
 
     if (!decision.ok) {
       result = { action: 'error', section, message: decision.error + '.' };

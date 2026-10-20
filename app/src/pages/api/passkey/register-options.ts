@@ -45,11 +45,13 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     attestationType: 'none',
     excludeCredentials: existingCreds.map((c) => ({
       id: c.id,
-      transports: ['internal', 'hybrid'] as AuthenticatorTransport[],
+      ...(c.transports && c.transports.length > 0 ? { transports: c.transports } : {}),
     })),
     authenticatorSelection: {
       residentKey: 'preferred',
-      userVerification: 'preferred',
+      // verifyRegistrationResponse defaults to requiring user verification;
+      // request it here too so the authenticator actually performs it.
+      userVerification: 'required',
     },
   });
 
