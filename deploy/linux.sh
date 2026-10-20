@@ -1354,19 +1354,29 @@ fi
 # bind-mount dirs as root, which the containers (running as ML_USER_ID) then
 # cannot write (uploads/ receives file uploads; prefs/ holds the SQLite DB).
 mkdir -p mintlayer-data/prefs mintlayer-data/plugins mintlayer-data/uploads
-# sql_lit VALUE -> stdout: VALUE as a single-quoted SQL literal. Token and
-# hash values are user input; an embedded quote must not terminate the
-# statement mid-seed (a broken seed aborts the install half-done).
-sql_lit() { printf "%s" "$1" | sed "s/'/''/g"; }
+# sql_json VALUE -> stdout: VALUE as a JSON string literal, safe inside a
+# single-quoted SQL literal. The app JSON.parse()s every pref value, so the
+# DB must hold '"value"' - quotes included - or login breaks on a fresh
+# install. Order matters: backslashes first, then double quotes (both for
+# JSON), then single quotes (doubled for SQL).
+sql_json() {
+  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e "s/'/''/g"
+}
+
+# pref_sql KEY VALUE -> a complete INSERT statement storing VALUE as a
+# JSON string (quotes included) - getPref() JSON.parses every row.
+pref_sql() {
+  printf "INSERT OR REPLACE INTO prefs VALUES ('%s', '\"%s\"');\n" "$1" "$(sql_json "$2")"
+}
 {
   echo "CREATE TABLE IF NOT EXISTS prefs (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
-  printf "INSERT OR REPLACE INTO prefs VALUES ('auth.password_hash', '%s');\n" "$(sql_lit "${UI_PASSWORD_HASH}")"
-  printf "INSERT OR REPLACE INTO prefs VALUES ('auth.totp_secret', '%s');\n" "$(sql_lit "${UI_TOTP_SECRET}")"
-  [ -n "$IPFS_PROVIDER"      ] && printf "INSERT OR REPLACE INTO prefs VALUES ('ipfs.provider', '%s');\n" "$(sql_lit "${IPFS_PROVIDER}")" || true
-  [ -n "$FILEBASE_TOKEN"     ] && printf "INSERT OR REPLACE INTO prefs VALUES ('ipfs.filebase_token', '%s');\n" "$(sql_lit "${FILEBASE_TOKEN}")" || true
-  [ -n "$PINATA_JWT"         ] && printf "INSERT OR REPLACE INTO prefs VALUES ('ipfs.pinata_jwt', '%s');\n" "$(sql_lit "${PINATA_JWT}")" || true
-  [ -n "$TELEGRAM_BOT_TOKEN" ] && printf "INSERT OR REPLACE INTO prefs VALUES ('telegram.bot_token', '%s');\n" "$(sql_lit "${TELEGRAM_BOT_TOKEN}")" || true
-  [ -n "$TELEGRAM_CHAT_ID"   ] && printf "INSERT OR REPLACE INTO prefs VALUES ('telegram.chat_id', '%s');\n" "$(sql_lit "${TELEGRAM_CHAT_ID}")" || true
+  pref_sql 'auth.password_hash' "${UI_PASSWORD_HASH}"
+  pref_sql 'auth.totp_secret'   "${UI_TOTP_SECRET}"
+  [ -n "$IPFS_PROVIDER"      ] && pref_sql 'ipfs.provider'       "${IPFS_PROVIDER}" || true
+  [ -n "$FILEBASE_TOKEN"     ] && pref_sql 'ipfs.filebase_token' "${FILEBASE_TOKEN}" || true
+  [ -n "$PINATA_JWT"         ] && pref_sql 'ipfs.pinata_jwt'     "${PINATA_JWT}" || true
+  [ -n "$TELEGRAM_BOT_TOKEN" ] && pref_sql 'telegram.bot_token'  "${TELEGRAM_BOT_TOKEN}" || true
+  [ -n "$TELEGRAM_CHAT_ID"   ] && pref_sql 'telegram.chat_id'    "${TELEGRAM_CHAT_ID}" || true
 } | docker run --rm -i \
     -v "$(pwd)/mintlayer-data/prefs:/prefs" \
     alpine \

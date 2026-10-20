@@ -100,7 +100,7 @@ bitcoin-cli:
 ## Usage: make pending-transactions  or  make pending-transactions ACCOUNT=1
 pending-transactions:
 	docker run --rm \
-		--network web-gui_default \
+		--network $(COMPOSE_NETWORK) \
 		-v "$(CURDIR)/tools:/tools:ro" \
 		-v "$(CURDIR)/$(ENV_FILE):/.env:ro" \
 		-e WALLET_RPC_HOST=wallet-rpc-daemon \
@@ -110,7 +110,7 @@ pending-transactions:
 ## Usage: make list-utxos  or  make list-utxos ACCOUNT=1
 list-utxos:
 	docker run --rm \
-		--network web-gui_default \
+		--network $(COMPOSE_NETWORK) \
 		-v "$(CURDIR)/tools:/tools:ro" \
 		-v "$(CURDIR)/$(ENV_FILE):/.env:ro" \
 		-e WALLET_RPC_HOST=wallet-rpc-daemon \

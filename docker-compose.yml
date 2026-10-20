@@ -154,8 +154,9 @@ services:
     command:
       - "-printtoconsole=1"
       # Bitcoin Core's -chain wants "main", not "mainnet" - override with
-      # BITCOIN_CORE_CHAIN in .env (init.sh derives it).
-      - "-chain=${BITCOIN_CORE_CHAIN:-${BITCOIN_NETWORK:-mainnet}}"
+      # BITCOIN_CORE_CHAIN in .env (init.sh derives it: mainnet -> "main";
+      # "mainnet" is not a valid Core -chain value).
+      - "-chain=${BITCOIN_CORE_CHAIN:-main}"
       - "-rpcbind=0.0.0.0:8332"
       - "-rpcallowip=0.0.0.0/0"
       - "-rpcuser=${BITCOIN_RPC_USERNAME}"
