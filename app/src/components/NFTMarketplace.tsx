@@ -8,6 +8,7 @@ import { safeImageUri } from "@/lib/safe-uri";
 import type { TokenCurrency, OrderInfo } from "@/lib/wallet-rpc";
 import { rpc } from '@/lib/client-rpc';
 import { stakeTrade } from '@/lib/stake-trade-client';
+import { mulDecimal } from '@/lib/decimal';
 import { TotpField } from '@/components/ui/TotpField';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -93,7 +94,10 @@ function SellNFTModal({
   const resolvedIcon = resolveUri(nft.iconUri);
   const [iconErrored, setIconErrored] = useState(false);
 
-  const canSubmit = !loading && !!listPrice && parseFloat(listPrice) > 0 && totp.length === 6;
+  // Exact-decimal validity, not parseFloat: a scientific-notation input
+  // ('1e5') would sail past this check and hit the daemon raw.
+  const listPriceValid = mulDecimal(listPrice, '1') !== null && Number(listPrice) > 0;
+  const canSubmit = !loading && listPriceValid && totp.length === 6;
 
   async function handleList(e: React.FormEvent) {
     e.preventDefault();
@@ -491,13 +495,12 @@ export default function NFTMarketplace({
       );
 
       const enriched: NFTListing[] = nftCandidates
-        .filter(o => {
-          const id = (o.initially_given as { type: "Token"; content: { id: string } }).content.id;
-          return metaMap.has(id);
-        })
         .map(o => {
           const id = (o.initially_given as { type: "Token"; content: { id: string } }).content.id;
-          const meta = metaMap.get(id)!;
+          // Listings with unresolvable metadata stay visible to buyers
+          // (same fallback as the own-listings side) - filtering them out
+          // hid live offers behind an RPC glitch.
+          const meta = metaMap.get(id) ?? { name: "unknown collection", ticker: "", iconUri: null };
           return {
             orderId: o.order_id,
             nftId: id,

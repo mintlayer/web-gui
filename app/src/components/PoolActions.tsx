@@ -5,6 +5,7 @@ import { watchTx } from "@/lib/txWatcher";
 import { submitWithToast } from "@/lib/toastStore";
 import { rpc } from '@/lib/client-rpc';
 import { stakeTrade, type StakeTradeFailure } from '@/lib/stake-trade-client';
+import { mulDecimal } from '@/lib/decimal';
 import { TotpField } from '@/components/ui/TotpField';
 
 async function freshAddress(): Promise<string> {
@@ -40,7 +41,18 @@ export function CreatePoolForm({ initialDecommissionAddress, onSuccess }: Create
     setLoading(true);
     setError(null);
     try {
-      const marginRatio = (parseFloat(marginPct) / 100).toFixed(4);
+      // The field is a percent; the daemon wants per-mille: 5% -> 50.
+      // (Dividing by 100 sent a value 1000x too small - the pool would
+      // charge a 0.05% commission when the user typed 5%.) Exact math
+      // keeps '5.5' -> '55' instead of float artifacts.
+      if (mulDecimal(marginPct, '1') === null) {
+        throw new Error('Margin ratio must be a plain number (e.g. 5 or 0.5).');
+      }
+      const pctNum = Number(marginPct);
+      if (!(pctNum > 0) || !(pctNum <= 100)) {
+        throw new Error('Margin ratio must be a percentage between 0 (exclusive) and 100.');
+      }
+      const marginRatio = mulDecimal(marginPct, '10');
       await submitWithToast(
         async () => {
           // Pool creation burns a large network fee (~1000 ML) and is

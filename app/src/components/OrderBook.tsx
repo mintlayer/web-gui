@@ -204,12 +204,16 @@ function BuySellPanel({
     ? mulDecimal(amount, bestBidPrice)
     : null;
 
+  // Same exact-decimal rule the submit path enforces: a lenient
+  // parseFloat() here lets '1e5' reach the button and burn a TOTP code on
+  // a request the daemon is guaranteed to reject.
   const canSubmit = !loading && !!effectiveTokenId && totp.length === 6 && (
     type === "limit"
-      ? (!!amount && !!price && parseFloat(amount) > 0 && parseFloat(price) > 0)
+      ? (mulDecimal(amount, "1") !== null && Number(amount) > 0 &&
+         mulDecimal(price, "1") !== null && Number(price) > 0)
       : side === "buy"
-        ? (!!mlAmount && parseFloat(mlAmount) > 0 && !!bestAsk)
-        : (!!amount && parseFloat(amount) > 0 && !!bestBid)
+        ? (mulDecimal(mlAmount, "1") !== null && Number(mlAmount) > 0 && !!bestAsk)
+        : (mulDecimal(amount, "1") !== null && Number(amount) > 0 && !!bestBid)
   );
 
   const failTotp = () => {
@@ -258,6 +262,11 @@ function BuySellPanel({
           // buy market → fill ask → provide ML (what the ask order asks for)
           // sell market → fill bid → provide Token (what the bid order asks for)
           const fillAmt = side === "buy" ? mlAmount : amount;
+          // Guard BEFORE the TOTP burn: a malformed amount ('1e5') must
+          // fail client-side, not server-side after the code is spent.
+          if (mulDecimal(fillAmt, "1") === null || !(Number(fillAmt) > 0)) {
+            throw new Error("Enter a plain decimal amount (e.g. 12.5)");
+          }
           const r = await stakeTrade({
             action: "order_fill",
             params: {

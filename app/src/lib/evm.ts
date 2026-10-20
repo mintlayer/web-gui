@@ -191,11 +191,13 @@ export async function depositToBridge(
   const token = new Contract(tokenAddress, ERC20_ABI, signer);
   // The chain is the source of truth for decimals - many bridgeable
   // tokens (USDC et al.) are not 18, and the config carries no value.
+  // ethers v6 decodes uint8 returns as bigint: convert before the
+  // integer check or the guard rejects every honest answer.
   let resolvedDecimals = decimals;
   try {
-    const onChain = await token.decimals();
-    if (Number.isInteger(onChain) && onChain >= 0 && onChain <= 36) {
-      resolvedDecimals = onChain;
+    const n = Number(await token.decimals());
+    if (Number.isInteger(n) && n >= 0 && n <= 36) {
+      resolvedDecimals = n;
     }
   } catch {
     /* keep the caller-provided fallback */

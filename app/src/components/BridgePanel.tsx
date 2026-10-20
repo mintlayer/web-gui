@@ -171,8 +171,14 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
   // setPhase the async submits leave `busy` false, so the button alone can't
   // stop a double click from creating two deposits.
   const submittingRef = useRef(false);
+  // Mirror of `phase` for stable-identity callbacks (pollTracked): lets
+  // them read the current submit phase without re-subscribing effects.
+  const submitPhaseRef = useRef<Phase>('idle');
   const pollFailuresRef = useRef(0);
   const [pollUnavailable, setPollUnavailable] = useState(false);
+  useEffect(() => {
+    submitPhaseRef.current = phase;
+  }, [phase]);
 
   const metamaskInstalled = hasEthereumProvider();
 
@@ -468,7 +474,11 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
         // Never let a stale request's terminal state stomp an active
         // submission of a NEW bridge: while the wallet prompt is up the
         // phase belongs to the new flow (and `busy` must not drop).
-        if (!submittingRef.current && !SUBMIT_PHASES.has(phase)) {
+        // submitPhaseRef mirrors the `phase` state: this callback's deps
+        // are empty by design (stable identity for the poll interval),
+        // so a plain `phase` read would always see the initial value and
+        // the guard would be dead code.
+        if (!submittingRef.current && !SUBMIT_PHASES.has(submitPhaseRef.current)) {
           setPhase(
             next.kind === 'completed' ? 'done' : next.kind === 'manual' ? 'manual' : 'failed',
           );
@@ -544,7 +554,7 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
       closed = true;
       socket?.close();
     };
-  }, [tracked?.uuid, trackedProgress?.kind, pollTracked]);
+  }, [tracked?.uuid, trackedProgress?.kind, pollUnavailable, pollTracked]);
 
   function dismissTracked() {
     clearInFlight();
@@ -693,15 +703,33 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
           Number.parseInt(chainForFlavor(flavor)?.id ?? '0x1', 16),
         );
         setPhase('submitting');
-        const res = await sdk.broadcastBridgeRequest({
-          source_chain: sourceChain,
-          destination_chain: destinationChain,
-          asset: asset.ticker,
-          amount: amount.trim(),
-          receiver_address: receiver.trim(),
-          deposit_transactions: [{ transaction_hash: txHash }],
-        });
-        trackRequest(res.bridge_request_uuid, txHash);
+        try {
+          const res = await sdk.broadcastBridgeRequest({
+            source_chain: sourceChain,
+            destination_chain: destinationChain,
+            asset: asset.ticker,
+            amount: amount.trim(),
+            receiver_address: receiver.trim(),
+            deposit_transactions: [{ transaction_hash: txHash }],
+          });
+          trackRequest(res.bridge_request_uuid, txHash);
+        } catch (broadcastErr) {
+          // The deposit is already on Ethereum at this point - swallowing
+          // the failure would orphan real funds. Record a provisional
+          // history entry so the deposit stays visible, then surface the
+          // broadcast error with the tx hash for support/contact.
+          appendHistory({
+            uuid: txHash,
+            direction,
+            asset: assetTicker,
+            amount: amount.trim(),
+            receiver: receiver.trim(),
+            startedAt: new Date().toISOString(),
+            status: 'Deposit broadcast; bridge request failed to submit',
+          });
+          setHistoryToken((t) => t + 1);
+          throw broadcastErr;
+        }
       } else {
         // ── Mintlayer → Ethereum ──
         if (!ethAccount) throw new Error('Connect MetaMask first (it is the receiver).');
@@ -764,6 +792,9 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
         setInfo(e.message);
         setPhase('idle');
       } else {
+        // Note: an e2m failure AFTER the deposit broadcast also leaves a
+        // provisional history entry (see the e2m branch) - the money is
+        // not lost, it is sitting in the deposit waiting for a retry.
         setError(e.message);
         setPhase('idle');
       }
@@ -1189,22 +1220,47 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
                   )}
                 {trackedProgress.mlTxHash && isTxHashLike(trackedProgress.mlTxHash) && (
                   <a
-                    href={`${mlExplorerBase(networkType)}/transaction/${trackedProgress.mlTxHash}`}
+                    href={
+                      isEthTxHash(trackedProgress.mlTxHash)
+                        ? `${ethExplorerBase(flavor)}/tx/${trackedProgress.mlTxHash}`
+                        : `${mlExplorerBase(networkType)}/transaction/${trackedProgress.mlTxHash}`
+                    }
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-mint-300 underline hover:opacity-80"
                   >
-                    {direction === 'm2e'
-                      ? 'Deposit on the Mintlayer explorer'
+                    {/* mlTxHash is the payout leg: Ethereum-side when the
+                        destination is ETH, Mintlayer-side when it is ML -
+                        route by hash shape, not the live form toggle. */}
+                    {isEthTxHash(trackedProgress.mlTxHash)
+                      ? 'Payout on Etherscan'
                       : 'Payout on the Mintlayer explorer'}{' '}
                     ↗
                   </a>
                 )}
+                {tracked.depositTxHash &&
+                  !isEthTxHash(tracked.depositTxHash) &&
+                  isTxHashLike(tracked.depositTxHash) && (
+                    <a
+                      href={`${mlExplorerBase(networkType)}/transaction/${tracked.depositTxHash}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-mint-300 underline hover:opacity-80"
+                    >
+                      Deposit on the Mintlayer explorer ↗
+                    </a>
+                  )}
               </p>
             )}
             <p className="text-xs text-gray-500 font-mono break-all">
               request {tracked.uuid}
             </p>
+            {pollUnavailable && (
+              <p className="text-xs text-amber-400 mt-1">
+                Live status unavailable - the bridge service did not answer recent checks. The
+                bridge request itself keeps running; retry from the history list below.
+              </p>
+            )}
             {trackedProgress.kind !== 'in-progress' ? (
               <div className="flex gap-3 mt-2">
                 <button

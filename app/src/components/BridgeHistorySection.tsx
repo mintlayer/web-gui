@@ -115,15 +115,31 @@ function Row({
             )}
             {payoutHash && isTxHashLike(payoutHash) && (
               <a
-                href={`${mlExplorerBase(networkType)}/transaction/${payoutHash}`}
+                href={
+                  isEthTxHash(payoutHash)
+                    ? `${ethExplorerBase(flavor)}/tx/${payoutHash}`
+                    : `${mlExplorerBase(networkType)}/transaction/${payoutHash}`
+                }
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-mint-300 underline hover:opacity-80"
               >
-                {entry.direction === 'm2e'
-                  ? 'Deposit on the Mintlayer explorer'
+                {/* Payout hash: Ethereum-side when the destination is ETH,
+                    Mintlayer-side when it is ML - route by hash shape. */}
+                {isEthTxHash(payoutHash)
+                  ? 'Payout on Etherscan'
                   : 'Payout on the Mintlayer explorer'}{' '}
                 ↗
+              </a>
+            )}
+            {depositHash && !isEthTxHash(depositHash) && isTxHashLike(depositHash) && (
+              <a
+                href={`${mlExplorerBase(networkType)}/transaction/${depositHash}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-mint-300 underline hover:opacity-80"
+              >
+                Deposit on the Mintlayer explorer ↗
               </a>
             )}
           </p>

@@ -45,9 +45,17 @@ const LS_KEY = 'ml_issued_tokens';
 function loadStored(): StoredToken[] {
   try {
     // Array.isArray guards against legacy shapes: JSON.parse('null') and
-    // JSON.parse('5') do not throw but are not token lists either.
+    // JSON.parse('5') do not throw but are not token lists either. The
+    // element filter keeps junk entries from crashing the render below
+    // (each card dereferences tokenId) - drop, don't trust.
     const parsed: unknown = JSON.parse(localStorage.getItem(LS_KEY) ?? '[]');
-    return Array.isArray(parsed) ? (parsed as StoredToken[]) : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (t): t is StoredToken =>
+        typeof t === 'object' && t !== null &&
+        typeof (t as StoredToken).tokenId === 'string' &&
+        /^[0-9a-f]{64}$/i.test((t as StoredToken).tokenId),
+    );
   } catch {
     return [];
   }
