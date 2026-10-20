@@ -39,11 +39,11 @@ export const ALLOWED_RPC_METHODS = new Set([
   // Orders / Trading
   'order_list_own',
   'order_list_all_active',
-  // order_create / order_fill / order_conclude sign fund-moving transactions
-  // (placing an order locks coins/tokens; filling pays the ask). Only
-  // reachable through POST /api/stake-trade (TOTP step-up) - shared by the
-  // order book and the NFT marketplace.
-  'order_freeze',
+  // order_create / order_fill / order_conclude / order_freeze are all on-chain
+  // transactions (freeze pays a fee and broadcasts; placing locks
+  // coins/tokens; filling pays the ask). Only reachable through POST
+  // /api/stake-trade (TOTP step-up) - shared by the order book and the NFT
+  // marketplace.
   // Wallet settings - non-sensitive only
   // NOTE: wallet_show_seed_phrase and wallet_unlock_private_keys are intentionally
   // absent - they are handled server-side in management/wallet.astro directly.

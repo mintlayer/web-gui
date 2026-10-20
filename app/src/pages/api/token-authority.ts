@@ -58,8 +58,10 @@ export const POST: APIRoute = async ({ request }) => {
   }
 
   try {
-    // Fan-out: one request per address, all in parallel
-    const perAddress = await Promise.all(
+    // Fan-out: one request per address, all in parallel. A single malformed
+    // body (proxy 200 with an HTML error page) must not nuke the whole
+    // batch - allSettled keeps the other addresses' results.
+    const settled = await Promise.allSettled(
       addresses.map(async (addr) => {
         // The endpoint takes no query params (verified in api-server v2.rs):
         // it always returns the full authority list for the address.
@@ -72,9 +74,10 @@ export const POST: APIRoute = async ({ request }) => {
         return Array.isArray(data) ? data : [];
       }),
     );
+    const perAddress = settled.flatMap(s => (s.status === 'fulfilled' ? s.value : [] as string[]));
 
     // Deduplicate across all addresses
-    const tokenIds = [...new Set(perAddress.flat())];
+    const tokenIds = [...new Set(perAddress)];
     return json({ ok: true, result: tokenIds }, 200);
   } catch (err) {
     return json({ ok: false, error: 'Indexer request failed' }, 502);

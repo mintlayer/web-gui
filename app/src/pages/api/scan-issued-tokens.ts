@@ -27,13 +27,11 @@ const TOKEN_ID_HRP: Record<string, string> = {
   mainnet: 'mmltk',
   testnet: 'tmltk',
   regtest: 'rmltk',
-  signet:  'smltk',
 };
-const hrp = TOKEN_ID_HRP[NETWORK] ?? 'mmltk';
 
 // ── Token ID computation ──────────────────────────────────────────────────────
 
-function computeTokenId(prevTxIdHex: string, prevOutputIndex: number): string | null {
+function computeTokenId(hrp: string, prevTxIdHex: string, prevOutputIndex: number): string | null {
   try {
     const txIdBytes = Buffer.from(prevTxIdHex, 'hex');
     if (txIdBytes.length !== 32) return null;
@@ -47,7 +45,6 @@ function computeTokenId(prevTxIdHex: string, prevOutputIndex: number): string | 
     return null;
   }
 }
-
 // ── UTXO types ────────────────────────────────────────────────────────────────
 
 interface UtxoEntry {
@@ -97,6 +94,13 @@ interface TxGetResult {
 // ── Endpoint ──────────────────────────────────────────────────────────────────
 
 export const GET: APIRoute = async () => {
+  // Fail fast on an unknown NETWORK instead of silently bech32-encoding
+  // token ids with the wrong HRP (would produce ids that mismatch every
+  // real authoritative token - same rule as chain-tip's network guard).
+  const hrp = TOKEN_ID_HRP[NETWORK];
+  if (!hrp) {
+    return json({ ok: false, error: `Unsupported NETWORK '${NETWORK}'` }, 400);
+  }
   try {
     const utxos = await rpcCall<UtxoEntry[]>('account_utxos', { account: 0 });
 
@@ -144,7 +148,7 @@ export const GET: APIRoute = async () => {
       const prevOutputIndex = firstUtxoInput.Utxo.index;
       if (!prevTxIdHex || prevOutputIndex === undefined) continue;
 
-      const tokenId = computeTokenId(prevTxIdHex, prevOutputIndex);
+      const tokenId = computeTokenId(hrp, prevTxIdHex, prevOutputIndex);
       if (!tokenId) continue;
 
       fungibleResult.push({ tokenId, ticker, decimals });

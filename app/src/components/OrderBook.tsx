@@ -454,20 +454,25 @@ function MyOrderRow({ order, onAction, tickerMap, totp, onTotpChange, onTotpCons
   const [error, setError]     = useState<string | null>(null);
   const needsTotp = totp.length !== 6;
 
-  // Freeze is a wallet-local flag (no transaction, no funds move) - stays on
-  // the plain RPC allowlist.
+  // Freeze is an on-chain transaction (fee-burning, funds-affecting), so it
+  // goes through the TOTP-gated /api/stake-trade like every other tx
+  // action - the plain-RPC allowlist is for read-only calls only.
   const freeze = async () => {
     setLoading(true);
     setError(null);
     try {
       await submitWithToast(
         async () => {
-          const res = await rpc<{ tx_id?: string }>("order_freeze", {
-            account: 0,
-            order_id: order.order_id,
-            options: {},
-          });
-          return res.tx_id ?? "frozen";
+          const r = await stakeTrade(
+            { action: "order_freeze", params: { account: 0, order_id: order.order_id } },
+            totp,
+          );
+          if (!r.ok) {
+            if (r.code_consumed) onTotpConsumed();
+            throw new Error(r.error);
+          }
+          onTotpConsumed(); // burned - clear the field
+          return r.results[0]?.tx_id as string ?? "frozen";
         },
         watchTx,
       );
@@ -524,7 +529,8 @@ function MyOrderRow({ order, onAction, tickerMap, totp, onTotpChange, onTotpCons
         </div>
         <div className="flex gap-2 shrink-0">
           {!isConcluded && !isFrozen && (
-            <button onClick={freeze} disabled={loading}
+            <button onClick={freeze} disabled={loading || needsTotp}
+              title={needsTotp ? "Enter your 2FA code to freeze" : undefined}
               className="rounded-lg bg-gray-700 hover:bg-gray-600 border border-gray-600 px-3 py-1.5 text-xs
                          font-medium text-gray-300 transition-colors disabled:opacity-40">
               Freeze

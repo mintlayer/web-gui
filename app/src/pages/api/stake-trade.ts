@@ -36,6 +36,7 @@ const ACTIONS = new Set([
   'order_create',
   'order_fill',
   'order_conclude',
+  'order_freeze',
 ]);
 
 const MAX_BATCH = 5;
@@ -152,6 +153,13 @@ function validateParams(action: string, p: Params): string | null {
     case 'order_conclude': {
       if (p.account !== 0) return 'account must be 0';
       if (!isStr(p.order_id, ID_RE)) return 'order_id is required';
+      if (p.output_address !== undefined && p.output_address !== null) return 'output_address must be null';
+      return null;
+    }
+    case 'order_freeze': {
+      if (p.account !== 0) return 'account must be 0';
+      if (!isStr(p.order_id, ID_RE)) return 'order_id is required';
+      if (p.output_address !== undefined && p.output_address !== null) return 'output_address must be null';
       return null;
     }
     default:
@@ -237,7 +245,9 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
       // their message - never forward those to the browser (mirror of the
       // rpc.ts proxy redaction). Daemon user-actionable messages (insufficient
       // funds, orphaned transactions) still pass through.
-      const transport = err.code === -32000 || err.code === -32001 || err.code >= 500;
+      // Positive codes are daemon HTTP statuses (401/404 on bad credentials
+      // carry the daemon URL in the message) - redact them too, not just 5xx.
+      const transport = err.code === -32000 || err.code === -32001 || err.code >= 400;
       if (transport) console.error('[stake-trade]', items.map(i => i.action).join(','), err.message);
       return json({
         ok: false,

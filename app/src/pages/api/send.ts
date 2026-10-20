@@ -87,7 +87,9 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
       // to the browser (mirror of the rpc.ts proxy redaction). Daemon
       // user-actionable messages (insufficient funds, amount too small)
       // still pass through.
-      const transport = err.code === -32000 || err.code === -32001 || err.code >= 500;
+      // Positive codes are daemon HTTP statuses (401/404 on bad credentials
+      // carry the daemon URL in the message) - redact them too, not just 5xx.
+      const transport = err.code === -32000 || err.code === -32001 || err.code >= 400;
       if (transport) console.error('[send]', err.message);
       return json({
         ok: false,

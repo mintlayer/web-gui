@@ -89,6 +89,7 @@ function supplyBadge(info: FungibleContent) {
 
 export default function IssuedTokensPanel({ network }: Props) {
   const [stored, setStored] = useState<StoredToken[]>([]);
+  const [scanError, setScanError] = useState<string | null>(null);
   const [liveInfos, setLiveInfos] = useState<Map<string, TokenLiveInfo>>(new Map());
   const [loading, setLoading] = useState(true);
   const [manageTokenId, setManageTokenId] = useState<string | null>(null);
@@ -224,9 +225,17 @@ export default function IssuedTokensPanel({ network }: Props) {
       const res = await fetch('/api/scan-issued-tokens');
       const data = await res.json() as {
         ok: boolean;
+        error?: string;
         fungible?: Array<{ tokenId: string; ticker: string; decimals: number }>;
       };
-      if (!data.ok || !data.fungible || data.fungible.length === 0) return;
+      if (!data.ok) {
+        // The scan failing is not the same as having no tokens - without
+        // this state a broken wallet renders as an empty ("clean") list.
+        setScanError(data.error ?? 'The wallet scan failed.');
+        return;
+      }
+      setScanError(null);
+      if (!data.fungible || data.fungible.length === 0) return;
 
       // Use current to filter what's already known at call time
       const knownIds = new Set(current.map(t => t.tokenId));
@@ -296,6 +305,17 @@ export default function IssuedTokensPanel({ network }: Props) {
   }
 
   if (stored.length === 0) {
+    if (scanError) {
+      return (
+        <div className="rounded-lg border border-amber-800 bg-amber-900/20 px-4 py-3 text-sm text-amber-300">
+          <p>Could not scan the wallet for your tokens: {scanError}</p>
+          <button onClick={() => { setScanError(null); augmentFromWallet(loadStored()); }}
+            className="mt-2 rounded-lg bg-gray-700 hover:bg-gray-600 border border-gray-600 px-3 py-1 text-xs font-medium text-gray-200">
+            Retry
+          </button>
+        </div>
+      );
+    }
     return (
       <p className="text-sm text-gray-500">
         No authoritable tokens found. Use <strong className="text-gray-400">Mint Token</strong> above to create one.

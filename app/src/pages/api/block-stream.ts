@@ -112,7 +112,10 @@ export const GET: APIRoute = async ({ request }) => {
 
       ws.on('error', (err) => {
         clearInterval(heartbeat);
-        send({ type: 'error', message: err.message });
+        // Generic message only: raw ws errors embed the daemon host/port,
+        // which must not reach the browser (same redaction rule as rpc.ts).
+        console.error('[block-stream] upstream error:', err.message);
+        send({ type: 'error', message: 'Event stream error. Try reloading the page.' });
         try { controller.close(); } catch { /* already closed */ }
       });
 
