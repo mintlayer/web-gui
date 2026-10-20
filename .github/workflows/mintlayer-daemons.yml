@@ -119,6 +119,7 @@ jobs:
           for daemon in $DAEMONS; do
             for variant in "$BASE" "$SHA_TAG"; do
               docker build \
+                --provenance=false \
                 --build-arg DAEMON_NAME="$daemon" \
                 -f docker/mintlayer-daemon-runtime.Dockerfile \
                 -t "$IMAGE_NS/$daemon:$variant-$ARCH" \
