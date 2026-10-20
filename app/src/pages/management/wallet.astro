@@ -66,11 +66,6 @@ let lookaheadSize: number = getPref<number>('wallet.lookahead_size') ?? 20;
 // when this preference is on - see the toggle next to the page title.
 let advancedUi = getPref<boolean>('ml_advanced_ui') === true;
 
-// Wallet session state for the close/reopen card: the wallet file inside the
-// daemon is open, closed, or unknown (daemon unreachable or other error).
-let sessionState: 'open' | 'closed' | 'unknown' =
-  info !== null ? 'open' : infoError && isWalletNotOpenError(infoError) ? 'closed' : 'unknown';
-
 // Load wallet info and staking status
 try {
   [info] = await Promise.all([
@@ -80,6 +75,12 @@ try {
 } catch (err) {
   infoError = (err as Error).message;
 }
+
+// Wallet session state for the close/reopen card: the wallet file inside the
+// daemon is open, closed, or unknown (daemon unreachable or other error).
+// Computed after the wallet-info load; POST branches below override it.
+let sessionState: 'open' | 'closed' | 'unknown' =
+  info !== null ? 'open' : infoError && isWalletNotOpenError(infoError) ? 'closed' : 'unknown';
 
 // Handle POST actions
 if (Astro.request.method === 'POST') {
