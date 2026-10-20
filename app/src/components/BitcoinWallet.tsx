@@ -76,7 +76,7 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
   const [restoreOpen, setRestoreOpen] = useState(false);
   const [restoreSeed, setRestoreSeed] = useState('');
   // Destructive-action gate: the submit stays disabled until the user types
-  // the confirmation phrase - restoring replaces the current BTC wallet.
+  // the confirmation phrase - the wallet is then created from the typed seed.
   const [restoreConfirm, setRestoreConfirm] = useState('');
   const [setupError, setSetupError] = useState<string | null>(null);
 
@@ -289,6 +289,9 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
           address: sendTo.trim(),
           amount_btc: sendAmount.trim(),
           totp_code: sendTotp.trim(),
+          // The fetched estimate is the real fee rate (fallback: the BDK
+          // default of 1 sat/vB, which can sit unconfirmed for days).
+          ...(typeof feeSatVb === 'number' ? { fee_rate_sat_vb: feeSatVb } : {}),
         }),
       });
       setSentTxid(res.txid);
@@ -296,6 +299,9 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
       setSendAmount('');
       setSendTotp('');
       setAddrSuggestion(null);
+      // The sidecar marks spent outputs right after broadcast; this
+      // catches the balance/history up fully.
+      api('/api/bitcoin/sync', { method: 'POST' }).catch(() => {});
       later(refresh, 4000);
     } catch (err) {
       setSendError((err as Error).message);
@@ -359,6 +365,22 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
         </span>
         {overview.status && (
           <span className="uppercase tracking-wider text-gray-500">{overview.status.network}</span>
+        )}
+        {overview.status?.syncing && (
+          <span
+            title="The wallet is scanning the chain - balances and history update as it progresses."
+            className="rounded border border-mint-700 px-1.5 py-0.5 text-[10px] text-mint-300"
+          >
+            scanning
+          </span>
+        )}
+        {overview.status?.lastSyncError && (
+          <span
+            title={overview.status.lastSyncError}
+            className="max-w-[26rem] truncate rounded border border-amber-700 px-1.5 py-0.5 text-[10px] text-amber-300"
+          >
+            sync problem: {overview.status.lastSyncError}
+          </span>
         )}
         {node?.reachable && node.pruned && (
           <span
@@ -548,7 +570,7 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
               </div>
               <div>
                 <label htmlFor="btc-restore-confirm" className="block text-xs text-gray-400 mb-1">
-                  Type <span className="font-mono font-semibold text-red-400">I UNDERSTAND</span> - restoring replaces the current BTC wallet
+                  Type <span className="font-mono font-semibold text-red-400">I UNDERSTAND</span> - this creates the BTC wallet from this seed phrase
                 </label>
                 <input
                   id="btc-restore-confirm"
@@ -691,7 +713,7 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
                     required
                   />
                   {feeSatVb !== null && (
-                    <p className="mt-1 text-xs text-gray-500">Suggested fee: ~{feeSatVb} sat/vB</p>
+                    <p className="mt-1 text-xs text-gray-500">Fee rate: ~{feeSatVb} sat/vB (used for this send)</p>
                   )}
                 </div>
                 <div>

@@ -77,6 +77,10 @@ export interface BitcoinStatus {
   walletLoaded: boolean;
   node: BitcoinNodeInfo;
   balance: BitcoinBalance | null;
+  /** True while a background scan is running (create/boot/manual). */
+  syncing?: boolean;
+  /** Human-readable failure from the most recent sync attempt. */
+  lastSyncError?: string | null;
 }
 
 export interface BitcoinTransaction {

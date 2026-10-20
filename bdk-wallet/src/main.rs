@@ -43,11 +43,20 @@ struct Config {
 
 impl Config {
     fn from_env() -> Result<Self> {
+        // Whitelist exactly the four Bitcoin networks: a typo ("Testnet",
+        // "test-net") must not silently become a MAINNET wallet that derives
+        // mainnet keys and can spend real coins.
         let network = match std::env::var("BITCOIN_NETWORK").unwrap_or_default().as_str() {
+            "" | "mainnet" => Network::Bitcoin,
             "testnet" => Network::Testnet,
             "regtest" => Network::Regtest,
             "signet" => Network::Signet,
-            _ => Network::Bitcoin,
+            other => {
+                eprintln!(
+                    "BITCOIN_NETWORK='{other}' is not one of mainnet|testnet|regtest|signet - falling back to MAINNET"
+                );
+                Network::Bitcoin
+            }
         };
         Ok(Self {
             network,
@@ -109,6 +118,10 @@ struct AppState {
     /// Wallet creation unix time - sync horizon for freshly created wallets.
     sync_start_time: Mutex<u64>,
     syncing: AtomicBool,
+    /// Human-readable failure from the most recent sync attempt (cleared on
+    /// success). Surfaced via /status so a silently-refused or failing scan
+    /// is visible to the client instead of a permanent 0.00 balance.
+    last_sync_error: Mutex<Option<String>>,
     node: reqwest::Client,
 }
 
@@ -482,6 +495,10 @@ async fn create_wallet(
 
     match open_wallet(&state, &mnemonic, created_at).await {
         Ok(()) => {
+            // Scan immediately: a restore that reads 0.00 until the user
+            // finds the sync button looks exactly like "your coins are
+            // gone". Fire-and-forget - the /status endpoint reports progress.
+            spawn_sync(&state);
             // Echo the mnemonic ONLY when we generated it. For restores the
             // user already knows their seed - never serve it back.
             let mut body = json!({
@@ -494,50 +511,92 @@ async fn create_wallet(
             }
             Json(body).into_response()
         }
-        Err(e) => internal_error(e.context("opening wallet after creation")),
+        Err(e) => {
+            // The seed file now exists but the wallet is unusable (sqlite
+            // open/write error, disk full): every later POST /wallet would
+            // 409 "already exists" and a generated mnemonic is lost. Remove
+            // the failed wallet files so the user can simply retry.
+            let seed_path = state.seed_path();
+            if let Err(cleanup) = fs::remove_file(&seed_path) {
+                error!(
+                    "wallet open failed ({e:#}) and removing the failed seed file {} failed: {cleanup:#}",
+                    seed_path.display()
+                );
+            }
+            let _ = fs::remove_file(state.config.data_dir.join("wallet.sqlite"));
+            internal_error(anyhow!(
+                "wallet file could not be opened after creation ({e:#}); the failed wallet files were removed so you can retry"
+            ))
+        }
     }
+}
+
+/// Kick off a background sync unless one is already running. Returns false
+/// when a sync is in flight. Shared by POST /sync, wallet creation and boot
+/// so no entry point leaves the wallet stale at 0.00.
+fn spawn_sync(state: &Arc<AppState>) -> bool {
+    if state.syncing.swap(true, Ordering::SeqCst) {
+        return false;
+    }
+    let st = Arc::clone(state);
+    tokio::spawn(async move {
+        let horizon = *st.sync_start_time.lock().unwrap_or_else(|p| p.into_inner());
+        // A scan horizon older than the node's prune window would silently
+        // miss coins: refuse instead (covers full-history restores AND
+        // narrowed horizons that still fall inside the pruned range).
+        let mut refused = false;
+        if let Ok(info) = node_rpc(&st, "getblockchaininfo", json!([])).await {
+            let pruned = info.get("pruned").and_then(|b| b.as_bool()).unwrap_or(false);
+            let prune_height = info.get("pruneheight").and_then(|b| b.as_u64()).unwrap_or(0);
+            if pruned && (horizon == 0 || horizon < prune_height) {
+                error!(
+                    "wallet sync horizon {horizon} is older than the prune window (pruneheight {prune_height}) - sync refused; switch to a full node (BITCOIN_PRUNE=0, BITCOIN_TXINDEX=1) and resync"
+                );
+                *st.last_sync_error.lock().unwrap_or_else(|p| p.into_inner()) =
+                    Some(format!(
+                        "sync refused: the node is pruned to block {prune_height}, newer than this wallet's sync horizon"
+                    ));
+                refused = true;
+            }
+        }
+        if !refused {
+            let sb = Arc::clone(&st);
+            let res = spawn_blocking(move || -> Result<()> {
+                let start_time = *sb.sync_start_time.lock().unwrap_or_else(|p| p.into_inner());
+                let chain = RpcBlockchain::from_config(&sb.config.rpc_config(start_time))?;
+                let mut guard = sb.wallet.blocking_lock();
+                if let Some(w) = guard.as_mut() {
+                    w.sync(&chain, SyncOptions::default())?;
+                }
+                Ok(())
+            })
+            .await;
+            match res {
+                Ok(Ok(())) => {
+                    info!("wallet sync complete");
+                    *st.last_sync_error.lock().unwrap_or_else(|p| p.into_inner()) = None;
+                }
+                Ok(Err(e)) => {
+                    warn!("wallet sync failed: {e:#}");
+                    *st.last_sync_error.lock().unwrap_or_else(|p| p.into_inner()) =
+                        Some(format!("last sync failed: {e}"));
+                }
+                Err(e) => {
+                    warn!("sync task join error: {e}");
+                    *st.last_sync_error.lock().unwrap_or_else(|p| p.into_inner()) =
+                        Some(format!("last sync failed: {e}"));
+                }
+            }
+        }
+        st.syncing.store(false, Ordering::SeqCst);
+    });
+    true
 }
 
 /// POST /sync - sync the wallet against bitcoind (no-op while one runs).
 async fn sync(State(state): State<Arc<AppState>>) -> Response {
-    if state.syncing.swap(true, Ordering::SeqCst) {
-        return Json(json!({ "ok": true, "syncStarted": false })).into_response();
-    }
-    let st = Arc::clone(&state);
-    tokio::spawn(async move {
-        // A full-history restore (sync horizon 0) on a pruned node would
-        // silently miss coins. Better no balance than a wrong one: refuse
-        // the scan until the node can actually serve the whole history.
-        let horizon = *st.sync_start_time.lock().unwrap_or_else(|p| p.into_inner());
-        if horizon == 0 {
-            if let Ok(info) = node_rpc(&st, "getblockchaininfo", json!([])).await {
-                if info.get("pruned").and_then(|b| b.as_bool()).unwrap_or(false) {
-                    error!(
-                        "wallet restore needs the full chain but the node is pruned - sync refused; switch to a full node (BITCOIN_PRUNE=0, BITCOIN_TXINDEX=1) and resync"
-                    );
-                    st.syncing.store(false, Ordering::SeqCst);
-                    return;
-                }
-            }
-        }
-        let res = spawn_blocking(move || -> Result<()> {
-            let start_time = *st.sync_start_time.lock().unwrap_or_else(|p| p.into_inner());
-            let chain = RpcBlockchain::from_config(&st.config.rpc_config(start_time))?;
-            let mut guard = st.wallet.blocking_lock();
-            if let Some(w) = guard.as_mut() {
-                w.sync(&chain, SyncOptions::default())?;
-            }
-            Ok(())
-        })
-        .await;
-        match res {
-            Ok(Ok(())) => info!("wallet sync complete"),
-            Ok(Err(e)) => warn!("wallet sync failed: {e:#}"),
-            Err(e) => warn!("sync task join error: {e}"),
-        }
-        state.syncing.store(false, Ordering::SeqCst);
-    });
-    Json(json!({ "ok": true, "syncStarted": true })).into_response()
+    let started = spawn_sync(&state);
+    Json(json!({ "ok": true, "syncStarted": started })).into_response()
 }
 
 /// GET /status - node + wallet overview for the Settings page.
@@ -546,6 +605,12 @@ async fn status(State(state): State<Arc<AppState>>) -> Response {
     let node_json = chain_node_json(chain.as_ref().ok());
 
     let wallet_exists = state.seed_path().exists();
+    let syncing = state.syncing.load(Ordering::SeqCst);
+    let last_sync_error = state
+        .last_sync_error
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
     let wallet = state.wallet.lock().await;
     let (wallet_loaded, balance) = match wallet.as_ref() {
         Some(w) => match w.get_balance() {
@@ -565,6 +630,8 @@ async fn status(State(state): State<Arc<AppState>>) -> Response {
         "walletLoaded": wallet_loaded,
         "node": node_json,
         "balance": balance,
+        "syncing": syncing,
+        "lastSyncError": last_sync_error,
     }))
     .into_response()
 }
@@ -748,6 +815,16 @@ async fn send(State(state): State<Arc<AppState>>, Json(req): Json<SendReq>) -> R
         let tx = psbt.extract_tx();
         let txid = tx.txid().to_string();
         chain.broadcast(&tx)?;
+        // Mark the spent outputs locally right away: without a post-broadcast
+        // sync the wallet db still lists them as available, so a second send
+        // re-selects the same UTXOs and builds a conflicting transaction the
+        // node rejects. Best-effort - a failure only leaves the balance
+        // stale until the next sync.
+        if let Some(w) = guard.as_mut() {
+            if let Err(e) = w.sync(&chain, SyncOptions::default()) {
+                warn!("post-broadcast sync failed: {e:#}");
+            }
+        }
         Ok(txid)
     })
     .await;
@@ -767,10 +844,16 @@ async fn fee_estimate(State(state): State<Arc<AppState>>) -> Response {
             Ok(v) => {
                 // btc/kB -> sat/vB = btc * 1e8 / 1000
                 if let Some(btc_per_kb) = v.get("feerate").and_then(|f| f.as_f64()) {
-                    estimates.insert(
-                        target.to_string(),
-                        json!((btc_per_kb * 100_000_000f64 / 1000f64).ceil() as u64),
-                    );
+                    // estimatesmartfee answers -1 when it lacks data (fresh
+                    // or restarting node): the ceil conversion saturates to
+                    // 0 sat/vB, which the UI would present as a real
+                    // estimate. Skip instead.
+                    if btc_per_kb > 0.0 {
+                        estimates.insert(
+                            target.to_string(),
+                            json!((btc_per_kb * 100_000_000f64 / 1000f64).ceil() as u64),
+                        );
+                    }
                 }
             }
             Err(e) => warn!("estimatesmartfee({target}) failed: {e:#}"),
@@ -807,6 +890,7 @@ async fn main() -> Result<()> {
         wallet: AsyncMutex::new(None),
         sync_start_time: Mutex::new(now_unix()),
         syncing: AtomicBool::new(false),
+        last_sync_error: Mutex::new(None),
         // Bounded timeouts on the bitcoind client: without them a hung/rpc-
         // wedged node pins sync/send handlers until the HTTP client gives up
         // (which, with no timeout, is never).
@@ -821,7 +905,12 @@ async fn main() -> Result<()> {
     match fs::read_to_string(state.seed_path()) {
         Ok(raw) => match serde_json::from_str::<SeedFile>(&raw) {
             Ok(file) => match open_wallet(&state, &file.mnemonic, file.created_at).await {
-                Ok(()) => info!("wallet loaded from persisted seed"),
+                Ok(()) => {
+                    info!("wallet loaded from persisted seed");
+                    // Boot-time scan so balances and history are current
+                    // without manual action after a restart.
+                    spawn_sync(&state);
+                }
                 Err(e) => error!("failed to load persisted wallet: {e:#}"),
             },
             Err(e) => error!("seed file unreadable: {e}"),
