@@ -15,6 +15,7 @@ import {
 import { verifyAndBurnTotpCode } from '@/lib/step-up';
 import { safeRelativePath } from '@/lib/safe-uri';
 import { getStringPref, getPref, setPref, deletePref } from '@/lib/prefs-db';
+import { readFormData } from '@/lib/api-utils';
 import TotpQrCode from '@/components/TotpQrCode';
 import { getCredentials, isValidRpId, getRpId } from '@/lib/passkey';
 
@@ -54,18 +55,18 @@ if (Date.now() - stagedAt > BOOTSTRAP_TTL_MS) {
   deletePref('auth.bootstrap_token');
   deletePref('auth.bootstrap_staged_at');
 }
-const restartRequested =
-  new URL(Astro.request.url).searchParams.has('restart');
-if (restartRequested && unconfigured) {
-  deletePref('auth.password_pending');
-  deletePref('auth.totp_secret_pending');
-  deletePref('auth.bootstrap_token');
-  deletePref('auth.bootstrap_staged_at');
-}
 const pendingHash   = getStringPref('auth.password_pending');
 const pendingSecret = getStringPref('auth.totp_secret_pending');
 const stagedToken   = getStringPref('auth.bootstrap_token');
 const bootstrapping = unconfigured && Boolean(pendingHash) && Boolean(pendingSecret);
+// The staged TOTP secret is shown only to the browser that staged it: while
+// setup is pending the secret IS the future second factor, so rendering it
+// to every /login visitor during the staging window would hand a network
+// peer a permanent step-up code (they could pre-burn codes or pair the
+// secret themselves once the owner completes setup).
+const stagedForViewer =
+  stagedToken !== null &&
+  (Astro.cookies.get(BOOTSTRAP_COOKIE)?.value ?? '') === stagedToken;
 
 // Passkeys: only show if at least one is enrolled AND the RP ID is valid
 const passkeys = getCredentials();
@@ -83,9 +84,33 @@ if (Astro.request.method === 'POST' && unconfigured) {
   if (!checkLoginRateLimit(ip)) {
     errorMessage = 'Too many attempts. Try again in 15 minutes.';
   } else {
-    const form = await Astro.request.formData();
-    const stagedHash = getStringPref('auth.password_pending');
-    if (!stagedHash) {
+    // readFormData swallows malformed multipart bodies (bad boundary,
+    // truncated part) instead of letting formData() throw a 500 on the
+    // one route that must never look broken.
+    const form = await readFormData(Astro.request);
+    if (!form) {
+      errorMessage = 'Invalid form submission. Try again.';
+    } else if (form.get('restart') === '1') {
+      // "Start over" discards the staged state, but only for the browser
+      // that staged it - an unauthenticated POST would let anyone on the
+      // network keep resetting the owner's in-progress setup.
+      const bootCookie = Astro.cookies.get(BOOTSTRAP_COOKIE)?.value ?? '';
+      if (stagedToken && bootCookie === stagedToken) {
+        deletePref('auth.password_pending');
+        deletePref('auth.totp_secret_pending');
+        deletePref('auth.bootstrap_token');
+        deletePref('auth.bootstrap_staged_at');
+        const clear = new Headers({ Location: '/login' });
+        clear.append(
+          'Set-Cookie',
+          `${BOOTSTRAP_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Secure; Max-Age=0`,
+        );
+        return new Response(null, { status: 302, headers: clear });
+      }
+      errorMessage = 'Only the browser that started the setup can discard it.';
+    } else {
+      const stagedHash = getStringPref('auth.password_pending');
+      if (!stagedHash) {
       // Step 1: stage the chosen password and a fresh TOTP secret, bound to
       // this browser via a short-lived cookie so nobody else can finish (or
       // overwrite) the setup from another session.
@@ -144,6 +169,7 @@ if (Astro.request.method === 'POST' && unconfigured) {
         await new Promise((r) => setTimeout(r, 500));
         errorMessage = 'Invalid authenticator code.';
       }
+      }
     }
   }
 }
@@ -155,7 +181,10 @@ if (Astro.request.method === 'POST' && !unconfigured) {
   if (!checkLoginRateLimit(ip)) {
     errorMessage = 'Too many login attempts. Try again in 15 minutes.';
   } else {
-    const form = await Astro.request.formData();
+    const form = await readFormData(Astro.request);
+    if (!form) {
+      errorMessage = 'Invalid form submission. Try again.';
+    } else {
     const rawPassword = form.get('password');
     const rawTotpCode = form.get('totp_code');
     const password = typeof rawPassword === 'string' ? rawPassword : '';
@@ -196,6 +225,7 @@ if (Astro.request.method === 'POST' && !unconfigured) {
         // Burned or throttled code: say so, the remedy differs from a typo.
         errorMessage = totpCheck.error;
       }
+    }
     }
   }
 }
@@ -262,7 +292,7 @@ if (Astro.request.method === 'POST' && !unconfigured) {
         </form>
       )}
 
-      {bootstrapping && (
+      {bootstrapping && stagedForViewer && (
         <form
           method="post"
           class="bg-gray-900 border border-gray-800 rounded-xl p-6 shadow-xl space-y-4"
@@ -289,8 +319,24 @@ if (Astro.request.method === 'POST' && !unconfigured) {
           >
             Finish setup and sign in
           </button>
-          <a href="/login?restart=1" class="block text-center text-xs text-gray-500 hover:text-gray-400">Start over</a>
+          <button
+            type="submit"
+            name="restart"
+            value="1"
+            formnovalidate
+            class="block mx-auto text-xs text-gray-500 hover:text-gray-400 underline"
+          >Start over</button>
         </form>
+      )}
+
+      {bootstrapping && !stagedForViewer && (
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 shadow-xl text-sm text-gray-400 space-y-2">
+          <p>First-time setup is in progress in another browser session.</p>
+          <p class="text-xs text-gray-500">
+            For safety the enrollment details are only shown there. It expires
+            after 15 minutes, or the other session can start over.
+          </p>
+        </div>
       )}
 
       {!unconfigured && (
