@@ -63,18 +63,24 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     return json({ ok: false, error: stepUp.error }, stepUp.status);
   }
 
-  if (service === 'bitcoin') {
-    const network = body.network === undefined ? 'mainnet' : body.network;
-    if (!isBitcoinNetwork(network)) {
-      return json({ ok: false, error: 'Network must be mainnet, testnet or regtest' }, 400);
+  try {
+    if (service === 'bitcoin') {
+      const network = body.network === undefined ? 'mainnet' : body.network;
+      if (!isBitcoinNetwork(network)) {
+        return json({ ok: false, error: 'Network must be mainnet, testnet or regtest' }, 400);
+      }
+      if (!(await queueFeatureRequest({ action: 'enable', service, network, pruned: body.pruned !== false }))) {
+        return json({ ok: false, error: 'A request for this service is already queued' }, 409);
+      }
+    } else {
+      if (!(await queueFeatureRequest({ action: 'enable', service }))) {
+        return json({ ok: false, error: 'A request for this service is already queued' }, 409);
+      }
     }
-    if (!(await queueFeatureRequest({ action: 'enable', service, network, pruned: body.pruned !== false }))) {
-      return json({ ok: false, error: 'A request for this service is already queued' }, 409);
-    }
-  } else {
-    if (!(await queueFeatureRequest({ action: 'enable', service }))) {
-      return json({ ok: false, error: 'A request for this service is already queued' }, 409);
-    }
+  } catch {
+    // A filesystem failure (volume missing or full) must not read as an
+    // opaque 500 after the 2FA code was consumed.
+    return json({ ok: false, error: 'Could not write the request - check the feature-enabler volume.' }, 503);
   }
 
   return json({ ok: true, queued: true, service }, 202);

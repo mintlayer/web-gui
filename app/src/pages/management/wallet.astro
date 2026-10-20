@@ -118,20 +118,32 @@ if (Astro.request.method === 'POST') {
         }
       }
     } else if (action === 'lock') {
+    // Mirror the UI guard server-side: locking while staking is running
+    // silently stalls block signing.
+    if ((await getStakingStatus(0).catch(() => 'NotStaking')) === 'Staking') {
+      actionError = 'Cannot lock while staking is running. Stop staking first.';
+    } else {
       await walletLockPrivateKeys();
       isLocked = true;
       actionSuccess = 'Private keys locked.';
-    } else if (action === 'unlock') {
+    }
+  } else if (action === 'unlock') {
       const password = form.get('password') as string;
       await walletUnlockPrivateKeys(password);
       isLocked = false;
       actionSuccess = 'Private keys unlocked.';
     } else if (action === 'set_lookahead') {
-      const size = parseInt(form.get('lookahead_size') as string, 10);
-      await walletSetLookaheadSize(size);
-      lookaheadSize = size;
-      setPref('wallet.lookahead_size', size);
-      actionSuccess = `Lookahead size set to ${size}.`;
+      // Client-side min/max are not enforcement - validate here before the
+      // RPC call and the pref write.
+      const parsed = Number(form.get('lookahead_size'));
+      if (!Number.isInteger(parsed) || parsed < 1 || parsed > 1000) {
+        actionError = 'Lookahead size must be a whole number between 1 and 1000.';
+      } else {
+        await walletSetLookaheadSize(parsed);
+        lookaheadSize = parsed;
+        setPref('wallet.lookahead_size', parsed);
+        actionSuccess = `Lookahead size set to ${parsed}.`;
+      }
     } else if (action === 'close_wallet') {
       await walletClose();
       info = null;
@@ -181,13 +193,17 @@ if (Astro.request.method === 'POST') {
   }
 }
 
-// Probe lock state on initial GET (or if action didn't resolve it)
-if (isLocked === null) {
+// Probe lock state on initial GET (or if an action didn't resolve it).
+// Never probe with a seed-revealing RPC on every page view: staking_status
+// needs the private keys loaded, so a "locked" failure marks the keys as
+// locked without touching seed material. Any other error stays 'unknown'
+// (same as before) and the unlock form is shown either way.
+if (isLocked === null && sessionState === 'open') {
   try {
-    await walletShowSeedPhrase(); // succeeds only when keys are unlocked
+    await getStakingStatus(0);
     isLocked = false;
-  } catch {
-    isLocked = true;
+  } catch (err) {
+    isLocked = /lock/i.test((err as Error).message) ? true : null;
   }
 }
 // The show_seed action renders seed-phrase material - never cache this page.

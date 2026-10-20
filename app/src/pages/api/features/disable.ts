@@ -58,8 +58,12 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     return json({ ok: false, error: stepUp.error }, stepUp.status);
   }
 
-  if (!(await queueFeatureRequest({ action: 'disable', service }))) {
-    return json({ ok: false, error: 'A request for this service is already queued' }, 409);
+  try {
+    if (!(await queueFeatureRequest({ action: 'disable', service }))) {
+      return json({ ok: false, error: 'A request for this service is already queued' }, 409);
+    }
+  } catch {
+    return json({ ok: false, error: 'Could not write the request - check the feature-enabler volume.' }, 503);
   }
   return json({ ok: true, queued: true, service }, 202);
 };

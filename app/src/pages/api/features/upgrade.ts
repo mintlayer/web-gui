@@ -59,15 +59,19 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     return json({ ok: false, error: stepUp.error }, stepUp.status);
   }
 
-  if (
-    !(await queueFeatureRequest({
-      action: 'upgrade',
-      service: 'web-gui',
-      tag,
-      ...(typeof body.bitcoind === 'string' ? { bitcoind: body.bitcoind } : {}),
-    }))
-  ) {
-    return json({ ok: false, error: 'An upgrade request is already queued' }, 409);
+  try {
+    if (
+      !(await queueFeatureRequest({
+        action: 'upgrade',
+        service: 'web-gui',
+        tag,
+        ...(typeof body.bitcoind === 'string' ? { bitcoind: body.bitcoind } : {}),
+      }))
+    ) {
+      return json({ ok: false, error: 'An upgrade request is already queued' }, 409);
+    }
+  } catch {
+    return json({ ok: false, error: 'Could not write the request - check the feature-enabler volume.' }, 503);
   }
 
   return json({ ok: true, queued: true, service: 'web-gui' }, 202);
