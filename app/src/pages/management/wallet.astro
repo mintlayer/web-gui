@@ -79,8 +79,13 @@ try {
 // Wallet session state for the close/reopen card: the wallet file inside the
 // daemon is open, closed, or unknown (daemon unreachable or other error).
 // Computed after the wallet-info load; POST branches below override it.
+// isWalletNotOpenError expects an Error object, so wrap the stored message.
 let sessionState: 'open' | 'closed' | 'unknown' =
-  info !== null ? 'open' : infoError && isWalletNotOpenError(infoError) ? 'closed' : 'unknown';
+  info !== null
+    ? 'open'
+    : infoError && isWalletNotOpenError(new Error(infoError))
+      ? 'closed'
+      : 'unknown';
 
 // Handle POST actions
 if (Astro.request.method === 'POST') {
