@@ -10,6 +10,7 @@ import {
   openWallet,
   recoverWallet,
   getStakingStatus,
+  isWalletNotOpenError,
   WalletRpcError,
   type WalletInfo,
   type SeedPhraseResult,
@@ -62,8 +63,13 @@ let isLocked: boolean | null = null;
 let isStaking = false;
 let lookaheadSize: number = getPref<number>('wallet.lookahead_size') ?? 20;
 // Advanced cards (file backup, key lock, lookahead, seed import) only render
-// when this preference is on — see the toggle next to the page title.
+// when this preference is on - see the toggle next to the page title.
 let advancedUi = getPref<boolean>('ml_advanced_ui') === true;
+
+// Wallet session state for the close/reopen card: the wallet file inside the
+// daemon is open, closed, or unknown (daemon unreachable or other error).
+let sessionState: 'open' | 'closed' | 'unknown' =
+  info !== null ? 'open' : infoError && isWalletNotOpenError(infoError) ? 'closed' : 'unknown';
 
 // Load wallet info and staking status
 try {
@@ -123,10 +129,12 @@ if (Astro.request.method === 'POST') {
     } else if (action === 'close_wallet') {
       await walletClose();
       info = null;
+      sessionState = 'closed';
       actionSuccess = 'Wallet closed.';
     } else if (action === 'reopen_wallet') {
       await openWallet(WALLET_RPC_PATH);
       info = await walletInfo().catch(() => null);
+      sessionState = info ? 'open' : 'unknown';
       actionSuccess = 'Wallet reopened.';
     } else if (action === 'import_seed') {
       const confirm = (form.get('confirm') as string | null) ?? '';
@@ -138,14 +146,14 @@ if (Astro.request.method === 'POST') {
       } else if (!mnemonic) {
         actionError = 'Seed phrase is required.';
       } else if (!validateMnemonic(mnemonic)) {
-        actionError = 'Invalid seed phrase — check that all words are valid BIP39 words and the checksum is correct.';
+        actionError = 'Invalid seed phrase - check that all words are valid BIP39 words and the checksum is correct.';
       } else if (!totpSecret) {
         actionError = '2FA is not configured.';
       } else {
         // Importing a seed REPLACES the wallet: funds subsequently sent from
         // this wallet (with the owner's own valid step-up code) would land on
         // attacker-derived addresses. The session cookie alone must not be
-        // able to do this — require a fresh TOTP code, same as seed reveal.
+        // able to do this - require a fresh TOTP code, same as seed reveal.
         const burn = verifyAndBurnTotpCode(totpCode, totpSecret, getClientAddress(Astro.request, Astro.clientAddress));
         if (!burn.ok) {
           actionError = burn.error;
@@ -384,29 +392,49 @@ Astro.response.headers.set('Cache-Control', 'no-store');
 
     <!-- Wallet session: close / reopen -->
     <div class="rounded-xl border border-gray-800 bg-gray-900 p-5">
-      <h2 class="text-sm font-medium text-gray-200 mb-1">Wallet Session</h2>
-      <p class="text-xs text-gray-500 mb-4">
-        Close or reopen the wallet file without restarting the daemon.
+      <div class="flex items-center gap-1.5 mb-1">
+        <h2 class="text-sm font-medium text-gray-200">Wallet Session</h2>
+        <span
+          class="text-gray-500 hover:text-gray-300 cursor-help select-none"
+          title="The wallet file lives inside the wallet daemon. Closing it stops balances, syncing and staking until you reopen it. The daemon itself keeps running."
+          aria-label="About wallet sessions"
+        >ⓘ</span>
+      </div>
+      <p class={`text-xs mb-4 flex items-center gap-1.5 ${
+        sessionState === 'open' ? 'text-emerald-400' : sessionState === 'closed' ? 'text-amber-400' : 'text-red-400'
+      }`}>
+        <span class={`inline-block w-1.5 h-1.5 rounded-full ${
+          sessionState === 'open' ? 'bg-emerald-400' : sessionState === 'closed' ? 'bg-amber-400' : 'bg-red-400'
+        }`}></span>
+        {sessionState === 'open'
+          ? 'Wallet file is open.'
+          : sessionState === 'closed'
+            ? 'Wallet file is closed.'
+            : 'Wallet status unknown. Is the wallet daemon running?'}
       </p>
       <div class="flex gap-2 flex-wrap">
-        <form method="POST">
-          <input type="hidden" name="action" value="close_wallet" />
-          <button
-            type="submit"
-            class="rounded-lg bg-gray-700 hover:bg-gray-600 px-4 py-2 text-sm text-white font-medium transition-colors"
-          >
-            Close Wallet
-          </button>
-        </form>
-        <form method="POST">
-          <input type="hidden" name="action" value="reopen_wallet" />
-          <button
-            type="submit"
-            class="rounded-lg bg-mint-700 hover:bg-mint-600 px-4 py-2 text-sm text-white font-medium transition-colors"
-          >
-            Reopen Wallet
-          </button>
-        </form>
+        {sessionState !== 'closed' && (
+          <form method="POST">
+            <input type="hidden" name="action" value="close_wallet" />
+            <button
+              type="submit"
+              class="rounded-lg bg-gray-700 hover:bg-gray-600 px-4 py-2 text-sm text-white font-medium transition-colors"
+            >
+              Close Wallet
+            </button>
+          </form>
+        )}
+        {sessionState !== 'open' && (
+          <form method="POST">
+            <input type="hidden" name="action" value="reopen_wallet" />
+            <button
+              type="submit"
+              class="rounded-lg bg-mint-700 hover:bg-mint-600 px-4 py-2 text-sm text-white font-medium transition-colors"
+            >
+              Reopen Wallet
+            </button>
+          </form>
+        )}
       </div>
     </div>
 
@@ -415,9 +443,13 @@ Astro.response.headers.set('Cache-Control', 'no-store');
     <div class="rounded-xl border border-gray-800 bg-gray-900 p-5">
       <h2 class="text-sm font-medium text-gray-200 mb-1">Private Keys</h2>
       <p class="text-xs text-gray-500 mb-4">
-        {isLocked ? 'Keys are locked. Enter your password to unlock.' : 'Keys are unlocked. Enter your password to lock.'}
+        {sessionState === 'closed'
+          ? 'The wallet file is closed. Reopen it to manage keys.'
+          : isLocked
+            ? 'Keys are locked. Enter your password to unlock.'
+            : 'Keys are unlocked. Enter your password to lock.'}
       </p>
-      {isLocked ? (
+      {sessionState === 'closed' ? null : isLocked ? (
         <form method="POST" class="flex items-center gap-2">
           <input type="hidden" name="action" value="unlock" />
           <input
@@ -487,7 +519,7 @@ Astro.response.headers.set('Cache-Control', 'no-store');
     )}
   </div>
 
-  <!-- Import from Seed — full-width danger section -->
+  <!-- Import from Seed - full-width danger section -->
   {advancedUi && (
   <div class="mt-6 rounded-xl border border-red-800 bg-gray-900 p-5">
     <h2 class="text-sm font-medium text-red-400 mb-3 flex items-center gap-2">
@@ -499,7 +531,7 @@ Astro.response.headers.set('Cache-Control', 'no-store');
 
     <!-- Red danger warning -->
     <div role="alert" class="rounded-lg border border-red-700 bg-red-950/60 p-4 mb-5">
-      <p class="text-sm font-semibold text-red-300 mb-2">⚠ DANGER — This operation is irreversible</p>
+      <p class="text-sm font-semibold text-red-300 mb-2">⚠ DANGER - This operation is irreversible</p>
       <p class="text-xs text-red-400 leading-relaxed mb-2">
         Importing a new seed phrase will perform three destructive steps in sequence:
       </p>
@@ -514,7 +546,7 @@ Astro.response.headers.set('Cache-Control', 'no-store');
       </p>
       <p class="text-xs text-red-400 mt-2">
         The page will appear to hang while the full blockchain is scanned for your wallet's transactions.
-        This can take several minutes on mainnet — do not close the tab.
+        This can take several minutes on mainnet - do not close the tab.
       </p>
     </div>
 
@@ -540,7 +572,7 @@ Astro.response.headers.set('Cache-Control', 'no-store');
       <div>
         <label for="import-totp" class="block text-xs text-gray-400 mb-1">
           Authenticator Code
-          <span class="text-gray-600 ml-1">(2FA — importing replaces the wallet, so it needs a fresh code)</span>
+          <span class="text-gray-600 ml-1">(2FA - importing replaces the wallet, so it needs a fresh code)</span>
         </label>
         <input
           id="import-totp"
