@@ -41,6 +41,16 @@ export function resetPasswordChangeThrottle(): void {
   passwordFailures.clear();
 }
 
+/**
+ * Record a failed credential attempt against a throttle key. The wallet
+ * unlock form shares this map (under its own key namespace) - the unlock
+ * password is the same class of guessable secret as the current-password
+ * check, and RPC speed alone is no rate limit.
+ */
+export function recordThrottledFailure(key: string, now: number = Date.now()): void {
+  recordPasswordFailure(key, now);
+}
+
 function recordPasswordFailure(key: string, now: number): void {
   const entry = passwordFailures.get(key);
   if (!entry || now >= entry.firstAt + PASSWORD_FAILURE_WINDOW_MS) {

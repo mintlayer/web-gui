@@ -17,6 +17,7 @@ import {
 } from '@/lib/wallet-rpc';
 import { recoverThenSwapWallet } from '@/lib/wallet-recovery';
 import { verifyAndBurnTotpCode } from '@/lib/step-up';
+import { isPasswordChangeThrottled, recordThrottledFailure } from '@/lib/password-change';
 import { getClientAddress } from '@/lib/auth';
 import { getStringPref, getPref, setPref } from '@/lib/prefs-db';
 import { createRequire } from 'node:module';
@@ -128,10 +129,27 @@ if (Astro.request.method === 'POST') {
       actionSuccess = 'Private keys locked.';
     }
   } else if (action === 'unlock') {
-      const password = form.get('password') as string;
-      await walletUnlockPrivateKeys(password);
-      isLocked = false;
-      actionSuccess = 'Private keys unlocked.';
+      // The unlock password guards sends: guessing it online at RPC speed
+      // must be as expensive as guessing the web password. Own key
+      // namespace so unlock failures do not lock out password changes.
+      const unlockKey = `wallet-unlock:${getClientAddress(Astro.request, Astro.clientAddress)}`;
+      if (isPasswordChangeThrottled(unlockKey)) {
+        actionError = 'Too many failed attempts. Try again in 15 minutes.';
+      } else {
+        try {
+          const password = form.get('password');
+          await walletUnlockPrivateKeys(typeof password === 'string' ? password : '');
+          isLocked = false;
+          actionSuccess = 'Private keys unlocked.';
+        } catch (err) {
+          // Count only wrong-password failures (daemon-down / transport
+          // errors would lock the form for everyone sharing the IP).
+          if (/password|passphrase/i.test((err as Error).message)) {
+            recordThrottledFailure(unlockKey);
+          }
+          throw err;
+        }
+      }
     } else if (action === 'set_lookahead') {
       // Client-side min/max are not enforcement - validate here before the
       // RPC call and the pref write.
@@ -467,11 +485,13 @@ Astro.response.headers.set('Cache-Control', 'no-store');
       <p class="text-xs text-gray-500 mb-4">
         {sessionState === 'closed'
           ? 'The wallet file is closed. Reopen it to manage keys.'
-          : isLocked
-            ? 'Keys are locked. Enter your password to unlock.'
-            : 'Keys are unlocked. Enter your password to lock.'}
+          : isLocked === null
+            ? 'Key lock state unknown - check that the wallet daemon is reachable.'
+            : isLocked
+              ? 'Keys are locked. Enter your password to unlock.'
+              : 'Keys are unlocked. Enter your password to lock.'}
       </p>
-      {sessionState === 'closed' ? null : isLocked ? (
+      {sessionState === 'closed' || isLocked === null ? null : isLocked ? (
         <form method="POST" class="flex items-center gap-2">
           <input type="hidden" name="action" value="unlock" />
           <input

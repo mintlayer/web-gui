@@ -107,9 +107,9 @@ if (Astro.request.method === 'POST') {
     }
 
   } else if (section === 'ipfs') {
-    const provider      = (form.get('provider')       as string | null) ?? '';
+    const provider      = str(form.get('provider'));
     const filebaseToken = str(form.get('filebase_token'));
-    const pinataJwt     = (form.get('pinata_jwt')     as string | null) ?? '';
+    const pinataJwt     = str(form.get('pinata_jwt'));
     const totpCode      = str(form.get('totp_code'));
 
     if (!['filebase', 'pinata', ''].includes(provider)) {
@@ -126,6 +126,11 @@ if (Astro.request.method === 'POST') {
         // keeps the stored key, so the page never has to render them.
         const storedFilebase = getStringPref('ipfs.filebase_token') ?? '';
         const storedPinata   = getStringPref('ipfs.pinata_jwt') ?? '';
+        if (provider === 'filebase' && !filebaseToken && !storedFilebase) {
+          result = { action: 'error', section, message: 'Paste your Filebase access key - pinning cannot work without it.' };
+        } else if (provider === 'pinata' && !pinataJwt && !storedPinata) {
+          result = { action: 'error', section, message: 'Paste your Pinata JWT - pinning cannot work without it.' };
+        } else {
         setPref('ipfs.provider',       provider);
         // Disabling IPFS also clears any stored provider keys - keeping them
         // on disk while "Disabled" protects nothing and leaves third-party
@@ -133,6 +138,7 @@ if (Astro.request.method === 'POST') {
         setPref('ipfs.filebase_token', provider === '' ? '' : (filebaseToken || storedFilebase));
         setPref('ipfs.pinata_jwt',     provider === '' ? '' : (pinataJwt || storedPinata));
         result = { action: 'success', section, message: 'IPFS settings saved.' };
+        }
       }
     }
 
@@ -142,8 +148,10 @@ if (Astro.request.method === 'POST') {
       setPref(`telegram.notify.${key}`, form.get(`notify_${key}`) === '1');
     }
     // Reject junk before storing: a negative or non-numeric threshold
-    // would fire a Telegram alert on every send.
-    const rawThreshold = (form.get('large_send_threshold') as string | null) ?? '';
+    // would fire a Telegram alert on every send. str() coerces File parts
+    // (crafted multipart POSTs) to '' so they fail cleanly instead of
+    // throwing on .trim().
+    const rawThreshold = str(form.get('large_send_threshold'));
     const thresholdNum = Number(rawThreshold);
     const threshold =
       rawThreshold.trim() !== '' && Number.isFinite(thresholdNum) && thresholdNum >= 0
@@ -855,8 +863,11 @@ Astro.response.headers.set('Cache-Control', 'no-store');
             let failures = 0;
             const timer = window.setInterval(async () => {
               if (Date.now() - startedAt > 12 * 60 * 1000) {
+                // Timeout is not success: say so, or the page keeps showing
+                // the "Queued" note forever while a huge pull grinds on.
                 window.clearInterval(timer);
-                onDone();
+                setNote(noteEl, 'Still applying after 12 minutes - reload this page to check the result.', 'info');
+                onDone(false);
                 return;
               }
               try {
