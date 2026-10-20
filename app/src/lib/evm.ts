@@ -126,8 +126,11 @@ export async function switchChain(
     });
   } catch (err) {
     const code = (err as { code?: number }).code;
-    // 4902 = chain not added to the wallet
-    if (code === 4902 && chainParams) {
+    const msg = (err as { message?: string }).message ?? '';
+    // 4902 = chain not added to the wallet; some MetaMask versions
+    // (mobile especially) report -32603 "Unrecognized chain" instead.
+    const missing = code === 4902 || (code === -32603 && /unrecognized chain/i.test(msg));
+    if (missing && chainParams) {
       await eth().request({
         method: 'wallet_addEthereumChain',
         params: [{ chainId: chainIdHex, ...chainParams }],
@@ -164,12 +167,26 @@ export async function depositToBridge(
   decimals: number,
   mintlayerAddress: string,
   onProgress?: (phase: 'approve' | 'deposit') => void,
+  expectedChainId?: number,
 ): Promise<string> {
   if (!bridgeContractAddress) {
     throw new Error('Bridge contract address is not configured.');
   }
   const p = provider();
   const signer = await p.getSigner();
+
+  // Signing happens against whatever chain the wallet currently has
+  // active (another tab or a mobile app can switch it): verify right
+  // before the money moves. A codeless address on the wrong chain would
+  // otherwise "mine" a deposit that never exists.
+  if (typeof expectedChainId === 'number') {
+    const { chainId } = await p.getNetwork();
+    if (chainId !== BigInt(expectedChainId)) {
+      throw new EvmError(
+        'Your wallet switched to a different network. Switch back to the bridge network and try again.',
+      );
+    }
+  }
 
   const token = new Contract(tokenAddress, ERC20_ABI, signer);
   // The chain is the source of truth for decimals - many bridgeable
@@ -200,8 +217,18 @@ export async function depositToBridge(
   }
   if (needsApproval) {
     onProgress?.('approve');
-    const approveTx = await token.approve(bridgeContractAddress, amountWei);
-    await approveTx.wait();
+    try {
+      const approveTx = await token.approve(bridgeContractAddress, amountWei);
+      await approveTx.wait();
+    } catch (err) {
+      // USDT-class tokens revert on a non-zero -> non-zero approve; the
+      // fix is a zero-reset first, then the real allowance.
+      if (normalizeEvmRejection(err).code === 4001) throw err;
+      const resetTx = await token.approve(bridgeContractAddress, 0);
+      await resetTx.wait();
+      const approveTx = await token.approve(bridgeContractAddress, amountWei);
+      await approveTx.wait();
+    }
   }
 
   const bridge = new Contract(bridgeContractAddress, BRIDGE_DEPOSIT_ABI, signer);

@@ -52,7 +52,10 @@ export const ALLOWED_RPC_METHODS = new Set([
   // Transactions
   'transaction_list_by_address',
   'transaction_list_pending',
-  'transaction_abandon',
+  // transaction_abandon removed: un-reserving a pending tx's inputs is
+  // fund-affecting (a hijacked session could clobber a payment the user
+  // just approved) - same policy as address_send/token_send. If the UI
+  // needs it, expose it behind requireStepUp.
   // UTXOs
   'account_utxos',
   // address_sweep_spendable removed: with `all: true` (or empty from_addresses)

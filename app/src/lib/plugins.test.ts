@@ -6,15 +6,23 @@ vi.mock('@/lib/prefs-db', () => ({
   deletePref: vi.fn(),
 }));
 
-vi.mock('node:fs', () => ({
-  existsSync: vi.fn(),
-  mkdirSync: vi.fn(),
-  readFileSync: vi.fn(),
-  readdirSync: vi.fn(),
-  realpathSync: vi.fn(),
-  rmSync: vi.fn(),
-  statSync: vi.fn(),
-  writeFileSync: vi.fn(),
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return {
+    existsSync: vi.fn(),
+    mkdirSync: vi.fn(),
+    mkdtempSync: vi.fn(() => actual.mkdtempSync('/tmp/plugin-test-')),
+    readFileSync: vi.fn(),
+    readdirSync: vi.fn(),
+    realpathSync: vi.fn(),
+    rmSync: vi.fn(),
+    statSync: vi.fn(),
+    writeFileSync: vi.fn(),
+  };
+});
+
+vi.mock('node:url', () => ({
+  pathToFileURL: (p: string) => ({ href: `file://${p}` }),
 }));
 
 vi.mock('node:child_process', () => ({

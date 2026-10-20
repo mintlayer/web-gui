@@ -31,10 +31,10 @@ let cache: { capabilities: IndexerCapabilities; expiresAt: number } | null = nul
  * aborted as soon as the response headers arrive only costs one HTTP round
  * trip and no event delivery.
  */
-async function probeEndpoint(path: string): Promise<boolean> {
+async function probeEndpoint(path: string, accept: string): Promise<boolean> {
   try {
     const res = await fetch(`${INDEXER_URL}/api/v2${path}`, {
-      headers: { accept: 'text/event-stream' },
+      headers: { accept },
       signal: AbortSignal.timeout(5_000),
     });
     // Release the connection immediately - we only care about the status.
@@ -54,8 +54,10 @@ export async function getIndexerCapabilities(force = false): Promise<IndexerCapa
     return cache.capabilities;
   }
   const [mempoolApi, stream] = await Promise.all([
-    probeEndpoint('/mempool/transactions'),
-    probeEndpoint('/stream'),
+    // The mempool listing is JSON: content negotiation with an SSE accept
+    // could 406 and make a capable indexer report mempoolApi: false.
+    probeEndpoint('/mempool/transactions', 'application/json'),
+    probeEndpoint('/stream', 'text/event-stream'),
   ]);
   const capabilities: IndexerCapabilities = { mempoolApi, stream };
   cache = { capabilities, expiresAt: Date.now() + CAPABILITIES_TTL_MS };

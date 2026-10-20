@@ -148,7 +148,7 @@ describe("hrpForNetwork", () => {
     expect(hrpForNetwork("btc", "mainnet")).toBe("bc");
     expect(hrpForNetwork("btc", "testnet")).toBe("tb");
     expect(hrpForNetwork("btc", "regtest")).toBe("bcrt");
-    expect(hrpForNetwork("btc", "signet")).toBe("sb");
+    expect(hrpForNetwork("btc", "signet")).toBe("tb");
   });
 
   it("maps ML networks", () => {

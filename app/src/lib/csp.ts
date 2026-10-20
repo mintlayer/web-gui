@@ -14,8 +14,10 @@
  * are dropped, so a stray value cannot widen the policy into
  * `connect-src *`.
  *
- * Rollout stays report-only by default (see middleware.ts); enforcement
- * still requires the inline-script nonce work.
+ * Rollout stays report-only - middleware.ts never flips this into an
+ * enforcing header. Enforcement still requires the inline-script nonce
+ * work: script-src currently carries 'unsafe-inline', so enforcing as-is
+ * would not contain injected scripts while breaking nothing else.
  */
 
 import { getBridgeApiUrl, getMintlayerApiUrl } from '@/lib/bridge-sdk/config';

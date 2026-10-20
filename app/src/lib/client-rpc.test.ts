@@ -32,6 +32,7 @@ describe('rpc', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ method: 'get_blockchain_info', params: { verbose: true } }),
+      signal: expect.any(AbortSignal),
     });
   });
 
@@ -45,6 +46,7 @@ describe('rpc', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ method: 'get_height', params: {} }),
+      signal: expect.any(AbortSignal),
     });
   });
 

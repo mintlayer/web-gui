@@ -130,7 +130,7 @@ export function hrpForNetwork(chain: Bech32Chain, network: string): string | nul
       case 'mainnet': return 'bc';
       case 'testnet': return 'tb';
       case 'regtest': return 'bcrt';
-      case 'signet': return 'sb';
+      case 'signet': return 'tb'; // signet shares the testnet HRP (BIP-0326)
       default: return null;
     }
   }

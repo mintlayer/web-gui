@@ -10,6 +10,7 @@ import { execFileSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   readdirSync,
   realpathSync,
@@ -18,6 +19,8 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { pathToFileURL } from 'node:url';
 import { getPref, setPref, deletePref } from './prefs-db';
 import { rpcCall } from './wallet-rpc';
 import { ALLOWED_RPC_METHODS } from './rpc-allowlist';
@@ -107,8 +110,10 @@ export function togglePlugin(id: string, enabled: boolean): void {
 // ── Install / Uninstall ───────────────────────────────────────────────────────
 
 export async function installPlugin(buffer: Buffer): Promise<PluginManifest> {
-  const tmpTgz = `/tmp/plugin-upload-${Date.now()}.tgz`;
-  const tmpDir = `/tmp/plugin-extract-${Date.now()}`;
+  // mkdtemp gives a unique directory per install - two same-millisecond
+  // uploads must not share an extraction target.
+  const tmpDir = mkdtempSync(join(tmpdir(), 'plugin-install-'));
+  const tmpTgz = join(tmpDir, 'plugin.tgz');
 
   try {
     writeFileSync(tmpTgz, buffer);
@@ -177,6 +182,10 @@ export async function installPlugin(buffer: Buffer): Promise<PluginManifest> {
 
     const destDir = join(PLUGINS_DIR, manifest.id);
     mkdirSync(PLUGINS_DIR, { recursive: true });
+    // A crashed prior install can leave the directory without a registry
+    // entry; POSIX cp -r into an existing dir would nest the tree one
+    // level down and the plugin could never load. Clear first.
+    rmSync(destDir, { recursive: true, force: true });
     execFileSync('cp', ['-r', pluginRoot, destDir], { timeout: 10_000 });
 
     existing.push(manifest);
@@ -228,8 +237,9 @@ export async function loadPluginHandler(id: string): Promise<PluginModule> {
   }
 
   const entryPath = join(PLUGINS_DIR, id, manifest.entry);
-  // Query parameter busts Node's ESM cache after reinstall
-  const url = `file://${entryPath}?gen=${gen}`;
+  // pathToFileURL percent-encodes reserved characters ('#', '?') so the
+  // cache-busting query can't swallow part of the path.
+  const url = `${pathToFileURL(entryPath).href}?gen=${gen}`;
   const module = await import(/* @vite-ignore */ url) as PluginModule;
 
   if (typeof module.handler !== 'function') {

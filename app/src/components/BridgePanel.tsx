@@ -688,6 +688,9 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
           18,
           receiver.trim(),
           setPhase,
+          // switchChainIfNeeded already verified this resolves before we
+          // got here; default to mainnet for the type-level null only.
+          Number.parseInt(chainForFlavor(flavor)?.id ?? '0x1', 16),
         );
         setPhase('submitting');
         const res = await sdk.broadcastBridgeRequest({
