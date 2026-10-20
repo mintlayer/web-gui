@@ -1,4 +1,4 @@
-# Development override — mounts source so Astro HMR picks up changes instantly.
+# Development override - mounts source so Astro HMR picks up changes instantly.
 #
 # Usage:
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up web-gui

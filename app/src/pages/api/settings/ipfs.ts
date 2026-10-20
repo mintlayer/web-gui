@@ -22,7 +22,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
 
   // Pinata/Filebase keys are third-party account credentials: whoever sets
   // them can pivot into the owner's pinning account. Same sensitivity class
-  // as the Telegram bot token — fresh 2FA code required.
+  // as the Telegram bot token - fresh 2FA code required.
   const stepUp = requireStepUp(totpCode, request, clientAddress);
   if (!stepUp.ok) {
     return json({ ok: false, error: stepUp.error }, stepUp.status);

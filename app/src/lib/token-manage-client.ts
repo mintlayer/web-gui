@@ -3,7 +3,7 @@
  *
  * Every token-authority action (issue/mint/unmint/lock/freeze/change) burns a
  * 2FA code, so failures must tell the user whether their code was consumed
- * (code_consumed) and whether they need to sign in again (sessionExpired) —
+ * (code_consumed) and whether they need to sign in again (sessionExpired) -
  * same contract as the send/bridge flows.
  */
 
@@ -45,7 +45,7 @@ export async function tokenManage(
     window.setTimeout(() => window.location.assign('/login'), 800);
     return {
       ok: false,
-      error: 'Your session expired — redirecting to login…',
+      error: 'Your session expired - redirecting to login…',
       status: 401,
       sessionExpired: true,
     };
@@ -61,7 +61,7 @@ export async function tokenManage(
   if (!data) {
     return {
       ok: false,
-      error: `Token operation failed (HTTP ${res.status}) — nothing was submitted.`,
+      error: `Token operation failed (HTTP ${res.status}) - nothing was submitted.`,
       status: res.status,
     };
   }

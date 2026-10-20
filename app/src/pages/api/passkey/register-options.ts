@@ -17,7 +17,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     return json({ error: 'Passkeys require a DNS hostname, not an IP address.' }, 400);
   }
 
-  // Enrolling a passkey grants persistent login (it survives cookie theft —
+  // Enrolling a passkey grants persistent login (it survives cookie theft -
   // that is its purpose), so it needs the same fresh 2FA code as other
   // step-up-gated changes. The code is burned HERE, before the challenge is
   // issued: challenges are single-use and short-lived, so register-verify can

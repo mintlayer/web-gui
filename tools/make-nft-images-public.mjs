@@ -3,7 +3,7 @@
  * make-nft-images-public.mjs
  *
  * NOTE: This script is Pinata-specific. It requires PINATA_JWT + PINATA_GATEWAY_URL.
- * For nft.storage or web3.storage users, files are always public at upload time —
+ * For nft.storage or web3.storage users, files are always public at upload time -
  * no backfill script is needed.
  *
  * Cycles through every NFT in the wallet (account 0) and ensures their
@@ -11,15 +11,15 @@
  *
  * Strategy: download each private file from the Pinata dedicated gateway,
  * then re-upload it with network:"public". Because IPFS is content-addressed
- * the CID is identical — the same URI in the NFT metadata now resolves on
+ * the CID is identical - the same URI in the NFT metadata now resolves on
  * any public gateway (ipfs.io, cloudflare-ipfs.com, etc.).
  *
  * Prerequisites:
- *   PINATA_JWT         — API key (in .env)
- *   PINATA_GATEWAY_URL — your dedicated gateway hostname, e.g. yourname.mypinata.cloud
+ *   PINATA_JWT         - API key (in .env)
+ *   PINATA_GATEWAY_URL - your dedicated gateway hostname, e.g. yourname.mypinata.cloud
  *                        (Pinata dashboard → Gateways, free plan includes one)
  *
- * Usage (recommended — runs inside Docker, no port exposure needed):
+ * Usage (recommended - runs inside Docker, no port exposure needed):
  *   make nft-images-public
  *
  * Direct usage (only if wallet-rpc-daemon is already reachable):
@@ -104,7 +104,7 @@ async function downloadFromGateway(cid) {
 /**
  * Re-upload a buffer to Pinata with network:"public".
  * Because IPFS is content-addressed, the returned CID will be identical to
- * the original — the same URI in NFT metadata now resolves on public gateways.
+ * the original - the same URI in NFT metadata now resolves on public gateways.
  */
 async function reuploadPublic(buffer, contentType, name) {
   const form = new FormData();
@@ -123,7 +123,7 @@ async function reuploadPublic(buffer, contentType, name) {
   return data.data?.cid ?? null;
 }
 
-/** Decode a { text, hex } RPC field — mirrors token-utils.ts hexToText */
+/** Decode a { text, hex } RPC field - mirrors token-utils.ts hexToText */
 function hexToText(field) {
   if (!field) return null;
   if (field.text) return field.text;
@@ -192,7 +192,7 @@ async function run() {
       const results = await walletRpc('node_get_tokens_info', { token_ids: [id] });
       info = results[0] ?? null;
     } catch (err) {
-      console.warn(`  [SKIP] ${id.slice(0, 16)}… — could not fetch info: ${err.message}`);
+      console.warn(`  [SKIP] ${id.slice(0, 16)}… - could not fetch info: ${err.message}`);
       continue;
     }
 
@@ -206,7 +206,7 @@ async function run() {
     ].filter(Boolean);
 
     if (cids.length === 0) {
-      console.log(`  [SKIP] "${name}" — no IPFS URIs in metadata`);
+      console.log(`  [SKIP] "${name}" - no IPFS URIs in metadata`);
       continue;
     }
 
@@ -237,7 +237,7 @@ async function run() {
           totalAlready++;
           continue;
         }
-      } catch { /* not reachable — proceed with reupload */ }
+      } catch { /* not reachable - proceed with reupload */ }
 
       // Download from private Pinata gateway
       let buffer, contentType;
@@ -249,12 +249,12 @@ async function run() {
         continue;
       }
 
-      // Re-upload with network:"public" — CID will be identical
+      // Re-upload with network:"public" - CID will be identical
       try {
         const newCid = await reuploadPublic(buffer, contentType, nft.name);
         if (newCid && newCid !== cid) {
           // Shouldn't happen with identical content, but flag it
-          console.log(`WARN — new CID differs: ${newCid}`);
+          console.log(`WARN - new CID differs: ${newCid}`);
         } else {
           console.log('→ re-uploaded as public ✓');
           totalOk++;

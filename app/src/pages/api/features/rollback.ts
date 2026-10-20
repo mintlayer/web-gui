@@ -8,7 +8,7 @@ import {
 } from '@/lib/feature-requests';
 
 /**
- * POST /api/features/rollback — restore the image pins the sidecar saved
+ * POST /api/features/rollback - restore the image pins the sidecar saved
  * before the last upgrade (PREVIOUS_* anchors in .env). Fails honestly via
  * the result file when no upgrade has ever run on this install.
  */

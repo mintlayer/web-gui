@@ -6,7 +6,7 @@ A Docker Compose stack that runs a full Mintlayer node, a headless wallet, and a
 
 ```
 Browser → Astro web GUI (port 4321)
-              │  server-side proxy — credentials never reach the browser
+              │  server-side proxy - credentials never reach the browser
               ▼
         wallet-rpc-daemon  :3034 (internal)
               │  JSON-RPC 2.0
@@ -40,14 +40,14 @@ which sets the minimum supported browsers:
 | Safari (macOS) | 16.4+ |
 | Safari (iOS) | 16.4+ |
 
-Older releases — in particular Safari 16.3 and earlier — may render, but are untested
+Older releases - in particular Safari 16.3 and earlier - may render, but are untested
 and unsupported.
 
 ---
 
 ## Running
 
-### Recommended — interactive setup
+### Recommended - interactive setup
 
 ```bash
 ./init.sh
@@ -57,7 +57,7 @@ The script walks you through every option (network, wallet, passwords, ports, in
 
 **Prebuilt images.** CI publishes multi-arch (amd64 + arm64) images to
 `ghcr.io/mintlayer/web-gui` (`web-gui`, `bdk-wallet`, `btc-explorer`), and
-`init.sh` pulls them automatically — nothing is compiled on the target.
+`init.sh` pulls them automatically - nothing is compiled on the target.
 First-time pulls of a private package need `docker login ghcr.io` (or flip the
 package to public in the GitHub UI). To build from source instead, run
 `docker compose build` after checkout.
@@ -75,7 +75,7 @@ A `Makefile` wraps the most common Docker Compose commands:
 | `make restart-gui` | Rebuild and restart only the web-gui container |
 | `make build` | Rebuild all images without starting |
 | `make logs` | Tail logs for all services |
-| `make dev` | Start web-gui in dev mode with HMR — full stack including the indexer profile (node + wallet use prod images) |
+| `make dev` | Start web-gui in dev mode with HMR - full stack including the indexer profile (node + wallet use prod images) |
 | `make dev-build` | Rebuild the dev image (run after adding npm packages) |
 | `make wallet-cli` | Open an interactive wallet-cli session |
 | `make bitcoin` | Start the optional Bitcoin node + BTC wallet |
@@ -118,22 +118,22 @@ Services started:
 | Container | What it does |
 |---|---|
 | `node-daemon` | Syncs the Mintlayer blockchain (takes hours on first run) |
-| `wallet-rpc-daemon` | Headless wallet — starts with no wallet loaded |
+| `wallet-rpc-daemon` | Headless wallet - starts with no wallet loaded |
 | `web-gui` | Web interface at <http://localhost:4321> |
 
 **4. Create your wallet**
 
 Open <http://localhost:4321/setup> and use the **Create new wallet** form.
 
-- Use `/home/mintlayer/my_wallet` as the path — it appears as `./mintlayer-data/my_wallet` on the host
-- Write down the mnemonic shown — it will not be displayed again
+- Use `/home/mintlayer/my_wallet` as the path - it appears as `./mintlayer-data/my_wallet` on the host
+- Write down the mnemonic shown - it will not be displayed again
 
 After creating your wallet at <http://localhost:4321/setup>, the dashboard at <http://localhost:4321> will show your balance and sync status.
 
 > **Accessing the GUI from another machine (LAN)?** The session cookie is marked
 > `Secure`, so browsers only accept it on `localhost` or HTTPS. Login from a
 > plain-HTTP LAN hostname (e.g. `http://192.168.1.50:4321`) will silently fail.
-> By default the GUI also binds to `127.0.0.1` only — set `WEB_GUI_BIND=0.0.0.0`
+> By default the GUI also binds to `127.0.0.1` only - set `WEB_GUI_BIND=0.0.0.0`
 > in `.env` to expose it, and put a TLS reverse proxy in front for real remote
 > access.
 
@@ -188,20 +188,20 @@ How it works:
 - **`bitcoind`** provides chain data and broadcasts transactions. It needs no host ports.
 - **`bdk-wallet`** is a light-wallet sidecar (BDK, BIP84) that holds the BTC keys and signs
   transactions locally. The web GUI talks to it over the internal Docker network.
-- The wallet seed is generated in the web UI and **shown exactly once** — back it up when prompted.
+- The wallet seed is generated in the web UI and **shown exactly once** - back it up when prompted.
 - All BTC API routes require a logged-in session; the sidecar is not reachable from outside.
 
 **Requirements and warnings**
 
 - Mainnet chain data is roughly **700 GB** with the default `txindex=1`. The first sync can
   take days. Use `BITCOIN_NETWORK=testnet` (or `regtest`) to try it out cheaply.
-- The BTC wallet is a **hot wallet** — keep only spending amounts on it.
-- **Storage modes** — `./init.sh` asks; the default is pruned:
-  - **Full** (`BITCOIN_PRUNE=0`, `BITCOIN_TXINDEX=1`, ~700 GB): complete history — restoring
+- The BTC wallet is a **hot wallet** - keep only spending amounts on it.
+- **Storage modes** - `./init.sh` asks; the default is pruned:
+  - **Full** (`BITCOIN_PRUNE=0`, `BITCOIN_TXINDEX=1`, ~700 GB): complete history - restoring
     any old seed rescans everything.
   - **Pruned** (`BITCOIN_PRUNE=550`, `BITCOIN_TXINDEX=0`, ~15–25 GB): keeps only recent
     blocks. Wallets created from now work normally (balance, receive, send); **restoring an
-    old seed is refused** — a pruned node cannot rescan history it no longer stores, and a
+    old seed is refused** - a pruned node cannot rescan history it no longer stores, and a
     partial scan would silently miss coins. Switching back to full requires a full resync.
 - Bitcoin Core is pinned to **25.x**: the BDK rpc backend cannot parse the `warnings`
   format used by Core 26+. Override only if you know what you are doing (`BITCOIND_IMAGE`).
@@ -246,9 +246,9 @@ docker compose pull && docker compose up -d
 | → Wallet | `/management/wallet` | Wallet settings and info |
 | Send | `/send` | Send ML to an address |
 | Staking | `/staking` | Staking status and instructions |
-| Token Management | `/token-management` | Issue and manage tokens — **requires indexer** |
-| Trading | `/trading` | DEX trading — **requires indexer** |
-| Bitcoin | `/bitcoin` | BTC balance, receive and send — **requires bitcoin profile** |
+| Token Management | `/token-management` | Issue and manage tokens - **requires indexer** |
+| Trading | `/trading` | DEX trading - **requires indexer** |
+| Bitcoin | `/bitcoin` | BTC balance, receive and send - **requires bitcoin profile** |
 | Wallet setup | `/setup` | Create or open a wallet |
 
 > **Token Management** and **Trading** are hidden when `INDEXER_ENABLED=false` in `.env`.
@@ -263,7 +263,7 @@ profile) with the web-gui source mounted for hot reload at <http://localhost:432
 On first use it generates `.env.dev` automatically: fixed development credentials (`dev` / `dev`
 etc., from `env.dev.example`), your host UID/GID, and a fresh random `SESSION_SECRET`. The dev
 stack binds the web UI to `127.0.0.1` and publishes no daemon ports, so those fixed credentials
-are local-only by design — they are never valid for a real deployment (use `./init.sh`, which
+are local-only by design - they are never valid for a real deployment (use `./init.sh`, which
 generates random secrets, for that). Delete `.env.dev` to re-roll the secret.
 
 > The daemon images (`ghcr.io/mintlayer/web-gui/node-daemon`, `wallet-rpc-daemon`,
@@ -355,7 +355,7 @@ docker run --rm \
 
 ### Reset TOTP 2FA (lost authenticator)
 
-Use the bundled `update-totp` script — it generates a new secret, shows a scannable QR code, and only saves after you confirm with a valid code:
+Use the bundled `update-totp` script - it generates a new secret, shows a scannable QR code, and only saves after you confirm with a valid code:
 
 ```bash
 # Inside a running container
@@ -382,6 +382,6 @@ docker compose restart web-gui
 ## Security
 
 - Run `./init.sh` or set strong passwords in `.env` before exposing this to any network.
-- Wallet RPC credentials are never sent to the browser — all calls are proxied server-side by the Astro app.
+- Wallet RPC credentials are never sent to the browser - all calls are proxied server-side by the Astro app.
 - Only a fixed allowlist of RPC methods is callable through the `/api/rpc` endpoint.
 - The wallet RPC (3034) and node RPC (3030) ports are not exposed to the host by default.

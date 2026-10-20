@@ -1,6 +1,6 @@
-# Mintlayer Web GUI — Plugin System
+# Mintlayer Web GUI - Plugin System
 
-Plugins extend the wallet UI without being part of the main distribution. Each plugin is a Node.js ESM module uploaded as a `.tgz` archive. Plugins run server-side, in the same process as the app, with the same trust level as the app itself — **only install plugins you wrote or fully trust**.
+Plugins extend the wallet UI without being part of the main distribution. Each plugin is a Node.js ESM module uploaded as a `.tgz` archive. Plugins run server-side, in the same process as the app, with the same trust level as the app itself - **only install plugins you wrote or fully trust**.
 
 ---
 
@@ -42,17 +42,17 @@ tar -czf myplugin.tgz myplugin/plugin.json myplugin/index.mjs
 
 ---
 
-## plugin.json — manifest
+## plugin.json - manifest
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `id` | string | ✓ | Unique identifier. **Lowercase letters, digits, and hyphens only** — used as a URL path segment and directory name. |
+| `id` | string | ✓ | Unique identifier. **Lowercase letters, digits, and hyphens only** - used as a URL path segment and directory name. |
 | `name` | string | ✓ | Human-readable name shown in the Plugins management page. |
 | `navLabel` | string | ✓ | Short label shown in the sidebar when the plugin is enabled. |
 | `version` | string | ✓ | Semver-style version string, shown in the Plugins list. |
 | `entry` | string | ✓ | Filename of the ESM handler module, relative to the archive root. |
-| `navSection` | string | — | Sidebar section to place the plugin in. One of `"wallet"`, `"assets"`, `"trade"`, `"apps"`. Defaults to `"apps"`. |
-| `navIcon` | string | — | SVG `d` attribute of a single Heroicons-outline-style path (`viewBox="0 0 24 24"`, `strokeWidth="1.5"`). Defaults to a wrench icon. |
+| `navSection` | string | - | Sidebar section to place the plugin in. One of `"wallet"`, `"assets"`, `"trade"`, `"apps"`. Defaults to `"apps"`. |
+| `navIcon` | string | - | SVG `d` attribute of a single Heroicons-outline-style path (`viewBox="0 0 24 24"`, `strokeWidth="1.5"`). Defaults to a wrench icon. |
 
 ```json
 {
@@ -80,7 +80,7 @@ The wrench icon is used when `navIcon` is omitted.
 
 ---
 
-## index.mjs — handler module
+## index.mjs - handler module
 
 The entry file must export an async `handler` function:
 
@@ -101,7 +101,7 @@ export async function handler(request, context) {
 
 The handler can return one of two things:
 
-#### 1. A page — `{ title, html }`
+#### 1. A page - `{ title, html }`
 
 Return a plain object with `title` (string) and `html` (HTML string). The app wraps it in the shared Layout, giving it the standard nav, header, and footer automatically.
 
@@ -159,7 +159,7 @@ interface PluginContext {
   walletRpc(method: string, params?: Record<string, unknown>): Promise<unknown>;
 
   // Per-plugin key/value storage (backed by the shared SQLite prefs DB)
-  // Keys are namespaced automatically — no risk of collision with other plugins.
+  // Keys are namespaced automatically - no risk of collision with other plugins.
   getPref(key: string): unknown;
   setPref(key: string, value: unknown): void;
 
@@ -220,7 +220,7 @@ if (context.indexerBaseUrl) {
 Files placed in the `public/` directory of your archive are served at `/plugins/{id}/public/{filename}`.
 
 ```html
-<!-- In your HTML — reference images, CSS, JS from public/ -->
+<!-- In your HTML - reference images, CSS, JS from public/ -->
 <link rel="stylesheet" href="/plugins/my-plugin/public/style.css">
 <img src="/plugins/my-plugin/public/logo.svg" alt="logo">
 <script src="/plugins/my-plugin/public/app.js"></script>
@@ -257,7 +257,7 @@ if (url.pathname === '/plugins/my-plugin/api/price') {
 
 ## Authentication
 
-All plugin routes (`/plugins/**`) go through the standard session middleware. Users must be logged in — plugins do not need to implement authentication themselves.
+All plugin routes (`/plugins/**`) go through the standard session middleware. Users must be logged in - plugins do not need to implement authentication themselves.
 
 ---
 
@@ -301,5 +301,5 @@ The host app uses **Tailwind CSS** with a dark theme. These classes are reliably
 
 - Plugins execute with full Node.js access (filesystem, network, child processes).
 - Plugin code can call any wallet RPC method, not just the browser-safe allowlist.
-- There is no sandboxing — treat a plugin the same as any server-side dependency.
+- There is no sandboxing - treat a plugin the same as any server-side dependency.
 - The plugin `id` is validated against a strict regex and used as a directory name; path traversal is not possible.

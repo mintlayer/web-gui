@@ -23,13 +23,13 @@ import { getBridgeApiUrl, getMintlayerApiUrl } from '@/lib/bridge-sdk/config';
 /** CoinGecko simple/price endpoint host (prices.ts). */
 const COINGECKO_ORIGIN = 'https://api.coingecko.com';
 
-/** Strict origin shape: scheme://host[:port] — no paths, no wildcards. */
+/** Strict origin shape: scheme://host[:port] - no paths, no wildcards. */
 const ORIGIN_RE = /^[a-z][a-z0-9+.-]*:\/\/[a-z0-9._-]+(?::\d{1,5})?$/i;
 
 /**
  * Runtime override for the PUBLIC_* base URLs. import.meta.env is
  * inlined at build time, so the middleware (which runs server-side)
- * reads process.env first and falls back to the SDK values — the same
+ * reads process.env first and falls back to the SDK values - the same
  * defaults, but operators can retarget the policy without a rebuild.
  */
 function apiBase(overrideKey: string, fallback: string): string {
@@ -61,7 +61,7 @@ function wsOriginOf(apiUrl: string): string | null {
 
 /** Builds the connect-src source list, deduplicated, 'self' first. */
 export function connectSources(): string[] {
-  // 'self' must stay quoted — a bare `self` is an invalid CSP source and
+  // 'self' must stay quoted - a bare `self` is an invalid CSP source and
   // would silently drop same-origin under enforcement.
   const sources = new Set<string>(["'self'", COINGECKO_ORIGIN]);
   const apiUrls = [

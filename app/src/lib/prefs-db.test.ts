@@ -86,7 +86,7 @@ describe('corrupt JSON tolerance', () => {
 
   it('returns null (not a crash) for a row containing invalid JSON', async () => {
     // Seed a real DB file with a raw, non-JSON row before the module is
-    // imported — the module's own API cannot produce corrupt values, so we
+    // imported - the module's own API cannot produce corrupt values, so we
     // simulate a partial write at the storage layer.
     const dbPath = join(tmpdir(), `prefs-corrupt-${process.pid}-${Date.now()}.sqlite`);
     const seed = new Database(dbPath);

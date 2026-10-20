@@ -1,5 +1,5 @@
 /**
- * bridge-sdk — API layer for the Mintlayer bridge.
+ * bridge-sdk - API layer for the Mintlayer bridge.
  *
  * All bridge/ml-api network access lives here. UI components never call
  * fetch directly; they consume this SDK so endpoints, URLs, and error
@@ -23,7 +23,7 @@ export const getMintlayerApiUrl = (): string =>
 
 /**
  * Server-side bridge API URL. Astro API routes run in Node, where
- * process.env takes precedence over the public (build-time) var — lets an
+ * process.env takes precedence over the public (build-time) var - lets an
  * operator point server-side bridge calls at an internal mirror without
  * rebuilding, while the browser keeps using the public URL.
  */

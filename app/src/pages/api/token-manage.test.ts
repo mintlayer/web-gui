@@ -154,7 +154,7 @@ describe('POST /api/token-manage', () => {
   it('redacts transport-class daemon errors (no URL leak)', async () => {
     const { POST } = await import('@/pages/api/token-manage');
     vi.mocked(rpcCall).mockRejectedValue(
-      new WalletRpcError('Cannot reach wallet-rpc-daemon at http://127.0.0.1:8556 — is it running?', -32000),
+      new WalletRpcError('Cannot reach wallet-rpc-daemon at http://127.0.0.1:8556 - is it running?', -32000),
     );
     const res = await POST(makeCtx({ action: 'token_mint', params: VALID.mint, ...TOTP }));
     expect(res.status).toBe(502);

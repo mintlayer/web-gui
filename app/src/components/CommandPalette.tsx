@@ -94,7 +94,7 @@ export default function CommandPalette({ items }: Props) {
     return result;
   }, [displayItems]);
 
-  // Flat ordered list for keyboard nav — must match visual section-grouped render order
+  // Flat ordered list for keyboard nav - must match visual section-grouped render order
   const flat = useMemo(() => {
     const order = ['WALLET', 'ASSETS', 'TRADE', 'PLUGINS'];
     const secs = [

@@ -1,6 +1,6 @@
 /**
  * bridge-sdk re-exports of the canonical bech32 codec (@/lib/bech32) so the
- * SDK's public surface stays stable. Kept as a thin wrapper — the constants
+ * SDK's public surface stays stable. Kept as a thin wrapper - the constants
  * and algorithm live in ONE place app-wide to prevent drift.
  * See https://github.com/bitcoin/bips/blob/master/bip-0350.mediawiki
  */

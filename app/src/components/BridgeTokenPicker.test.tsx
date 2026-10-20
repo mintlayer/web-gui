@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-/** Tests for BridgeTokenPicker — search, keyboard navigation, selection. */
+/** Tests for BridgeTokenPicker - search, keyboard navigation, selection. */
 
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
@@ -50,7 +50,7 @@ describe('BridgeTokenPicker', () => {
     expect(screen.getByText(/no tokens match/i)).toBeInTheDocument();
     await user.clear(screen.getByRole('combobox'));
     await user.keyboard('{ArrowDown}{ArrowDown}{ArrowDown}');
-    // 3 items — active index clamps to the last option
+    // 3 items - active index clamps to the last option
     expect(screen.getByRole('combobox').getAttribute('aria-activedescendant')).toMatch(
       /-opt-2$/,
     );

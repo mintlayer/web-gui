@@ -21,15 +21,15 @@ import {
 } from '@/lib/feature-requests';
 
 /**
- * GET /api/update-check — newest release vs the running version.
+ * GET /api/update-check - newest release vs the running version.
  *
  * Read-only against api.github.com (no wallet or usage data leaves the
  * host), cached in-module for hours. When auto-install is on and a newer
- * applicable release exists, the upgrade is queued here — the enabler
+ * applicable release exists, the upgrade is queued here - the enabler
  * sidecar pulls images before touching .env and restarts the stack (the
  * web UI briefly becomes unreachable while its own container is replaced).
  *
- * POST — turn auto-install on/off. Requires fresh step-up TOTP: the toggle
+ * POST - turn auto-install on/off. Requires fresh step-up TOTP: the toggle
  * is the trust anchor for all future unattended upgrades.
  */
 const UNAVAILABLE: UpdateStatus = {

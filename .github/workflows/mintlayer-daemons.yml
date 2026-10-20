@@ -2,7 +2,7 @@ name: Mintlayer Daemon Images
 
 # Builds the four Mintlayer daemon images (node-daemon, wallet-rpc-daemon,
 # api-blockchain-scanner-daemon, api-web-server) for amd64 + arm64 from
-# mintlayer-core v1.4.1 — upstream Docker Hub images are amd64-only, which
+# mintlayer-core v1.4.1 - upstream Docker Hub images are amd64-only, which
 # blocks installs on ARM hosts (RPi / arm64 VPS).
 #
 # Native builds on GitHub's free amd64 + arm64 runners (public repos);

@@ -10,7 +10,7 @@ import { ROOT_CA_PATH, DOWNLOAD_FILENAME } from '@/lib/https-ca';
  * leave the caddy container). Mounted read-only at /certs in web-gui; 404
  * until caddy has started at least once.
  *
- * Auth is enforced by the global session middleware — no public exposure.
+ * Auth is enforced by the global session middleware - no public exposure.
  */
 
 export const GET: APIRoute = async () => {
@@ -29,7 +29,7 @@ export const GET: APIRoute = async () => {
         { status: 404, headers: { 'Content-Type': 'application/json' } },
       );
     }
-    // Broken mount or permissions — log it, don't pretend the CA is missing.
+    // Broken mount or permissions - log it, don't pretend the CA is missing.
     console.error('[https] failed to read local CA root:', err);
     return new Response(
       JSON.stringify({ ok: false, error: 'Failed to read the local CA root (see server logs).' }),

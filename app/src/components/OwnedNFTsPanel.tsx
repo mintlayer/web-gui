@@ -21,7 +21,7 @@ interface Props {
 
 function resolveUri(raw: string | null): string | null {
   if (!raw) return null;
-  // Chain-controlled URIs are whitelist-filtered (https/ipfs/data:image) —
+  // Chain-controlled URIs are whitelist-filtered (https/ipfs/data:image) -
   // never rendered raw into <img src>.
   const mapped = raw.startsWith("ipfs://") ? "https://ipfs.io/ipfs/" + raw.slice(7) : raw;
   return safeImageUri(mapped);

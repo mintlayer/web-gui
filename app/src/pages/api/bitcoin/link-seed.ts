@@ -49,7 +49,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     return json({ ok: false, error: 'Your Mintlayer wallet password is required' }, 400);
   }
 
-  // A pruned node can't serve the full history this restore needs — fail
+  // A pruned node can't serve the full history this restore needs - fail
   // fast BEFORE unlocking private keys for a scan that would miss coins.
   try {
     const status = await getBitcoinStatus();
@@ -64,7 +64,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
       );
     }
   } catch {
-    // Status probe failed — the sidecar's own guard still applies later.
+    // Status probe failed - the sidecar's own guard still applies later.
   }
 
   let seed = '';
@@ -75,7 +75,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
       if (/password|passphrase/i.test((err as Error).message)) {
         return json({ ok: false, error: 'Wrong wallet password' }, 403);
       }
-      // Already-unlocked and similar states are not fatal here — the
+      // Already-unlocked and similar states are not fatal here - the
       // reveal below is the authority on whether the keys are readable.
     }
 
@@ -83,7 +83,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
       const res = await walletShowSeedPhrase();
       if (!res || !Array.isArray(res.seed_phrase) || res.seed_phrase.length === 0) {
         return json(
-          { ok: false, error: 'No seed phrase available — create or recover your Mintlayer wallet first' },
+          { ok: false, error: 'No seed phrase available - create or recover your Mintlayer wallet first' },
           409,
         );
       }
@@ -91,7 +91,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     } catch (err) {
       const msg = (err as Error).message;
       if (/lock/i.test(msg)) {
-        return json({ ok: false, error: 'Could not unlock the wallet — check the password' }, 403);
+        return json({ ok: false, error: 'Could not unlock the wallet - check the password' }, 403);
       }
       if (isWalletNotOpenError(err)) {
         return json({ ok: false, error: 'Open your Mintlayer wallet first' }, 409);
@@ -99,13 +99,13 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
       throw err;
     }
   } finally {
-    // Re-lock no matter which path we take — keep the unlocked window
+    // Re-lock no matter which path we take - keep the unlocked window
     // as short as possible even on the failure paths.
     await walletLockPrivateKeys().catch(() => {});
   }
 
   try {
-    // No scan_from: this seed may be old — the sidecar scans from block 0
+    // No scan_from: this seed may be old - the sidecar scans from block 0
     // so BTC received before the link is not missed.
     const result = await createBitcoinWalletFromSeedWithRetry(seed);
     return json(result);

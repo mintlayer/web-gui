@@ -9,7 +9,7 @@ export interface SeedBackupStepProps {
    * Post-success recovery hint. Default assumes the seed can be re-revealed
    * via Management → Show Seed Phrase (Mintlayer wallets). Wallets whose seed
    * is only ever shown once (e.g. the independent BTC sidecar wallet) must
-   * override this — a false "you can see it again later" pointer on a
+   * override this - a false "you can see it again later" pointer on a
    * one-time seed is how backups get skipped.
    */
   recoverHint?: 'management-seed-reveal' | 'one-time-only';
@@ -44,7 +44,7 @@ const PRINT_STYLE = `
   /* Visibility (not display) so the print area prints even though it is NOT a
      direct child of <body>: a display:none ancestor removes descendants from
      the box tree entirely, so counter-displaying a deep descendant produced
-     blank pages — the user thinks the seed is backed up when it is not. */
+     blank pages - the user thinks the seed is backed up when it is not. */
   body * { visibility: hidden !important; }
   #seed-print-area, #seed-print-area * { visibility: visible !important; }
   #seed-print-area {
@@ -289,7 +289,7 @@ function SeedSuccessPanel({
           {recoverHint === 'one-time-only' ? (
             <>
               These words <strong className="text-gray-400">cannot be shown again</strong>. If you
-              have not written them down, go back now — this was your only copy.
+              have not written them down, go back now - this was your only copy.
             </>
           ) : (
             <>
@@ -335,7 +335,7 @@ export default function SeedBackupStep({ mnemonic, walletPath, recoverHint }: Se
       setStep({ phase: 'success' });
     } else {
       if (shakeTimer.current) clearTimeout(shakeTimer.current);
-      // Keep the entries the user got right — clearing all four on a failed
+      // Keep the entries the user got right - clearing all four on a failed
       // check forces a full retype of a backup they demonstrably have.
       const kept = step.inputs.map(
         (val, slot) => (step.indices[slot] !== undefined && val.trim().toLowerCase() === words[step.indices[slot]].toLowerCase() ? val : ''),

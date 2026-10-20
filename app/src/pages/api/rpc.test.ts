@@ -157,16 +157,16 @@ describe('allowlist enforcement - blocked methods', () => {
     '__proto__',
     'constructor',
     'WALLET_INFO', // case-sensitive - uppercase not allowed
-    'open_wallet',             // old wrong name — must be blocked
-    'create_wallet',           // old wrong name — must be blocked
-    'wallet_open',             // server-side only — must not be callable via proxy
-    'wallet_create',           // server-side only — must not be callable via proxy
-    'wallet_show_seed_phrase', // sensitive — server-side only
-    'wallet_unlock_private_keys', // sensitive — server-side only
-    'address_send',            // money movement — TOTP step-up via /api/send only
-    'token_send',              // money movement — TOTP step-up via /api/send only
-    'address_sweep_spendable', // money movement — full-drain sweep, no cookie-only path
-    // Staking/pool/delegation fund-movement methods — TOTP step-up via
+    'open_wallet',             // old wrong name - must be blocked
+    'create_wallet',           // old wrong name - must be blocked
+    'wallet_open',             // server-side only - must not be callable via proxy
+    'wallet_create',           // server-side only - must not be callable via proxy
+    'wallet_show_seed_phrase', // sensitive - server-side only
+    'wallet_unlock_private_keys', // sensitive - server-side only
+    'address_send',            // money movement - TOTP step-up via /api/send only
+    'token_send',              // money movement - TOTP step-up via /api/send only
+    'address_sweep_spendable', // money movement - full-drain sweep, no cookie-only path
+    // Staking/pool/delegation fund-movement methods - TOTP step-up via
     // /api/stake-trade only (pool creation burns ~1000 ML; stake/withdraw
     // move coins; sweep drains a delegation).
     'staking_create_pool',
@@ -175,12 +175,12 @@ describe('allowlist enforcement - blocked methods', () => {
     'delegation_stake',
     'delegation_withdraw',
     'staking_sweep_delegation',
-    // Order placement/filling/cancellation — fund-movement transactions,
+    // Order placement/filling/cancellation - fund-movement transactions,
     // TOTP step-up via /api/stake-trade only (shared with the NFT marketplace).
     'order_create',
     'order_fill',
     'order_conclude',
-    // Token authority methods — TOTP step-up via /api/token-manage only
+    // Token authority methods - TOTP step-up via /api/token-manage only
     // (issue/mint mutate supply + burn fees; lock_supply and an is_unfreezable
     // freeze are irreversible; change_authority hands the token away).
     'token_issue_new',

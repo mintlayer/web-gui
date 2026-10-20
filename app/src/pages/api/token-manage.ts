@@ -9,10 +9,10 @@ import { isValidAmount } from '@/lib/validation';
  *
  * Authority endpoint: issuing, minting, unminting, locking supply, freezing,
  * unfreezing, changing authority and changing metadata all mutate on-chain
- * token state (several irreversibly) and burn fees — they require a fresh TOTP
+ * token state (several irreversibly) and burn fees - they require a fresh TOTP
  * code (step-up) on top of the session cookie, exactly like /api/send. These
  * methods are intentionally absent from the browser/plugin RPC allowlist, so
- * this is the only path — a stolen session cookie alone cannot mint, freeze,
+ * this is the only path - a stolen session cookie alone cannot mint, freeze,
  * or reassign a token.
  *
  * Every action has a strict per-action parameter whitelist validated BEFORE
@@ -185,7 +185,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     // user silently retrying the dead one.
     if (err instanceof WalletRpcError) {
       // Transport-class failures (-32000/-32001/5xx) carry the daemon URL in
-      // their message — never forward those to the browser (mirror of the
+      // their message - never forward those to the browser (mirror of the
       // rpc.ts proxy redaction). Daemon user-actionable messages still pass
       // through.
       const transport = err.code === -32000 || err.code === -32001 || err.code >= 500;

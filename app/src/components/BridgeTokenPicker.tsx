@@ -127,7 +127,7 @@ export default function BridgeTokenPicker({
     return [...hits].sort(byHoldings(balances, usdPrices));
   }, [assets, query, balances, usdPrices]);
 
-  // The highlight index must stay inside the filtered list — typing can
+  // The highlight index must stay inside the filtered list - typing can
   // shrink it while a higher index is active.
   const activeIdx = Math.min(active, Math.max(filtered.length - 1, 0));
 

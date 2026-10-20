@@ -104,7 +104,7 @@ function useTotpAction() {
       setTotp('');
       // Defer so the field re-enables before focus lands on it.
       window.setTimeout(() => totpRef.current?.focus(), 0);
-      return new Error(`${r.error} Your code was consumed — wait up to a minute for a fresh one.`);
+      return new Error(`${r.error} Your code was consumed - wait up to a minute for a fresh one.`);
     }
     return new Error(r.error);
   };

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { POST } from './link-seed';
 
 /**
- * POST /api/bitcoin/link-seed — server-side seed reveal → sidecar.
+ * POST /api/bitcoin/link-seed - server-side seed reveal → sidecar.
  * Contract under test: gates (enabled, step-up, password), the
  * re-lock-in-finally guarantee, honest error mapping and the hard rule
  * that the seed phrase never appears in any response.
@@ -84,8 +84,8 @@ describe('POST /api/bitcoin/link-seed', () => {
     const passed = createFromSeed.mock.calls[0]?.[0] as string;
     expect(passed).toBe(SEED.join(' '));
     expect(lockPrivateKeys).toHaveBeenCalledTimes(1);
-    // Re-lock happens as soon as the seed is extracted — before the
-    // sidecar call — keeping the unlocked window minimal.
+    // Re-lock happens as soon as the seed is extracted - before the
+    // sidecar call - keeping the unlocked window minimal.
     expect(lockPrivateKeys.mock.invocationCallOrder[0]).toBeGreaterThan(
       showSeedPhrase.mock.invocationCallOrder[0],
     );

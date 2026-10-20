@@ -1,20 +1,20 @@
 /**
- * GET /api/explorer-tokens — verified token list from the Mintlayer
+ * GET /api/explorer-tokens - verified token list from the Mintlayer
  * explorer's token API.
  *
  * Proxied server-side on purpose: the explorer hosts stay out of the
  * browser CSP connect-src allowlist, the visitor's IP never reaches the
  * explorer, and the response is validated once here instead of in every
- * client. Only the fixed hosts below are fetchable — no user-supplied
+ * client. Only the fixed hosts below are fetchable - no user-supplied
  * URLs, so this is not an open proxy.
  *
  * The staging builds predate the `verified` query param (it returns the
  * JSON literal `null` there), so the route always fetches the two supply
- * filters and keeps only rows with `verified === true` — identical
+ * filters and keeps only rows with `verified === true` - identical
  * behavior on old and new explorer builds. Results are cached briefly
  * in-memory to respect the explorer's polling etiquette (≤1 req/10s).
  *
- * Row note: `circulatingSupply` is a display string (custody-adjusted) —
+ * Row note: `circulatingSupply` is a display string (custody-adjusted) -
  * it is passed through untouched, never parsed.
  */
 
@@ -23,7 +23,7 @@ import { json } from '@/lib/api-utils';
 
 /** Per-fetch budget; two fetches per refresh, worst case 2× this. */
 const UPSTREAM_TIMEOUT_MS = 12_000;
-/** ~7k rows of headroom — larger answers are refused, not truncated. */
+/** ~7k rows of headroom - larger answers are refused, not truncated. */
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 /** Explorer etiquette: don't poll harder than ~1 req/10s. */
 const CACHE_TTL_MS = 60_000;
@@ -131,7 +131,7 @@ async function fetchList(base: string, filter: string): Promise<ExplorerTokenRow
   const declared = Number(res.headers.get('content-length') ?? '0');
   if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) return null;
 
-  // Streamed read with a hard cap — chunked responses without a
+  // Streamed read with a hard cap - chunked responses without a
   // content-length header can't blow the heap.
   const text = await readCapped(res, MAX_RESPONSE_BYTES);
   if (text === null) return null;

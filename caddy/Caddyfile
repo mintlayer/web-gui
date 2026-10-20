@@ -1,13 +1,13 @@
 # LAN HTTPS gateway for the web GUI.
 #
 # Mounted read-only into the caddy container (profile "web"). The site
-# address comes from the WEB_GUI_HOST env var (Caddy {$VAR} syntax) — set by
+# address comes from the WEB_GUI_HOST env var (Caddy {$VAR} syntax) - set by
 # docker-compose from the value chosen in init.sh, e.g. ml1.local.
 #
 # `local_certs` makes Caddy act as its own Certificate Authority: it
 # generates a root certificate on first start (persisted in the caddy-data
 # volume) and issues valid TLS certificates for the configured hostname.
-# Browsers warn until the root is imported on the client — download it from
+# Browsers warn until the root is imported on the client - download it from
 # Settings → HTTPS in the web GUI, which serves it out of the same volume.
 
 {

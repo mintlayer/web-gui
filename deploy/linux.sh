@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# When run via process substitution (bash <(curl ...)), $0 is /dev/fd/N — a
+# When run via process substitution (bash <(curl ...)), $0 is /dev/fd/N - a
 # PIPE that bash itself reads incrementally. Any child (cp/cat) opening the
 # same /dev/fd path shares the pipe offset, so copying the file would consume
 # the unread remainder and leave bash at EOF -> silent exit 0. Instead: slurp
@@ -13,7 +13,7 @@ if [[ -n "${ML_TMP_SELF:-}" && -f "$ML_TMP_SELF" ]]; then
   _SELF="$ML_TMP_SELF"
 elif [[ "$_SELF" == /dev/fd/* ]] || [[ "$_SELF" == /proc/*/fd/* ]]; then
   _tmp=$(mktemp /tmp/mintlayer-install-XXXXXX.sh)
-  # The remainder of the pipe is everything bash has not parsed yet — the
+  # The remainder of the pipe is everything bash has not parsed yet - the
   # shebang, `set -euo pipefail` and the `_SELF` assignment below are already
   # consumed and would be missing from the temp file. Re-add them, with _SELF
   # pre-bound so the trap and the `sg docker` re-exec work regardless of how
@@ -41,7 +41,7 @@ if [[ "$_SELF" == /tmp/mintlayer-install-*.sh ]]; then
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Mintlayer Web GUI — remote installer
+# Mintlayer Web GUI - remote installer
 # Served at https://get.mintlayer.org/linux.sh  (also mac.sh)
 # Usage: bash <(curl -sSL https://get.mintlayer.org/linux.sh)
 #        bash <(curl -sSL https://get.mintlayer.org/mac.sh)
@@ -91,7 +91,7 @@ die() {
 #   ML_USER_ID / ML_GROUP_ID (host ids, floored to 1000)
 # The web UI password is printed once in the final summary; the TOTP secret is
 # written to mintlayer-totp.txt in the install directory (never to stdout).
-# Intended for AI coding agents and automation — see agent-prompt.txt.
+# Intended for AI coding agents and automation - see agent-prompt.txt.
 NONINTERACTIVE_MODE="no"
 if [[ "${ML_NONINTERACTIVE:-}" == "1" || "${NONINTERACTIVE:-}" == "1" ]]; then
   NONINTERACTIVE_MODE="yes"
@@ -186,7 +186,7 @@ bootstrap_remote() {
   cd "$INSTALL_DIR"
 
   if [[ -f docker-compose.yml ]]; then
-    ok "docker-compose.yml already exists — skipping"
+    ok "docker-compose.yml already exists - skipping"
   else
     cat > docker-compose.yml << 'COMPOSE_EOF'
 x-common: &common
@@ -272,7 +272,7 @@ services:
       # Shared with wallet-rpc-daemon's /home/mintlayer/ so uploaded wallet files
       # are accessible to the daemon at /home/mintlayer/uploads/<filename>
       - "./mintlayer-data/uploads:/app/uploads"
-      # Server-side preferences (SQLite) — persists across browsers and restarts
+      # Server-side preferences (SQLite) - persists across browsers and restarts
       - "./mintlayer-data/prefs:/app/prefs"
     ports:
       - "127.0.0.1:4321:4321"
@@ -338,7 +338,7 @@ services:
   api-blockchain-scanner-daemon:
     <<: *common
     image: "${ML_API_SCANNER_IMAGE:-mintlayer/api-blockchain-scanner-daemon:latest}"
-    # No baked-in CMD in the runtime image — pass the binary explicitly.
+    # No baked-in CMD in the runtime image - pass the binary explicitly.
     command: "/usr/bin/api-blockchain-scanner-daemon"
     depends_on:
       - node-daemon
@@ -360,7 +360,7 @@ services:
 
   api-web-server:
     image: "${ML_API_WEB_SERVER_IMAGE:-mintlayer/api-web-server:latest}"
-    # No baked-in CMD in the runtime image — pass the binary explicitly.
+    # No baked-in CMD in the runtime image - pass the binary explicitly.
     command: "/usr/bin/api-web-server"
     depends_on:
       - postgres
@@ -520,7 +520,7 @@ check_prereqs() {
       docker_install_hint
       exit 1
     else
-      # Linux — offer automatic installation
+      # Linux - offer automatic installation
       warn "Docker is not installed."
       printf "${CYAN}│${RESET}\n"
       _can_sudo=false
@@ -529,7 +529,7 @@ check_prereqs() {
       elif command -v sudo &>/dev/null && sudo -n true 2>/dev/null; then
         _can_sudo=true
       elif command -v sudo &>/dev/null; then
-        # sudo exists but requires a password — try it
+        # sudo exists but requires a password - try it
         printf "${CYAN}│${RESET}  ${BOLD}sudo is required to install Docker.${RESET}\n"
         if sudo true 2>/dev/null; then
           _can_sudo=true
@@ -654,7 +654,7 @@ printf "  ██║ ╚═╝ ██║██║██║ ╚████║   �
 printf "  ╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝   ╚═╝   ╚══════╝╚═╝  ╚═╝   ╚═╝   ╚══════╝╚═╝  ╚═╝\n"
 printf "${RESET}"
 printf "\n"
-printf "  ${BOLD}Web GUI Setup${RESET}  ${GRAY}— node + wallet-rpc-daemon + web interface${RESET}\n"
+printf "  ${BOLD}Web GUI Setup${RESET}  ${GRAY}- node + wallet-rpc-daemon + web interface${RESET}\n"
 printf "\n"
 printf "${GRAY}  This script writes your .env and starts the Docker stack.${RESET}\n"
 printf "\n"
@@ -668,7 +668,7 @@ if [ "$(id -u)" -eq 0 ]; then
   printf "${YELLOW}└─────────────────────────────────────────────────────────────────────┘${RESET}\n"
   printf "\n"
   if [[ "$NONINTERACTIVE_MODE" == "yes" ]]; then
-    warn "Running as root — not recommended for a production wallet server. Continuing (non-interactive)."
+    warn "Running as root - not recommended for a production wallet server. Continuing (non-interactive)."
     printf "\n"
   else
   printf "  Running this setup as ${BOLD}root${RESET} is not recommended for a production wallet\n"
@@ -680,7 +680,7 @@ if [ "$(id -u)" -eq 0 ]; then
   printf "    ${GRAY}usermod -aG docker mintlayer${RESET}\n"
   printf "    ${GRAY}su - mintlayer${RESET}   ${GRAY}# then re-run this script${RESET}\n"
   printf "\n"
-  printf "  Your existing SSH keys stay in ${GRAY}/root/.ssh/${RESET} — log back in as root\n"
+  printf "  Your existing SSH keys stay in ${GRAY}/root/.ssh/${RESET} - log back in as root\n"
   printf "  to administer the server; use the mintlayer user only for this stack.\n"
   printf "\n"
   _continue_as_root="no"
@@ -695,7 +695,7 @@ if [ "$(id -u)" -eq 0 ]; then
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 1 — Network
+# Step 1 - Network
 # ─────────────────────────────────────────────────────────────────────────────
 if [[ "$NONINTERACTIVE_MODE" == "yes" ]]; then
   step "Network"
@@ -711,11 +711,11 @@ hint ""
 
 NETWORK_CHOICE=""
 choose NETWORK_CHOICE "Which network?" \
-  "mainnet  — real funds" \
-  "testnet  — for testing, no real value"
+  "mainnet  - real funds" \
+  "testnet  - for testing, no real value"
 
 case "$NETWORK_CHOICE" in
-  "mainnet  — real funds") NETWORK="mainnet" ;;
+  "mainnet  - real funds") NETWORK="mainnet" ;;
   *)                       NETWORK="testnet" ;;
 esac
 fi
@@ -723,7 +723,7 @@ fi
 divider
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 2 — Passwords
+# Step 2 - Passwords
 # ─────────────────────────────────────────────────────────────────────────────
 if [[ "$NONINTERACTIVE_MODE" == "yes" ]]; then
   step "Passwords"
@@ -748,7 +748,7 @@ if [[ "$USE_RANDOM_PASSWORDS" == "yes" ]]; then
   ok "Generated random passwords (saved to .env)"
 else
   ask "Node RPC password"
-  hint "Used by node-daemon — not exposed outside Docker"
+  hint "Used by node-daemon - not exposed outside Docker"
   prompt_secret NODE_RPC_PASSWORD "Password:"
   while [[ ${#NODE_RPC_PASSWORD} -lt 8 ]]; do
     printf "${CYAN}│${RESET}  ${RED}Password must be at least 8 characters${RESET}\n"
@@ -756,7 +756,7 @@ else
   done
 
   ask "Wallet RPC password"
-  hint "Used by wallet-rpc-daemon — not exposed outside Docker"
+  hint "Used by wallet-rpc-daemon - not exposed outside Docker"
   prompt_secret WALLET_RPC_PASSWORD "Password:"
   while [[ ${#WALLET_RPC_PASSWORD} -lt 8 ]]; do
     printf "${CYAN}│${RESET}  ${RED}Password must be at least 8 characters${RESET}\n"
@@ -801,7 +801,7 @@ print(base64.b32encode(os.urandom(20)).decode(), end='')
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 3 — Web UI access (password + TOTP 2FA)
+# Step 3 - Web UI access (password + TOTP 2FA)
 # ─────────────────────────────────────────────────────────────────────────────
 if [[ "$NONINTERACTIVE_MODE" == "yes" ]]; then
   step "Web UI access"
@@ -825,7 +825,7 @@ hint ""
 
 ask "Web UI password"
 hint "Used to sign in to the wallet web interface."
-hint "Choose a strong password — this guards access to your wallet."
+hint "Choose a strong password - this guards access to your wallet."
 UI_PASSWORD=""
 UI_PASSWORD_CONFIRM=""
 prompt_secret UI_PASSWORD "Password:"
@@ -852,7 +852,7 @@ printf "${CYAN}│${RESET}\n"
 
 # Show QR code if qrencode is available, otherwise offer to install it
 if ! command -v qrencode &>/dev/null; then
-  printf "${CYAN}│${RESET}  ${DIM}qrencode is not installed — needed to show a scannable QR code.${RESET}\n"
+  printf "${CYAN}│${RESET}  ${DIM}qrencode is not installed - needed to show a scannable QR code.${RESET}\n"
   INSTALL_QRENCODE="no"
   if command -v sudo &>/dev/null && sudo -n true 2>/dev/null; then
     confirm INSTALL_QRENCODE "Install qrencode now (sudo available)?" "Y"
@@ -869,7 +869,7 @@ if ! command -v qrencode &>/dev/null; then
     elif command -v pacman &>/dev/null; then
       sudo pacman -S --noconfirm qrencode 2>/dev/null && ok "qrencode installed"
     else
-      warn "Could not detect package manager — install qrencode manually for a QR code."
+      warn "Could not detect package manager - install qrencode manually for a QR code."
     fi
   fi
 fi
@@ -883,7 +883,7 @@ fi
 printf "${CYAN}│${RESET}\n"
 hint "Or enter the secret manually: ${BOLD}${UI_TOTP_SECRET}${RESET}"
 printf "${CYAN}│${RESET}\n"
-warn "Scan this QR code NOW before continuing — it will not be shown again."
+warn "Scan this QR code NOW before continuing - it will not be shown again."
 printf "${CYAN}│${RESET}\n"
 SCANNED="no"
 confirm SCANNED "I have scanned the QR code / saved the TOTP secret" "N"
@@ -904,7 +904,7 @@ divider
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 4 — HTTPS / Public access
+# Step 4 - HTTPS / Public access
 # ─────────────────────────────────────────────────────────────────────────────
 if [[ "$NONINTERACTIVE_MODE" == "yes" ]]; then
   step "HTTPS / Public access"
@@ -912,12 +912,12 @@ if [[ "$NONINTERACTIVE_MODE" == "yes" ]]; then
   DOMAIN=""
   DUCKDNS_SUBDOMAIN=""
   DUCKDNS_TOKEN=""
-  ok "Skipped (non-interactive) — configure later by re-running the wizard or editing .env"
+  ok "Skipped (non-interactive) - configure later by re-running the wizard or editing .env"
   divider
 else
 step "HTTPS / Public access"
 hint "Caddy can automatically provision a free TLS certificate (Let's Encrypt)"
-hint "so the GUI is served over HTTPS — recommended for internet-facing servers."
+hint "so the GUI is served over HTTPS - recommended for internet-facing servers."
 hint ""
 
 HTTPS_SETUP="no"
@@ -936,7 +936,7 @@ if [[ "$HTTPS_SETUP" == "yes" ]]; then
   case "$DOMAIN_TYPE" in
     *"domain name"*)
       ask "Domain name"
-      hint "e.g. wallet.example.com — DNS must already resolve to this server"
+      hint "e.g. wallet.example.com - DNS must already resolve to this server"
       prompt DOMAIN "Domain:"
       while [[ -z "$DOMAIN" ]]; do
         printf "${CYAN}│${RESET}  ${RED}Domain cannot be empty${RESET}\n"
@@ -961,7 +961,7 @@ if [[ "$HTTPS_SETUP" == "yes" ]]; then
         prompt_secret DUCKDNS_TOKEN "DuckDNS token:"
       done
       DOMAIN="${DUCKDNS_SUBDOMAIN}.duckdns.org"
-      ok "DuckDNS configured — ${DOMAIN}"
+      ok "DuckDNS configured - ${DOMAIN}"
       ;;
   esac
 
@@ -973,14 +973,14 @@ divider
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 5 — Indexer
+# Step 5 - Indexer
 # ─────────────────────────────────────────────────────────────────────────────
 if [[ "$NONINTERACTIVE_MODE" == "yes" ]]; then
   step "Indexer stack"
   ENABLE_INDEXER="yes"
   USE_RANDOM_PASSWORDS="yes"
   POSTGRES_PASSWORD=$(rand_pass)
-  ok "Indexer enabled (default) — random PostgreSQL password generated"
+  ok "Indexer enabled (default) - random PostgreSQL password generated"
   divider
 else
 step "Indexer stack"
@@ -1014,7 +1014,7 @@ divider
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step — IPFS Storage (optional)
+# Step - IPFS Storage (optional)
 # ─────────────────────────────────────────────────────────────────────────────
 if [[ "$NONINTERACTIVE_MODE" == "yes" ]]; then
   step "IPFS Storage (optional)"
@@ -1022,12 +1022,12 @@ if [[ "$NONINTERACTIVE_MODE" == "yes" ]]; then
   IPFS_PROVIDER=""
   FILEBASE_TOKEN=""
   PINATA_JWT=""
-  ok "Skipped (non-interactive) — configure later in the web UI Settings page"
+  ok "Skipped (non-interactive) - configure later in the web UI Settings page"
   divider
 else
 step "IPFS Storage (optional)"
 hint "Enables automatic upload of token/NFT images and metadata to IPFS."
-hint "Without this, URLs can still be entered manually — you can configure this"
+hint "Without this, URLs can still be entered manually - you can configure this"
 hint "later in the web UI Settings page."
 hint ""
 
@@ -1039,20 +1039,20 @@ FILEBASE_TOKEN=""
 PINATA_JWT=""
 
 if [[ "$SETUP_IPFS" == "yes" ]]; then
-  hint "  Filebase — 5 GB free, always public — https://filebase.com"
-  hint "  Pinata   — requires paid plan for public files — https://app.pinata.cloud"
+  hint "  Filebase - 5 GB free, always public - https://filebase.com"
+  hint "  Pinata   - requires paid plan for public files - https://app.pinata.cloud"
   hint ""
 
   IPFS_CHOICE=""
   choose IPFS_CHOICE "Choose IPFS provider:" \
-    "Filebase (recommended — 5 GB free, always public)" \
+    "Filebase (recommended - 5 GB free, always public)" \
     "Pinata (paid account required to make files public)"
 
   case "$IPFS_CHOICE" in
     *"Filebase"*)
       IPFS_PROVIDER="filebase"
       ask "Filebase API key"
-      hint "Find it at https://console.filebase.com/keys — scroll to the bottom"
+      hint "Find it at https://console.filebase.com/keys - scroll to the bottom"
       hint "for the bucket-specific IPFS API keys (not the S3 access keys at the top)."
       prompt_secret FILEBASE_TOKEN "API key:"
       while [[ -z "$FILEBASE_TOKEN" ]]; do
@@ -1078,14 +1078,14 @@ divider
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step — Telegram Notifications (optional)
+# Step - Telegram Notifications (optional)
 # ─────────────────────────────────────────────────────────────────────────────
 if [[ "$NONINTERACTIVE_MODE" == "yes" ]]; then
   step "Telegram Notifications (optional)"
   SETUP_TELEGRAM="no"
   TELEGRAM_BOT_TOKEN=""
   TELEGRAM_CHAT_ID=""
-  ok "Skipped (non-interactive) — configure later in the web UI Settings page"
+  ok "Skipped (non-interactive) - configure later in the web UI Settings page"
   divider
 else
 step "Telegram Notifications (optional)"
@@ -1123,31 +1123,31 @@ divider
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 7 — Firewall (optional, Linux only)
+# Step 7 - Firewall (optional, Linux only)
 # ─────────────────────────────────────────────────────────────────────────────
 SETUP_FIREWALL="no"
 OPEN_P2P_PORT="no"
 if [[ "${NETWORK:-mainnet}" == "mainnet" ]]; then _P2P_PORT=3031; else _P2P_PORT=13031; fi
 if [[ "$NONINTERACTIVE_MODE" == "yes" ]]; then
-  ok "Firewall: left unchanged (non-interactive) — the default stack needs zero inbound ports"
+  ok "Firewall: left unchanged (non-interactive) - the default stack needs zero inbound ports"
 elif [[ "$OS" == "linux" ]]; then
   step "Firewall"
   hint "A firewall restricts inbound traffic to SSH, HTTP, and HTTPS only."
   hint "All other ports (including direct access to node/wallet RPCs) will be blocked."
   hint ""
   if ! command -v sudo &>/dev/null && ! [ "$(id -u)" -eq 0 ]; then
-    hint "Skipping — sudo is not available and not running as root."
+    hint "Skipping - sudo is not available and not running as root."
   elif ! command -v ufw &>/dev/null && ! command -v firewall-cmd &>/dev/null; then
-    hint "Skipping — neither ufw nor firewalld found on this system."
+    hint "Skipping - neither ufw nor firewalld found on this system."
   else
     printf "${CYAN}│${RESET}\n"
-    printf "${RED}│${RESET}  ${BOLD}⚠  WARNING — READ CAREFULLY${RESET}\n"
+    printf "${RED}│${RESET}  ${BOLD}⚠  WARNING - READ CAREFULLY${RESET}\n"
     printf "${RED}│${RESET}\n"
     printf "${RED}│${RESET}  Enabling a firewall will block ALL inbound ports except:\n"
     printf "${RED}│${RESET}    • SSH   (port 22)\n"
     printf "${RED}│${RESET}    • HTTP  (port 80)\n"
     printf "${RED}│${RESET}    • HTTPS (port 443)\n"
-    printf "${RED}│${RESET}    • Node P2P (port ${_P2P_PORT}) — optional, see below\n"
+    printf "${RED}│${RESET}    • Node P2P (port ${_P2P_PORT}) - optional, see below\n"
     printf "${RED}│${RESET}\n"
     printf "${RED}│${RESET}  ${BOLD}If your SSH session uses a non-standard port you will be locked out.${RESET}\n"
     printf "${RED}│${RESET}  ${BOLD}If you are unsure, answer N and configure the firewall manually.${RESET}\n"
@@ -1185,17 +1185,17 @@ printf "${CYAN}│${RESET}\n"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Network:"           "${BOLD}${NETWORK}${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Passwords:"  "${BOLD}$([ "$USE_RANDOM_PASSWORDS" == "yes" ] && echo "randomly generated" || echo "custom")${RESET}"
 printf "${CYAN}│${RESET}  %-22s %s\n" "Web UI auth:"  "${BOLD}password + TOTP 2FA${RESET}"
-printf "${CYAN}│${RESET}  %-22s %s\n" "Web GUI:"    "${BOLD}$([ "$HTTPS_SETUP" == "yes" ] && echo "https://${DOMAIN}" || echo "http://localhost:4321 (server-local only — see SSH tunnel note below)")${RESET}"
-printf "${CYAN}│${RESET}  %-22s %s\n" "Indexer:"    "${BOLD}$([ "$ENABLE_INDEXER" == "yes" ] && echo "enabled — Token Management + Trading active" || echo "disabled — Token Management + Trading hidden")${RESET}"
-printf "${CYAN}│${RESET}  %-22s %s\n" "IPFS storage:" "${BOLD}$([ -n "$IPFS_PROVIDER" ] && echo "$IPFS_PROVIDER" || echo "disabled — configure later in Settings")${RESET}"
-printf "${CYAN}│${RESET}  %-22s %s\n" "Telegram:"     "${BOLD}$([ -n "$TELEGRAM_BOT_TOKEN" ] && echo "configured" || echo "disabled — configure later in Settings")${RESET}"
+printf "${CYAN}│${RESET}  %-22s %s\n" "Web GUI:"    "${BOLD}$([ "$HTTPS_SETUP" == "yes" ] && echo "https://${DOMAIN}" || echo "http://localhost:4321 (server-local only - see SSH tunnel note below)")${RESET}"
+printf "${CYAN}│${RESET}  %-22s %s\n" "Indexer:"    "${BOLD}$([ "$ENABLE_INDEXER" == "yes" ] && echo "enabled - Token Management + Trading active" || echo "disabled - Token Management + Trading hidden")${RESET}"
+printf "${CYAN}│${RESET}  %-22s %s\n" "IPFS storage:" "${BOLD}$([ -n "$IPFS_PROVIDER" ] && echo "$IPFS_PROVIDER" || echo "disabled - configure later in Settings")${RESET}"
+printf "${CYAN}│${RESET}  %-22s %s\n" "Telegram:"     "${BOLD}$([ -n "$TELEGRAM_BOT_TOKEN" ] && echo "configured" || echo "disabled - configure later in Settings")${RESET}"
 printf "${CYAN}│${RESET}\n"
 
 if [[ "$NONINTERACTIVE_MODE" == "yes" ]]; then
   printf "${CYAN}│${RESET}  ${BOLD}Web UI password: ${RESET}${UI_PASSWORD}\n"
   printf "${CYAN}│${RESET}  %-22s %s\n" "TOTP secret:" "written to $(pwd)/mintlayer-totp.txt (never shown on screen)"
   printf "${CYAN}│${RESET}\n"
-  warn "Save the web UI password now — it is printed only this once."
+  warn "Save the web UI password now - it is printed only this once."
   printf "${CYAN}│${RESET}\n"
 fi
 
@@ -1250,7 +1250,7 @@ WALLET_RPC_CMD="wallet-rpc-daemon ${NETWORK}"
 if [[ -f .env ]]; then
   ENV_BACKUP=".env.bak.$(date +%Y%m%d-%H%M%S)"
   cp .env "$ENV_BACKUP" && chmod 600 "$ENV_BACKUP"
-  warn "Existing .env detected — old credentials saved to $ENV_BACKUP."
+  warn "Existing .env detected - old credentials saved to $ENV_BACKUP."
   warn "Re-running setup REGENERATES the password, 2FA secret and RPC credentials; you will be logged out and must re-scan TOTP."
 fi
 ( umask 077 && cat > .env <<EOF
@@ -1264,7 +1264,7 @@ NETWORK=${NETWORK}
 ML_USER_ID=${ML_USER_ID}
 ML_GROUP_ID=${ML_GROUP_ID}
 
-# wallet-rpc-daemon command (network only — wallet files are managed via the web UI)
+# wallet-rpc-daemon command (network only - wallet files are managed via the web UI)
 WALLET_RPC_CMD=${WALLET_RPC_CMD}
 
 # Node RPC credentials
@@ -1328,7 +1328,7 @@ if [[ "$NONINTERACTIVE_MODE" == "yes" ]]; then
   (
     umask 077
     cat > mintlayer-totp.txt <<EOF
-Mintlayer Web GUI — TOTP 2FA setup (generated $(date))
+Mintlayer Web GUI - TOTP 2FA setup (generated $(date))
 ──────────────────────────────────────────────────────
 Before your first login, add this secret to your
 authenticator app (Google Authenticator, Authy, …):
@@ -1430,9 +1430,9 @@ if [[ "$SETUP_FIREWALL" == "yes" ]]; then
     fi
     $_sudo ufw --force enable         >/dev/null 2>&1
     if [[ "$OPEN_P2P_PORT" == "yes" ]]; then
-      ok "ufw enabled — SSH (22), HTTP (80), HTTPS (443), P2P (${_P2P_PORT}) allowed"
+      ok "ufw enabled - SSH (22), HTTP (80), HTTPS (443), P2P (${_P2P_PORT}) allowed"
     else
-      ok "ufw enabled — SSH (22), HTTP (80), HTTPS (443) allowed"
+      ok "ufw enabled - SSH (22), HTTP (80), HTTPS (443) allowed"
     fi
   elif command -v firewall-cmd &>/dev/null; then
     $_sudo firewall-cmd --set-default-zone=drop           >/dev/null 2>&1
@@ -1444,9 +1444,9 @@ if [[ "$SETUP_FIREWALL" == "yes" ]]; then
     fi
     $_sudo firewall-cmd --reload                          >/dev/null 2>&1
     if [[ "$OPEN_P2P_PORT" == "yes" ]]; then
-      ok "firewalld enabled — SSH, HTTP, HTTPS, P2P (${_P2P_PORT}) allowed"
+      ok "firewalld enabled - SSH, HTTP, HTTPS, P2P (${_P2P_PORT}) allowed"
     else
-      ok "firewalld enabled — SSH, HTTP, HTTPS allowed"
+      ok "firewalld enabled - SSH, HTTP, HTTPS allowed"
     fi
   fi
 fi
@@ -1488,7 +1488,7 @@ Categories=Finance;
 EOF
 
     update-desktop-database "$_app_dir" 2>/dev/null || true
-    ok "Shortcut created — look for Mintlayer Web GUI in your app launcher"
+    ok "Shortcut created - look for Mintlayer Web GUI in your app launcher"
   fi
 fi
 

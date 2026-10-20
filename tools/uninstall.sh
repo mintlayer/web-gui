@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# uninstall.sh — Remove all Mintlayer containers, images, and data
+# uninstall.sh - Remove all Mintlayer containers, images, and data
 #
 # Usage:
 #   ./tools/uninstall.sh           # interactive, asks before each destructive step
@@ -37,7 +37,7 @@ for arg in "$@"; do
 done
 
 confirm() {
-  # confirm <prompt> — returns 0 if yes, 1 if no
+  # confirm <prompt> - returns 0 if yes, 1 if no
   if $YES; then return 0; fi
   printf "${YELLOW}▲${RESET}  %s ${GRAY}[y/N]${RESET} " "$1"
   read -r answer
@@ -46,7 +46,7 @@ confirm() {
 
 # ── Sanity check ──────────────────────────────────────────────────────────────
 if ! command -v docker &>/dev/null; then
-  err "docker not found — nothing to uninstall."
+  err "docker not found - nothing to uninstall."
   exit 1
 fi
 
@@ -55,7 +55,7 @@ if $REMOVE_DOCKER && [[ "$EUID" -ne 0 ]]; then
   exit 1
 fi
 
-printf "\n${BOLD}Mintlayer — Uninstaller${RESET}\n"
+printf "\n${BOLD}Mintlayer - Uninstaller${RESET}\n"
 printf "${GRAY}Project directory: %s${RESET}\n" "$PROJECT_DIR"
 divider
 
@@ -68,10 +68,10 @@ if [[ -f "$COMPOSE_FILE" ]]; then
     docker compose -f "$COMPOSE_FILE" down --remove-orphans 2>/dev/null || true
     ok "Containers stopped and removed."
   else
-    warn "Skipped — containers still running."
+    warn "Skipped - containers still running."
   fi
 else
-  warn "No docker-compose.yml found at $COMPOSE_FILE — trying to stop by container name."
+  warn "No docker-compose.yml found at $COMPOSE_FILE - trying to stop by container name."
   if confirm "Stop containers named mintlayer-*?"; then
     docker ps --filter "name=mintlayer-" -q | xargs -r docker stop
     docker ps -a --filter "name=mintlayer-" -q | xargs -r docker rm
@@ -90,7 +90,7 @@ if confirm "Remove named volumes? ${RED}This deletes all indexed blockchain data
   docker volume ls --filter "name=mintlayer" -q | xargs -r docker volume rm
   ok "Volumes removed."
 else
-  warn "Skipped — volumes kept."
+  warn "Skipped - volumes kept."
 fi
 
 # ── Step 3: Remove Docker images ──────────────────────────────────────────────
@@ -119,7 +119,7 @@ if confirm "Remove all Mintlayer-related Docker images?"; then
   docker images --filter "reference=web-gui" -q | xargs -r docker rmi -f
   ok "Images removed."
 else
-  warn "Skipped — images kept."
+  warn "Skipped - images kept."
 fi
 
 # ── Step 4: Remove data directory ─────────────────────────────────────────────
@@ -134,10 +134,10 @@ if [[ -d "$DATA_DIR" ]]; then
     rm -rf "$DATA_DIR"
     ok "Deleted $DATA_DIR"
   else
-    warn "Skipped — data directory kept."
+    warn "Skipped - data directory kept."
   fi
 else
-  ok "No data directory found — already clean."
+  ok "No data directory found - already clean."
 fi
 
 if [[ -f "$ENV_FILE" ]]; then
@@ -145,7 +145,7 @@ if [[ -f "$ENV_FILE" ]]; then
     rm -f "$ENV_FILE"
     ok "Deleted $ENV_FILE"
   else
-    warn "Skipped — .env kept."
+    warn "Skipped - .env kept."
   fi
 fi
 
@@ -168,7 +168,7 @@ if $REMOVE_DOCKER; then
     rm -rf /var/lib/docker /var/lib/containerd /etc/docker
     ok "Docker engine removed."
   else
-    warn "Skipped — Docker engine kept."
+    warn "Skipped - Docker engine kept."
   fi
 fi
 

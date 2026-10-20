@@ -3,7 +3,7 @@
  *
  * Staking, pool and order actions burn a 2FA code, so failures must tell the
  * user whether their code was consumed (code_consumed) and whether they need
- * to sign in again (sessionExpired) — same contract as the send/bridge/token
+ * to sign in again (sessionExpired) - same contract as the send/bridge/token
  * flows. Accepts a single action or a small ordered batch (one burn total).
  */
 
@@ -48,7 +48,7 @@ export async function stakeTrade(
     window.setTimeout(() => window.location.assign('/login'), 800);
     return {
       ok: false,
-      error: 'Your session expired — redirecting to login…',
+      error: 'Your session expired - redirecting to login…',
       status: 401,
       sessionExpired: true,
     };
@@ -70,7 +70,7 @@ export async function stakeTrade(
   if (!data) {
     return {
       ok: false,
-      error: `Operation failed (HTTP ${res.status}) — nothing was submitted.`,
+      error: `Operation failed (HTTP ${res.status}) - nothing was submitted.`,
       status: res.status,
     };
   }

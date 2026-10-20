@@ -180,7 +180,7 @@ describe('POST /api/bridge/ml-intent-tx', () => {
     const body = (await res.json()) as Record<string, unknown>;
     // the raw daemon message must NOT leak to the client
     expect(body.error).toBe('Insufficient funds for this transfer');
-    // the code was burned before the RPC call — the UI needs to know
+    // the code was burned before the RPC call - the UI needs to know
     expect(body.code_consumed).toBe(true);
   });
 
@@ -230,7 +230,7 @@ describe('POST /api/bridge/ml-intent-tx', () => {
     const res = await POST(makeCtx({ token_id: 'crv', amount: '1', intent }));
     expect(res.status).toBe(409);
     const body = (await res.json()) as Record<string, unknown>;
-    expect(body.error).toBe('Wallet is not open — open it from the dashboard first');
+    expect(body.error).toBe('Wallet is not open - open it from the dashboard first');
   });
 
   it('maps an unrecognized wallet RPC error to the generic safe 400', async () => {

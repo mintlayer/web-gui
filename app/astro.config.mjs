@@ -32,7 +32,7 @@ export default defineConfig({
     server: {
       hmr: {
         // When running inside Docker, the HMR WebSocket must use the
-        // host-side address — not the container's internal hostname.
+        // host-side address - not the container's internal hostname.
         host: 'localhost',
       },
     },

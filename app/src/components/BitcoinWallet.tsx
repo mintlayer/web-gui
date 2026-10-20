@@ -29,11 +29,11 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
     headers: init?.body ? { 'Content-Type': 'application/json' } : undefined,
   });
   // Auth expiry and proxy errors return the login HTML or a plain-text 403,
-  // never JSON — parsing those surfaces a raw SyntaxError instead of the cause.
+  // never JSON - parsing those surfaces a raw SyntaxError instead of the cause.
   const contentType = res.headers.get('content-type') ?? '';
   if (res.redirected || res.status === 401 || !contentType.includes('application/json')) {
     window.location.assign('/login');
-    throw new Error('Your session expired — redirecting to login…');
+    throw new Error('Your session expired - redirecting to login…');
   }
   const data = (await res.json()) as T & { ok?: boolean; error?: string };
   if (!res.ok || data.ok === false) throw new Error(data.error ?? `Request failed (${res.status})`);
@@ -76,11 +76,11 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
   const [restoreOpen, setRestoreOpen] = useState(false);
   const [restoreSeed, setRestoreSeed] = useState('');
   // Destructive-action gate: the submit stays disabled until the user types
-  // the confirmation phrase — restoring replaces the current BTC wallet.
+  // the confirmation phrase - restoring replaces the current BTC wallet.
   const [restoreConfirm, setRestoreConfirm] = useState('');
   const [setupError, setSetupError] = useState<string | null>(null);
 
-  // Link to the Mintlayer seed (server-side reveal — words never transit the browser)
+  // Link to the Mintlayer seed (server-side reveal - words never transit the browser)
   const [linkPassword, setLinkPassword] = useState('');
   const [linkTotp, setLinkTotp] = useState('');
   const [linkError, setLinkError] = useState<string | null>(null);
@@ -144,11 +144,11 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
       setRestoreSeed('');
       setSetupTotp('');
       setRestoreConfirm('');
-      // Restores return no mnemonic — only a fresh generate shows the backup step.
+      // Restores return no mnemonic - only a fresh generate shows the backup step.
       setNewMnemonic(res.mnemonic ?? null);
       await refresh();
     } catch (err) {
-      // The code may already be burned by this attempt — never leave stale
+      // The code may already be burned by this attempt - never leave stale
       // six digits in the field for the user to blindly resubmit.
       setSetupTotp('');
       setSetupError((err as Error).message);
@@ -182,12 +182,12 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
 
   function submitRestore(e: React.FormEvent) {
     e.preventDefault();
-    // Mirror of the disabled-attr gate — requestSubmit() from script bypasses it.
+    // Mirror of the disabled-attr gate - requestSubmit() from script bypasses it.
     if (restoreConfirm !== 'I UNDERSTAND') return;
     const seed = cleanSeed(restoreSeed);
     const words = seed.split(/\s+/).filter(Boolean);
     if (words.length !== 12 && words.length !== 24) {
-      setSetupError(`A seed phrase has 12 or 24 words — this one has ${words.length}.`);
+      setSetupError(`A seed phrase has 12 or 24 words - this one has ${words.length}.`);
       return;
     }
     createWallet(seed);
@@ -200,7 +200,7 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
         setRestoreOpen(false);
         setSetupError(null);
         setRestoreConfirm('');
-        // Shared with the create flow below — clear so a burned code from the
+        // Shared with the create flow below - clear so a burned code from the
         // modal never lingers in the inline create form.
         setSetupTotp('');
       }
@@ -268,7 +268,7 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
       const res = suggestAddressCorrection(sendTo.trim(), hrp, 'btc');
       if (res.status === 'corrected' && res.corrected) {
         setAddrSuggestion({ corrected: res.corrected, fixedChars: res.fixedChars ?? 1 });
-        setSendError('Address checksum failed — review the suggested correction.');
+        setSendError('Address checksum failed - review the suggested correction.');
         return;
       }
     }
@@ -300,7 +300,7 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
     } catch (err) {
       setSendError((err as Error).message);
       // The code that failed (invalid, expired or already burnt) must not be
-      // retried — clear it so the next attempt starts from a fresh entry.
+      // retried - clear it so the next attempt starts from a fresh entry.
       setSendTotp('');
     } finally {
       setBusy(false);
@@ -409,7 +409,7 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
         <div className={card}>
           <h2 className="text-base font-semibold text-gray-100 mb-2">Use my Mintlayer seed</h2>
           <p className="text-sm text-gray-400 mb-4">
-            Recommended: derive the BTC wallet from the <span className="text-gray-200 font-medium">same seed phrase as your Mintlayer wallet</span> —
+            Recommended: derive the BTC wallet from the <span className="text-gray-200 font-medium">same seed phrase as your Mintlayer wallet</span> -
             one seed, both chains (Bitcoin keys derive via BIP84 from the same words).
             Your password and 2FA code are verified on the server; the words themselves never leave it.
           </p>
@@ -466,7 +466,7 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
           </button>
           <div className="rounded-lg border border-yellow-700/50 bg-yellow-900/10 px-3 py-2.5">
             <p className="text-xs text-yellow-400 mb-2">
-              Or create an independent BTC wallet — this generates a <span className="font-semibold">separate seed phrase,
+              Or create an independent BTC wallet - this generates a <span className="font-semibold">separate seed phrase,
               not linked to your Mintlayer wallet</span>. Only pick this if you want the two wallets unrelated.
             </p>
             <button onClick={() => createWallet()} disabled={busy}
@@ -548,7 +548,7 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
               </div>
               <div>
                 <label htmlFor="btc-restore-confirm" className="block text-xs text-gray-400 mb-1">
-                  Type <span className="font-mono font-semibold text-red-400">I UNDERSTAND</span> — restoring replaces the current BTC wallet
+                  Type <span className="font-mono font-semibold text-red-400">I UNDERSTAND</span> - restoring replaces the current BTC wallet
                 </label>
                 <input
                   id="btc-restore-confirm"
@@ -582,20 +582,20 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
       {/* ── Wallet ────────────────────────────────────────────────────────────── */}
       {overview.status && walletExists && !newMnemonic && (
         <>
-          {/* Balance — the sidecar's "immature" bucket (unmatured coinbase
+          {/* Balance - the sidecar's "immature" bucket (unmatured coinbase
               rewards) is intentionally not shown: it only applies to mined
               rewards, which wallet users never receive. */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className={card}>
               <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Confirmed</p>
               <p className="text-2xl font-semibold text-gray-100">
-                {balance ? satsToBtc(balance.confirmed) : '—'} <span className="text-sm font-normal text-gray-500">BTC</span>
+                {balance ? satsToBtc(balance.confirmed) : '-'} <span className="text-sm font-normal text-gray-500">BTC</span>
               </p>
             </div>
             <div className={card}>
               <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Pending</p>
               <p className="text-2xl font-semibold text-yellow-400">
-                {balance ? satsToBtc(BigInt(balance.trustedPending) + BigInt(balance.untrustedPending)) : '—'} <span className="text-sm font-normal text-gray-500">BTC</span>
+                {balance ? satsToBtc(BigInt(balance.trustedPending) + BigInt(balance.untrustedPending)) : '-'} <span className="text-sm font-normal text-gray-500">BTC</span>
               </p>
             </div>
           </div>
@@ -607,7 +607,7 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
               {overview.address ? (
                 <div className="flex flex-col items-center gap-4">
                   {/* White card + default colors: inverted QRs are rejected by
-                      some scanners — keep parity with the ML receive modal. */}
+                      some scanners - keep parity with the ML receive modal. */}
                   <div className="rounded-xl bg-white p-3">
                     <QRCodeSVG value={overview.address} size={140} />
                   </div>

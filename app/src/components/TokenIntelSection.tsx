@@ -83,7 +83,7 @@ export default function TokenIntelSection({ tokenId, ticker }: { tokenId: string
     <div className="flex justify-between">
       <span className="text-gray-500">{label}</span>
       <span className="font-mono text-gray-200">
-        {value ? Number(value.decimal).toLocaleString('en-US', { maximumFractionDigits: 8 }) : '—'} {ticker}
+        {value ? Number(value.decimal).toLocaleString('en-US', { maximumFractionDigits: 8 }) : '-'} {ticker}
       </span>
     </div>
   );

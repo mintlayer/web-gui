@@ -118,7 +118,7 @@ export default function IssuedTokensPanel({ network }: Props) {
       setLiveInfos(map);
       // NOTE: deliberately no auto-sweep of "unknown" tokens here. A null
       // lookup means the node hasn't indexed the issuance yet (or is lagging),
-      // not that the token is gone — deleting the row destroyed the user's
+      // not that the token is gone - deleting the row destroyed the user's
       // only local record. Failed issuances are flagged by checkFailedTxs and
       // stay removable via the row's Remove button.
       await checkFailedTxs(tokens, map);
@@ -187,7 +187,7 @@ export default function IssuedTokensPanel({ network }: Props) {
 
   /**
    * Scan the wallet's UTXO set for IssueFungibleToken outputs.
-   * Works without the indexer — falls back to this when the indexer is not running.
+   * Works without the indexer - falls back to this when the indexer is not running.
    */
   async function augmentFromWallet(current: StoredToken[]) {
     try {

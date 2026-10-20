@@ -9,7 +9,7 @@ import {
 } from '@/lib/bridge-sdk';
 
 // Live testnet fixture: only decodes with the correct BIP-350 bech32m
-// constant 0x2bc830a3 — locks the checksum-constant regression fix.
+// constant 0x2bc830a3 - locks the checksum-constant regression fix.
 const TESTNET_ADDRESS = 'tmt1q9rlgx4dsse920z35xh5d8s5ydlj3xl7gqeze89c';
 
 describe('validateMintlayerAddress', () => {

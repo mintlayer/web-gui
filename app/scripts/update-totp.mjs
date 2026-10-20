@@ -82,7 +82,7 @@ function prompt(rl, question) {
 
 async function main() {
   console.log(`\n${BOLD}${CYAN}┌─────────────────────────────────────────┐${RESET}`);
-  console.log(`${BOLD}${CYAN}│   Mintlayer GUI — Update TOTP Secret    │${RESET}`);
+  console.log(`${BOLD}${CYAN}│   Mintlayer GUI - Update TOTP Secret    │${RESET}`);
   console.log(`${BOLD}${CYAN}└─────────────────────────────────────────┘${RESET}\n`);
 
   if (!existsSync(DB_PATH)) {
@@ -123,7 +123,7 @@ async function main() {
   rl.close();
 
   if (!confirmed) {
-    console.log(`\n${RED}Aborted — TOTP secret was NOT saved.${RESET}\n`);
+    console.log(`\n${RED}Aborted - TOTP secret was NOT saved.${RESET}\n`);
     process.exit(1);
   }
 

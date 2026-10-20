@@ -156,7 +156,7 @@ function DelegationRow({
         </div>
       </div>
 
-      {/* 2FA — one code per staking/withdrawal action on this delegation */}
+      {/* 2FA - one code per staking/withdrawal action on this delegation */}
       <TotpField value={totp} onChange={setTotp} inputRef={totpRef} disabled={loading} />
 
       {/* Actions */}
@@ -241,7 +241,7 @@ export default function DelegationPanel({ poolId, initialDelegations, network }:
     try {
       const addr   = await freshAddress();
       // One burn, one intent: create the delegation. Funds are added afterwards
-      // via the delegation row's Add input (its own code) — the stake needs the
+      // via the delegation row's Add input (its own code) - the stake needs the
       // delegation_id that only exists after this transaction.
       const r = await stakeTrade({
         action: "delegation_create",
@@ -264,7 +264,7 @@ export default function DelegationPanel({ poolId, initialDelegations, network }:
       setNewMsg("Delegation created. It appears below once confirmed; use a fresh 2FA code to add funds to it.");
       setNewTotp("");
 
-      // Refresh list — the new delegation row appears with its own Add input.
+      // Refresh list - the new delegation row appears with its own Add input.
       const list = await rpc<Delegation[]>("delegation_list_ids", { account: 0 });
       setDelegations(list.filter(d => d.pool_id === poolId));
     } catch (err) {
@@ -302,7 +302,7 @@ export default function DelegationPanel({ poolId, initialDelegations, network }:
         <div className="rounded-lg bg-gray-800/50 border border-gray-700/50 p-4 space-y-3">
           <p className="text-xs text-gray-400">
             Delegate funds to this pool to earn staking rewards. Creating the delegation is confirmed with your
-            2FA code — you add the funds in the next step.
+            2FA code - you add the funds in the next step.
           </p>
           <TotpField value={newTotp} onChange={setNewTotp} inputRef={newTotpRef} disabled={newState === "loading"} />
           <button

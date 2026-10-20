@@ -3,14 +3,14 @@ import { getPref, setPref } from '@/lib/prefs-db';
 import { json } from '@/lib/api-utils';
 
 const KEY = 'ml_favourite_tokens';
-/** Safety cap — the mass import stays far below this client-side. */
+/** Safety cap - the mass import stays far below this client-side. */
 const MAX_ENTRIES = 1000;
 
 function isId(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 128;
 }
 
-/** Tickers are rendered verbatim — reject control and bidi-override characters. */
+/** Tickers are rendered verbatim - reject control and bidi-override characters. */
 const TICKER_BAD = /[\u0000-\u001F\u007F-\u009F\u200E\u200F\u202A-\u202E\u2066-\u2069]/;
 
 /**

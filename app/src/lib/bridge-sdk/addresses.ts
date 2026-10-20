@@ -44,7 +44,7 @@ export function validateMintlayerAddress(
   } catch {
     return {
       valid: false,
-      error: 'Invalid Mintlayer address — the checksum doesn’t match, so the address likely contains a typo.',
+      error: 'Invalid Mintlayer address - the checksum doesn’t match, so the address likely contains a typo.',
     };
   }
 

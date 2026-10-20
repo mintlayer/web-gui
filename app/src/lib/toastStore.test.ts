@@ -323,7 +323,7 @@ describe('submitWithToast indexer-backed status checks', () => {
     const toast = toastStore.getSnapshot().find(t => t.id === 'txGone');
     // "unknown" is not ground truth of failure - the tx may still confirm.
     expect(toast?.status).toBe('untracked');
-    expect(toast?.errorMessage).toBe('Confirmation not tracked — check the explorer for the latest state.');
+    expect(toast?.errorMessage).toBe('Confirmation not tracked - check the explorer for the latest state.');
   });
 
   it('non-timeout rejections still fail immediately without consulting the indexer', async () => {

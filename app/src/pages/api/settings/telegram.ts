@@ -20,7 +20,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
   }
 
   // Changing the notification channel redirects every wallet alert (balances,
-  // incoming funds, receive addresses) — same sensitivity class as a password
+  // incoming funds, receive addresses) - same sensitivity class as a password
   // change, so it requires a fresh 2FA code.
   const stepUp = requireStepUp(totpCode, request, clientAddress);
   if (!stepUp.ok) {

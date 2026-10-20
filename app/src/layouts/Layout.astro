@@ -17,7 +17,7 @@ const { title = 'Home', activeNav } = Astro.props;
 const network = (process.env.NETWORK ?? 'mainnet').toLowerCase();
 const indexerEnabled = process.env.INDEXER_ENABLED === 'true';
 const bitcoinEnabled = isBitcoinEnabled() && getBitcoinShowUi();
-// The bridge agents run on Mintlayer mainnet only — hide the section elsewhere.
+// The bridge agents run on Mintlayer mainnet only - hide the section elsewhere.
 const bridgeEnabled = process.env.NETWORK === 'mainnet';
 
 function getBitcoinShowUi(): boolean {

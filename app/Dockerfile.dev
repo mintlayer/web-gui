@@ -4,7 +4,7 @@ RUN apk add --no-cache python3 make g++ sqlite-dev
 
 WORKDIR /app
 
-# Install deps in a cacheable layer — source is mounted at runtime
+# Install deps in a cacheable layer - source is mounted at runtime
 COPY package.json package-lock.json ./
 RUN npm ci && npm rebuild better-sqlite3
 

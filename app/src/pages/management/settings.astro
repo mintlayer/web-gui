@@ -21,7 +21,7 @@ type ActionResult =
 let result: ActionResult = { action: 'none' };
 
 // Advanced sections (HTTPS, IPFS storage, MCP, rollback, service stop) only
-// render when this preference is on — see the toggle at the top of the page.
+// render when this preference is on - see the toggle at the top of the page.
 let advancedUi = getPref<boolean>('ml_advanced_ui') === true;
 
 if (Astro.request.method === 'POST') {
@@ -53,7 +53,7 @@ if (Astro.request.method === 'POST') {
       applyPasswordChange(decision.newHash); // invalidates all existing sessions
       // The user's own session dies too (by design). Say it up front so the
       // next navigation to /login reads as expected, not as a bug.
-      result = { action: 'success', section, message: 'Password updated. For security you have been signed out everywhere — sign in with your new password.' };
+      result = { action: 'success', section, message: 'Password updated. For security you have been signed out everywhere - sign in with your new password.' };
     }
 
   } else if (section === 'reset_2fa') {
@@ -103,13 +103,13 @@ if (Astro.request.method === 'POST') {
     } else {
       // Pinata/Filebase keys are third-party account credentials: whoever sets
       // them can pivot into the owner's pinning account. Same sensitivity class
-      // as the Telegram bot token — fresh 2FA code required.
+      // as the Telegram bot token - fresh 2FA code required.
       const burn = verifyAndBurnTotpCode(totpCode, getStringPref('auth.totp_secret') ?? '', getClientAddress(Astro.request, Astro.clientAddress));
       if (!burn.ok) {
         result = { action: 'error', section, message: burn.error };
       } else {
         setPref('ipfs.provider',       provider);
-        // Disabling IPFS also clears any stored provider keys — keeping them
+        // Disabling IPFS also clears any stored provider keys - keeping them
         // on disk while "Disabled" protects nothing and leaves third-party
         // credentials behind.
         setPref('ipfs.filebase_token', provider === '' ? '' : filebaseToken);
@@ -138,7 +138,7 @@ if (Astro.request.method === 'POST') {
     const totpCode     = str(form.get('totp_code'));
 
     if (!postedToken && !currentToken) {
-      result = { action: 'error', section, message: 'Bot token is required — paste the token from @BotFather.' };
+      result = { action: 'error', section, message: 'Bot token is required - paste the token from @BotFather.' };
     } else if (!/^[0-9]{1,20}$/.test(chatId)) {
       // Private chats have positive ids; negative ids are groups, where every
       // member could run /balance and /address.
@@ -148,15 +148,15 @@ if (Astro.request.method === 'POST') {
       if (!currentSecret) {
         // Missing secret must not read as "invalid code" (and burn attempts
         // against the IP throttle on first-run).
-        result = { action: 'error', section, message: '2FA is not configured yet — set it up in Security → Two-factor authentication first.' };
+        result = { action: 'error', section, message: '2FA is not configured yet - set it up in Security → Two-factor authentication first.' };
       } else {
-        // Changing the notification channel redirects every wallet alert — same
+        // Changing the notification channel redirects every wallet alert - same
         // sensitivity class as a password change, so it needs a fresh 2FA code.
         const burn = verifyAndBurnTotpCode(totpCode, currentSecret, getClientAddress(Astro.request, Astro.clientAddress));
         if (!burn.ok) {
           result = { action: 'error', section, message: burn.error };
         } else {
-          // Every save sends a test message — a typo'd token must not go live
+          // Every save sends a test message - a typo'd token must not go live
           // silently with a bot that never answers.
           const botToken = postedToken || currentToken;
           setPref('telegram.bot_token', botToken);
@@ -165,7 +165,7 @@ if (Astro.request.method === 'POST') {
             await sendTelegramMessage(botToken, chatId, '✅ Test message from <b>Mintlayer Nexus</b> - Telegram notifications are working.');
             result = { action: 'success', section, message: 'Settings saved and test message delivered. The bot answers /help within about a minute.' };
           } catch (err) {
-            result = { action: 'error', section, message: `Saved — the new settings are live, but the test message could not be delivered: ${(err as Error).message}` };
+            result = { action: 'error', section, message: `Saved - the new settings are live, but the test message could not be delivered: ${(err as Error).message}` };
           }
         }
       }
@@ -175,16 +175,16 @@ if (Astro.request.method === 'POST') {
     // from, instead of sending users hunting for @userinfobot.
     const token = getStringPref('telegram.bot_token');
     if (!token) {
-      result = { action: 'error', section, message: 'Save a bot token first — detection talks to the Telegram API.' };
+      result = { action: 'error', section, message: 'Save a bot token first - detection talks to the Telegram API.' };
     } else {
       try {
         const updates = await getUpdates(token, 0, 0);
         const ids = [...new Set(updates.map(u => u.message?.chat.id).filter((x): x is number => typeof x === 'number'))];
         result = ids.length > 0
-          ? { action: 'success', section, message: `Chats seen by your bot: ${ids.join(', ')} — copy yours into the Chat ID field above.` }
+          ? { action: 'success', section, message: `Chats seen by your bot: ${ids.join(', ')} - copy yours into the Chat ID field above.` }
           : { action: 'error', section, message: 'No messages seen yet. Send any message to your bot in Telegram, then click Detect chat ID again.' };
       } catch (err) {
-        result = { action: 'error', section, message: `Detection failed — check the bot token. (${(err as Error).message})` };
+        result = { action: 'error', section, message: `Detection failed - check the bot token. (${(err as Error).message})` };
       }
     }
 
@@ -206,7 +206,7 @@ if (Astro.request.method === 'POST') {
       result = { action: 'error', section, message: decision.error };
     } else {
       for (const [key, value] of Object.entries(decision.prefs)) setPref(key, value);
-      result = { action: 'success', section, message: 'MCP settings saved. Changes apply on the next tool call — no restart needed.' };
+      result = { action: 'success', section, message: 'MCP settings saved. Changes apply on the next tool call - no restart needed.' };
     }
   }
 }
@@ -273,7 +273,7 @@ const pkgVersion = pkg.version;
 // HTTPS (LAN access via Caddy's local CA). The CA root appears only after
 // the caddy container has started at least once (it generates the root on
 // first start; a wrapper publishes just the public root.crt into the
-// shared ca-public volume — private keys never leave the caddy container).
+// shared ca-public volume - private keys never leave the caddy container).
 const tlsEnabled = process.env.WEB_GUI_TLS === 'true';
 let localCaPem: string | null = null;
 if (tlsEnabled) {
@@ -410,7 +410,7 @@ if (localCaPem) {
           <form method="post" action="/management/settings#reset-2fa" class="space-y-3">
             <input type="hidden" name="section" value="reset_2fa" />
             <p class="text-xs text-amber-400/90">
-              Resetting replaces your current secret immediately — every device enrolled with the old secret stops
+              Resetting replaces your current secret immediately - every device enrolled with the old secret stops
               working the moment you save. The new secret is shown only once, right after saving.
             </p>
             <label class="flex items-start gap-2 text-xs text-gray-400">
@@ -671,7 +671,7 @@ if (localCaPem) {
       <h2 id="updates" class="text-lg font-semibold text-gray-100 mb-1">Updates</h2>
       <p class="text-sm text-gray-500 mb-5">
         Running Mintlayer Nexus <span class="font-mono text-gray-400">v{pkgVersion}</span>. Checks
-        happen from this instance against public release metadata only — no wallet or usage data
+        happen from this instance against public release metadata only - no wallet or usage data
         leaves the host. An upgrade pulls every container image before changing any setting and
         restarts the stack; the interface is briefly unreachable at the end.
       </p>
@@ -841,10 +841,10 @@ if (localCaPem) {
               } catch {
                 failures += 1;
                 if (failures >= 3) {
-                  // The enabler replaced this very container — a reload lands
+                  // The enabler replaced this very container - a reload lands
                   // on the new version.
                   window.clearInterval(timer);
-                  setNote(noteEl, 'Applying — the interface restarts. Reload in a minute.', 'info');
+                  setNote(noteEl, 'Applying - the interface restarts. Reload in a minute.', 'info');
                 }
               }
             }, 4000);
@@ -874,7 +874,7 @@ if (localCaPem) {
               upgradeToggle!.disabled = false;
               return;
             }
-            setNote(noteEl, 'Queued — pulling images, then restarting. The interface goes down briefly at the end.', 'info');
+            setNote(noteEl, 'Queued - pulling images, then restarting. The interface goes down briefly at the end.', 'info');
             watchWebGui(Date.now(), () => window.location.reload());
           });
 
@@ -890,7 +890,7 @@ if (localCaPem) {
               rollbackToggle!.disabled = false;
               return;
             }
-            setNote(rollbackNote, 'Queued — restoring previous images, then restarting.', 'info');
+            setNote(rollbackNote, 'Queued - restoring previous images, then restarting.', 'info');
             watchWebGui(Date.now(), () => window.location.reload());
           });
 
@@ -953,7 +953,7 @@ if (localCaPem) {
                 upgradeToggle!.disabled = false;
               } else if (u.current) {
                 stateEl!.textContent = u.error
-                  ? `Running v${u.current} — could not reach the release feed.`
+                  ? `Running v${u.current} - could not reach the release feed.`
                   : `Up to date (v${u.current}).`;
               } else {
                 stateEl!.textContent = 'Could not reach the release feed.';
@@ -1005,7 +1005,7 @@ if (localCaPem) {
               id="svc-bitcoin-note"
               class={`text-xs mb-3 ${!bitcoinServicePending && bitcoinServiceResult && !bitcoinServiceResult.ok ? 'text-red-400' : 'text-gray-400'}`}
             >
-              {bitcoinServicePending && 'A start/stop request is being applied — reload this page in a minute.'}
+              {bitcoinServicePending && 'A start/stop request is being applied - reload this page in a minute.'}
               {!bitcoinServicePending && bitcoinServiceResult && !bitcoinServiceResult.ok && bitcoinServiceResult.error}
             </div>
             {!bitcoinEnabled && (
@@ -1034,7 +1034,7 @@ if (localCaPem) {
                              focus:ring-mint-500 focus:ring-offset-gray-900"
                     />
                     <span class="text-sm text-gray-300 group-hover:text-gray-100 transition-colors">
-                      Pruned node — keeps only recent blocks (~55 GB instead of ~700 GB).
+                      Pruned node - keeps only recent blocks (~55 GB instead of ~700 GB).
                       Wallets created from now work normally; restoring an old seed needs a full node.
                     </span>
                   </label>
@@ -1126,7 +1126,7 @@ if (localCaPem) {
               id="svc-indexer-note"
               class={`text-xs mb-3 ${!indexerServicePending && indexerServiceResult && !indexerServiceResult.ok ? 'text-red-400' : 'text-gray-400'}`}
             >
-              {indexerServicePending && 'A start/stop request is being applied — reload this page in a minute.'}
+              {indexerServicePending && 'A start/stop request is being applied - reload this page in a minute.'}
               {!indexerServicePending && indexerServiceResult && !indexerServiceResult.ok && indexerServiceResult.error}
             </div>
             {!indexerEnabled && (
@@ -1267,7 +1267,7 @@ if (localCaPem) {
           const timer = window.setInterval(async () => {
             if (Date.now() - startedAt > POLL_MAX_MS) {
               window.clearInterval(timer);
-              setNote(svc, 'Still applying — reload this page to check the current state.', 'info');
+              setNote(svc, 'Still applying - reload this page to check the current state.', 'info');
               return;
             }
             try {
@@ -1277,14 +1277,14 @@ if (localCaPem) {
               const state = data.services?.[svc];
               if (!state) return;
               if (state.pending) {
-                setNote(svc, 'Applying — containers are starting. This can take several minutes.', 'info');
+                setNote(svc, 'Applying - containers are starting. This can take several minutes.', 'info');
                 return;
               }
               // A result older than this request (minus clock-skew slack) means
-              // the sidecar has not reported yet — keep waiting, do not reload.
+              // the sidecar has not reported yet - keep waiting, do not reload.
               const fresh = state.lastResult && state.lastResult.at !== null && state.lastResult.at >= startedAt - 60_000;
               if (!fresh) {
-                setNote(svc, 'Applying — the interface restarts when it finishes. Reload this page in a minute if nothing happens.', 'info');
+                setNote(svc, 'Applying - the interface restarts when it finishes. Reload this page in a minute if nothing happens.', 'info');
                 return;
               }
               window.clearInterval(timer);
@@ -1298,7 +1298,7 @@ if (localCaPem) {
               failures += 1;
               if (failures >= 3) {
                 window.clearInterval(timer);
-                setNote(svc, 'The interface is restarting with the new settings — reload this page in a minute.', 'info');
+                setNote(svc, 'The interface is restarting with the new settings - reload this page in a minute.', 'info');
               }
             }
           }, POLL_MS);
@@ -1332,7 +1332,7 @@ if (localCaPem) {
               if (totpInput) totpInput.value = '';
               return;
             }
-            setNote(svc, 'Request accepted — applying. This can take several minutes.', 'info');
+            setNote(svc, 'Request accepted - applying. This can take several minutes.', 'info');
             watchRequest(svc);
           });
         }
@@ -1397,7 +1397,7 @@ if (localCaPem) {
               };
 
               if (!data.status || !data.status.node.reachable) {
-                el.innerHTML = '<span class="text-red-400">● Node offline</span> — start it with <code class="font-mono text-xs">docker compose --profile bitcoin up -d</code>';
+                el.innerHTML = '<span class="text-red-400">● Node offline</span> - start it with <code class="font-mono text-xs">docker compose --profile bitcoin up -d</code>';
                 return;
               }
 
@@ -1407,8 +1407,8 @@ if (localCaPem) {
                 ? `at block #${node.blocks.toLocaleString()}`
                 : `#${node.blocks.toLocaleString()} / #${node.headers.toLocaleString()}`;
               const wallet = !data.status.walletExists
-                ? ' — wallet not created yet (open the Bitcoin page to create one)'
-                : data.status.walletLoaded ? '' : ' — wallet loading…';
+                ? ' - wallet not created yet (open the Bitcoin page to create one)'
+                : data.status.walletLoaded ? '' : ' - wallet loading…';
               el.innerHTML = `${dot} <span class="uppercase tracking-wider text-gray-500">${data.status.network}</span> ${blocks}${wallet}`;
             } catch {
               el.innerHTML = '<span class="text-red-400">● Bitcoin service unreachable</span>';
@@ -1450,7 +1450,7 @@ if (localCaPem) {
           <label class="block text-xs text-gray-400 mb-1" for="bot_token">Bot Token</label>
           <input
             id="bot_token" name="bot_token" type="password" autocomplete="new-password"
-            placeholder={telegramBotToken ? `Saved (••••••${telegramBotToken.slice(-4)}) — fill only to replace` : '123456789:AAF...'}
+            placeholder={telegramBotToken ? `Saved (••••••${telegramBotToken.slice(-4)}) - fill only to replace` : '123456789:AAF...'}
             class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 text-sm
                    placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-mint-600 focus:border-transparent transition"
           />
@@ -1470,7 +1470,7 @@ if (localCaPem) {
 
         <div class="pt-2">
           <label class="block text-xs text-gray-400 mb-1" for="totp_code_telegram">
-            Authenticator code <span class="text-gray-600">(required to save — alerts go wherever this points)</span>
+            Authenticator code <span class="text-gray-600">(required to save - alerts go wherever this points)</span>
           </label>
           <input
             id="totp_code_telegram" name="totp_code" type="text" required
@@ -1501,7 +1501,7 @@ if (localCaPem) {
         >
           Detect chat ID
         </button>
-        <span class="text-xs text-gray-600">— lists chats your bot has received messages from.</span>
+        <span class="text-xs text-gray-600">- lists chats your bot has received messages from.</span>
       </form>
 
       {result.action !== 'none' && result.section === 'telegram_detect' && (
@@ -1645,7 +1645,7 @@ if (localCaPem) {
                    focus:ring-mint-500 focus:ring-offset-gray-900"
           />
           <span class="text-sm text-amber-300 group-hover:text-amber-200 transition-colors">
-            Allow fund-moving operations <span class="text-amber-500/70">(send coins, staking pools, delegations, tokens, orders — use with care)</span>
+            Allow fund-moving operations <span class="text-amber-500/70">(send coins, staking pools, delegations, tokens, orders - use with care)</span>
           </span>
         </label>
 
@@ -1687,7 +1687,7 @@ if (localCaPem) {
         </p>
         <pre class="bg-gray-800 rounded-lg p-3 text-xs text-gray-200 font-mono overflow-x-auto">{mcpConfigSnippet}</pre>
         <p class="text-xs text-gray-500 mt-2">
-          The server runs inside the existing web-gui image — no extra installation. It uses the
+          The server runs inside the existing web-gui image - no extra installation. It uses the
           wallet RPC credentials from <code class="font-mono">.env</code> and the permissions above.
         </p>
       </details>
@@ -1712,7 +1712,7 @@ if (localCaPem) {
     <!-- Dialog -->
     <div class="relative w-full max-w-sm mx-4 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-6">
       <h3 id="passkey-modal-title" class="text-base font-semibold text-gray-100 mb-1">Name this passkey</h3>
-      <p class="text-xs text-gray-500 mb-4">Give it a name so you can identify it later (e.g. "MacBook Touch ID"). Enrolling requires a fresh 2FA code — a passkey is a permanent way into the wallet.</p>
+      <p class="text-xs text-gray-500 mb-4">Give it a name so you can identify it later (e.g. "MacBook Touch ID"). Enrolling requires a fresh 2FA code - a passkey is a permanent way into the wallet.</p>
 
       <input
         id="passkey-name-input"
@@ -1891,8 +1891,8 @@ if (localCaPem) {
       } catch (err: unknown) {
         const e = err as { name?: string; message?: string };
         // AbortError: caller cancelled. NotAllowedError: user dismissed the
-        // OS prompt / timeout — silently reset. InvalidStateError: this
-        // authenticator is already registered (excludeCredentials) — say so
+        // OS prompt / timeout - silently reset. InvalidStateError: this
+        // authenticator is already registered (excludeCredentials) - say so
         // in plain language instead of the raw browser message.
         if (e?.name === 'InvalidStateError') {
           showError('This passkey is already registered on this device.');

@@ -10,14 +10,14 @@ import {
 } from '@/lib/feature-requests';
 
 /**
- * POST /api/features/upgrade — queue a whole-stack upgrade to a release tag
+ * POST /api/features/upgrade - queue a whole-stack upgrade to a release tag
  * for the feature-enabler sidecar. The sidecar pulls every image BEFORE
  * touching .env (a failed pull changes nothing), then restarts daemons and
- * finally web-gui — this API's own container, hence the async request-file
+ * finally web-gui - this API's own container, hence the async request-file
  * transport.
  *
  * The tag is validated here and re-validated by the sidecar: the volume is
- * a trust boundary. A missing/invalid `bitcoind` field is fine — releases
+ * a trust boundary. A missing/invalid `bitcoind` field is fine - releases
  * without the `bitcoind:` marker never touch Bitcoin Core.
  */
 export const POST: APIRoute = async ({ request, clientAddress }) => {

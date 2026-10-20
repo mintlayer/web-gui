@@ -1,5 +1,5 @@
 #!/bin/sh
-# feature-enabler — applies "enable/disable optional service" requests from the
+# feature-enabler - applies "enable/disable optional service" requests from the
 # web-gui without giving the web container access to the Docker socket.
 #
 # The web-gui writes a small JSON request file into the shared feature-requests
@@ -55,7 +55,7 @@ compose() {
         "$@"
 }
 
-# set_env_key FILE KEY VALUE — replace "KEY=" in place or append "KEY=VALUE".
+# set_env_key FILE KEY VALUE - replace "KEY=" in place or append "KEY=VALUE".
 # Values here are always from fixed enum sets (true/false/network names/
 # numbers), never user free-text.
 # The write is an in-place truncate+rewrite (cat > file) instead of sed -i:
@@ -65,7 +65,7 @@ compose() {
 # NOTE: helpers below must NOT touch loop-variable names (key/svc/ref/tag):
 # POSIX sh functions share globals, and a clobbered $key inside the upgrade
 # loop once redirected pin writes to PREVIOUS_<key> (rc3 pre-release bug).
-set_env_key() { # FILE KEY VALUE — replace "KEY=..." in place, appending when missing
+set_env_key() { # FILE KEY VALUE - replace "KEY=..." in place, appending when missing
     _f="$1" _k="$2" _v="$3"
     # The temp copy carries the whole .env (secrets included): 0600 only, and
     # gone even when awk dies mid-rewrite.
@@ -80,7 +80,7 @@ set_env_key() { # FILE KEY VALUE — replace "KEY=..." in place, appending when 
     umask "$_umask"
 }
 
-# write_result SERVICE OK ERROR — result file for the settings UI.
+# write_result SERVICE OK ERROR - result file for the settings UI.
 write_result() {
     service="$1" ok="$2" error="${3:-}"
     err_json=""
@@ -99,12 +99,12 @@ write_result() {
 bitcoin_services="bitcoind btc-explorer bdk-wallet"
 indexer_services="postgres api-blockchain-scanner-daemon api-web-server"
 
-# Upgrade set: KEY_IN_ENV COMPOSE_SERVICE — image name inside the ghcr repo
+# Upgrade set: KEY_IN_ENV COMPOSE_SERVICE - image name inside the ghcr repo
 # equals the compose service name for all of these.
 UPGRADE_KEYS="ML_NODE_DAEMON_IMAGE:node-daemon ML_WALLET_RPC_DAEMON_IMAGE:wallet-rpc-daemon WEB_GUI_IMAGE:web-gui BDK_WALLET_IMAGE:bdk-wallet BTC_EXPLORER_IMAGE:btc-explorer ML_API_SCANNER_IMAGE:api-blockchain-scanner-daemon ML_API_WEB_SERVER_IMAGE:api-web-server"
 UPGRADE_REPO_BASE="ghcr.io/mintlayer/web-gui"
 
-delete_env_key() { # FILE KEY — drop "KEY=" (used to clear consumed PREVIOUS_* pins)
+delete_env_key() { # FILE KEY - drop "KEY=" (used to clear consumed PREVIOUS_* pins)
     _f="$1" _k="$2"
     _umask=$(umask); umask 077
     _tmp="${TMPDIR:-/tmp}/env-key.$$"
@@ -119,10 +119,10 @@ get_env_key() { # KEY -> stdout: current value or empty when unset
     grep -m1 "^$1=" "$ENV_FILE" 2>/dev/null | cut -d= -f2-
 }
 
-# image_base VALUE — strip the tag (everything from the last colon).
+# image_base VALUE - strip the tag (everything from the last colon).
 image_base() { printf '%s' "$1" | sed 's/:[^:]*$//' ; }
 
-# active_up_targets — services this install actually runs, per the .env flags.
+# active_up_targets - services this install actually runs, per the .env flags.
 # Naming a profiled service in `compose up` silently activates its profile,
 # so disabled optional stacks (bitcoin, indexer) must never be listed here.
 active_up_targets() {
@@ -135,7 +135,7 @@ active_up_targets() {
     fi
 }
 
-# apply_upgrade TAG BITCOIND — move all images to TAG (validated by caller).
+# apply_upgrade TAG BITCOIND - move all images to TAG (validated by caller).
 apply_upgrade() {
     tag="$1" bitcoind="$2"
     [ -f "$ENV_FILE" ] || { log "env file missing: $ENV_FILE"; return 1; }
@@ -235,7 +235,7 @@ EOF
     compose up -d web-gui
 }
 
-# apply_request ACTION SERVICE NETWORK PRUNED — returns 0 on success.
+# apply_request ACTION SERVICE NETWORK PRUNED - returns 0 on success.
 # Every branch is a fixed command; parameters come from validated enums only.
 apply_request() {
     action="$1" service="$2" network="$3" pruned="$4" tag="$5" bitcoind="$6"
@@ -248,7 +248,7 @@ apply_request() {
             # bitcoind's command line interpolates BITCOIN_CORE_CHAIN/TXINDEX/
             # PRUNE from .env, so the flags must be in place BEFORE the profile
             # up. On a compose failure the file keeps the new flags while no
-            # container changed — benign and converges on retry (documented).
+            # container changed - benign and converges on retry (documented).
             set_env_key "$ENV_FILE" BITCOIN_ENABLED true
             set_env_key "$ENV_FILE" BITCOIN_NETWORK "$network"
             # Bitcoin Core's -chain flag wants "main" for mainnet (same mapping
@@ -260,7 +260,7 @@ apply_request() {
             set_env_key "$ENV_FILE" BITCOIN_TXINDEX "$txindex_flag"
             log "enabled bitcoin network=$network pruned=$pruned, starting containers"
             # Explicit service lists: a profile-wide `up -d` would also
-            # recreate any other service whose config-hash changed — including
+            # recreate any other service whose config-hash changed - including
             # this sidecar itself (killing the request mid-flight) and web-gui.
             compose --profile bitcoin up -d bitcoind btc-explorer bdk-wallet
             compose up -d web-gui
@@ -275,7 +275,7 @@ apply_request() {
             [ -f "$ENV_FILE" ] || { log "env file missing: $ENV_FILE"; return 1; }
             set_env_key "$ENV_FILE" INDEXER_ENABLED true
             log "enabling indexer, starting containers"
-            # Explicit service list — see the bitcoin branch above.
+            # Explicit service list - see the bitcoin branch above.
             compose --profile indexer up -d postgres api-blockchain-scanner-daemon api-web-server
             compose up -d web-gui
             ;;
@@ -298,7 +298,7 @@ apply_request() {
     esac
 }
 
-# process_file PATH — validate + claim + apply one request file.
+# process_file PATH - validate + claim + apply one request file.
 process_file() {
     path="$1"
     name=$(basename "$path")
@@ -309,7 +309,7 @@ process_file() {
         *)            log "ignoring unexpected file: $name"; rm -f "$path"; return 0 ;;
     esac
 
-    # Reject stale requests (agent was down longer than a day — assume moot).
+    # Reject stale requests (agent was down longer than a day - assume moot).
     now=$(date +%s)
     mtime=$(stat -c %Y "$path" 2>/dev/null || echo "$now")
     if [ $((now - mtime)) -gt "$MAX_REQ_AGE_SECS" ]; then
@@ -340,7 +340,7 @@ process_file() {
         *) write_result "$service" false "invalid action"; rm -f "$path"; return 0 ;;
     esac
     if [ "$action" = "upgrade" ]; then
-        # v-prefixed release tag, shell-safe charset — re-checked here even
+        # v-prefixed release tag, shell-safe charset - re-checked here even
         # though the web side validated it: the volume is a trust boundary.
         case "$tag" in v[0-9]*) [ ${#tag} -le 40 ] || tag="" ;; *) tag="" ;; esac
         [ -n "$tag" ] || { write_result "$service" false "invalid release tag"; rm -f "$path"; return 0; }
@@ -376,11 +376,11 @@ main_loop() {
 }
 
 # Fail fast (visibly) when the compose plugin is missing from the CLI image.
-# Watch mode only — --once is the test/integration path with a fake CLI.
+# Watch mode only - --once is the test/integration path with a fake CLI.
 
 # A crash mid-apply strands "<service>.req.lock" (invisible to both the scan
 # glob and the web side's pending check). On startup, hand them back for a
-# fresh pass — every action is idempotent, so a retry converges. A newer
+# fresh pass - every action is idempotent, so a retry converges. A newer
 # request queued while the sidecar was down wins: the stranded lock is
 # archived instead, otherwise the recovery would clobber it.
 recover_stale_locks() {
@@ -406,7 +406,7 @@ case "${1:-}" in
         ;;
     ""|--watch)
         if ! docker compose version >/dev/null 2>&1; then
-            log "WARNING: docker compose plugin not available — every request will fail"
+            log "WARNING: docker compose plugin not available - every request will fail"
         fi
         recover_stale_locks
         main_loop

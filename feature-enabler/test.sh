@@ -1,5 +1,5 @@
 #!/bin/sh
-# feature-enabler test harness — runs enabler.sh --once against a fake docker
+# feature-enabler test harness - runs enabler.sh --once against a fake docker
 # CLI and a scratch project, asserting the fixed action set, env-flag updates,
 # allowlist rejections and result files. Exits non-zero on the first failure.
 set -u

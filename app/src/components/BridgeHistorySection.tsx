@@ -14,7 +14,7 @@ import {
 } from '@/lib/bridge-sdk/bridge-history';
 
 /**
- * "Your recent bridges" — the local (per-browser) history of the user's
+ * "Your recent bridges" - the local (per-browser) history of the user's
  * own bridge requests, with live status refresh for open rows and
  * explorer links for both legs. All storage access is fail-closed.
  */
