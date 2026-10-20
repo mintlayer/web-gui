@@ -73,6 +73,11 @@ const input =
 function TokenIcon({ metadata, ticker }: { metadata: TokenMetadata | null; ticker: string }) {
   const [broken, setBroken] = useState(false);
   const src = metadata?.icon ? safeImageUri(metadata.icon) : null;
+  // Reset when this instance starts rendering a different token, so a
+  // 404 on one icon does not poison the next one.
+  useEffect(() => {
+    setBroken(false);
+  }, [src]);
   if (!src || broken) {
     return (
       <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gray-800 text-[10px] font-bold text-gray-300">

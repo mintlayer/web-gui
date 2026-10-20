@@ -13,6 +13,7 @@ import {
   getSubscribeUrl,
   isEthTxHash,
   isTxHashLike,
+  validateMintlayerAddress,
   type BridgeConfig,
   type BridgeFees,
   type BridgeRequestDetail,
@@ -43,8 +44,14 @@ import BridgeHistorySection from '@/components/BridgeHistorySection';
 import { appendHistory, updateHistoryStatus } from '@/lib/bridge-sdk/bridge-history';
 import { ethExplorerBase, mlExplorerBase } from '@/lib/bridge-sdk/explorers';
 import AddressSuggestion from '@/components/AddressSuggestion';
-
 const sdk = createBridgeSdk();
+
+/** Phases owned by an in-flight submission - a stale tracked-bridge poll
+ *  must never overwrite them (see pollTracked). */
+const SUBMIT_PHASES: ReadonlySet<string> = new Set(['approve', 'deposit', 'signing', 'submitting']);
+
+/** Consecutive poll failures before the status card gives up. */
+const POLL_FAILURE_LIMIT = 5;
 
 type Direction = 'e2m' | 'm2e';
 type Phase =
@@ -164,6 +171,8 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
   // setPhase the async submits leave `busy` false, so the button alone can't
   // stop a double click from creating two deposits.
   const submittingRef = useRef(false);
+  const pollFailuresRef = useRef(0);
+  const [pollUnavailable, setPollUnavailable] = useState(false);
 
   const metamaskInstalled = hasEthereumProvider();
 
@@ -446,6 +455,7 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
     if (!current) return;
     try {
       const detail: BridgeRequestDetail = await sdk.getBridgeRequest(current.uuid);
+      pollFailuresRef.current = 0;
       const next = deriveProgress(detail);
       // Fresh re-read doubles as both the takeover guard (a newer bridge's
       // progress must not be published under the old request) and the save
@@ -455,7 +465,14 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
       setTrackedRequest(detail);
       setTrackedProgress(next);
       if (next.kind !== 'in-progress') {
-        setPhase(next.kind === 'completed' ? 'done' : next.kind === 'manual' ? 'manual' : 'failed');
+        // Never let a stale request's terminal state stomp an active
+        // submission of a NEW bridge: while the wallet prompt is up the
+        // phase belongs to the new flow (and `busy` must not drop).
+        if (!submittingRef.current && !SUBMIT_PHASES.has(phase)) {
+          setPhase(
+            next.kind === 'completed' ? 'done' : next.kind === 'manual' ? 'manual' : 'failed',
+          );
+        }
       }
       const advanced = next.step > latest.lastStep;
       // First sight of the deposit hash (ML→ETH submits without one) -
@@ -470,7 +487,14 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
       }
       updateHistoryStatus(current.uuid, next.rawStatus);
     } catch {
-      /* transient - the next poll retries; unknown state keeps polling */
+      // A request the server no longer knows (pruned, or the network is
+      // gone) must not be polled forever: after several consecutive
+      // failures stop the interval/WS and say so on the card. The history
+      // section can still retry from scratch.
+      pollFailuresRef.current += 1;
+      if (pollFailuresRef.current >= POLL_FAILURE_LIMIT) {
+        setPollUnavailable(true);
+      }
     }
   }, []);
 
@@ -483,15 +507,17 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
   useEffect(() => {
     if (!tracked) return;
     if (trackedProgress && trackedProgress.kind !== 'in-progress') return;
+    if (pollUnavailable) return;
     void pollTracked();
     const id = setInterval(() => void pollTracked(), PROGRESS_POLL_MS);
     return () => clearInterval(id);
-  }, [tracked, trackedProgress?.kind, pollTracked]);
+  }, [tracked, trackedProgress?.kind, pollUnavailable, pollTracked]);
 
   useEffect(() => {
     const uuid = tracked?.uuid;
     if (!uuid) return;
     if (trackedProgress && trackedProgress.kind !== 'in-progress') return;
+    if (pollUnavailable) return;
     let socket: WebSocket | null = null;
     let closed = false;
     try {
@@ -525,6 +551,8 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
     setTracked(null);
     setTrackedProgress(null);
     setTrackedRequest(null);
+    setPollUnavailable(false);
+    pollFailuresRef.current = 0;
     setPhase('idle');
   }
 
@@ -592,6 +620,18 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
           return;
         }
         if (res.status === 'invalid') {
+          setError('Invalid Mintlayer address.');
+          return;
+        }
+        // The deposit broadcasts on-chain before the bridge backend ever
+        // sees the receiver, so the payload itself must be valid too (a
+        // checksum-valid short-payload address would strand the funds).
+        if (
+          !validateMintlayerAddress(
+            receiver.trim(),
+            networkType === 'mainnet' ? 'mainnet' : 'testnet',
+          ).valid
+        ) {
           setError('Invalid Mintlayer address.');
           return;
         }
@@ -1151,7 +1191,10 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
                     rel="noopener noreferrer"
                     className="text-mint-300 underline hover:opacity-80"
                   >
-                    Payout on the Mintlayer explorer ↗
+                    {direction === 'm2e'
+                      ? 'Deposit on the Mintlayer explorer'
+                      : 'Payout on the Mintlayer explorer'}{' '}
+                    ↗
                   </a>
                 )}
               </p>

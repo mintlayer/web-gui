@@ -120,7 +120,10 @@ function Row({
                 rel="noopener noreferrer"
                 className="text-mint-300 underline hover:opacity-80"
               >
-                Payout on the Mintlayer explorer ↗
+                {entry.direction === 'm2e'
+                  ? 'Deposit on the Mintlayer explorer'
+                  : 'Payout on the Mintlayer explorer'}{' '}
+                ↗
               </a>
             )}
           </p>

@@ -142,12 +142,14 @@ export async function switchChain(
 export async function getTokenBalance(
   tokenAddress: string,
   userAddress: string,
-  decimals = 18,
 ): Promise<string> {
   const p = provider();
   const token = new Contract(tokenAddress, ERC20_ABI, p);
+  // Read the decimals from the token itself: assuming 18 shows USDC/USDT
+  // (6 decimals) balances 10^12x too small and breaks the Max buttons.
+  const decimals = await token.decimals();
   const balance = await token.balanceOf(userAddress);
-  return formatUnits(balance, decimals);
+  return formatUnits(balance, Number(decimals));
 }
 
 /**

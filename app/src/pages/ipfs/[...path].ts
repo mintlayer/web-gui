@@ -186,6 +186,9 @@ export async function GET(ctx: {
           }
         } else {
           clearTimeout(timer);
+          // Release the unread body so the keep-alive socket goes back to
+          // the pool instead of waiting for garbage collection.
+          void upstreamRes.body?.cancel().catch(() => {});
           lastStatus = 502;
           break; // foreign redirect - this gateway misbehaves, next one
         }
@@ -193,6 +196,7 @@ export async function GET(ctx: {
 
       if (upstreamRes.status !== 200) {
         clearTimeout(timer);
+        void upstreamRes.body?.cancel().catch(() => {});
         lastStatus = upstreamRes.status === 404 ? 404 : 502;
         break; // an HTTP answer - next gateway, not a retry
       }
@@ -201,6 +205,7 @@ export async function GET(ctx: {
       const declaredLength = Number(upstreamRes.headers.get('content-length') ?? '');
       if (Number.isFinite(declaredLength) && declaredLength > MAX_BYTES) {
         clearTimeout(timer);
+        void upstreamRes.body?.cancel().catch(() => {});
         return errorResponse('Too large', 413);
       }
 
@@ -209,6 +214,7 @@ export async function GET(ctx: {
         .trim();
       if (!ALLOWED_TYPES.test(contentType)) {
         clearTimeout(timer);
+        void upstreamRes.body?.cancel().catch(() => {});
         // Fail fast: content-type is a property of the CID content, not
         // of the gateway - another gateway would serve the same bytes.
         return errorResponse('Unsupported media type', 415);
