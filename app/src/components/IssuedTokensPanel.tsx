@@ -141,6 +141,17 @@ export default function IssuedTokensPanel({ network }: Props) {
     try {
       const map = await fetchLiveInfos(tokens.map(t => t.tokenId));
       setLiveInfos(map);
+      // A token that now resolves live was a false "tx failed" marking
+      // (node/index lag): clear the badge instead of showing a red failure
+      // on a row with live supply and a Manage button forever.
+      setFailedTokenIds(prev => {
+        const next = new Set(prev);
+        let changed = false;
+        for (const [id, info] of map) {
+          if (info !== null && next.delete(id)) changed = true;
+        }
+        return changed ? next : prev;
+      });
       // NOTE: deliberately no auto-sweep of "unknown" tokens here. A null
       // lookup means the node hasn't indexed the issuance yet (or is lagging),
       // not that the token is gone - deleting the row destroyed the user's

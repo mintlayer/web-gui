@@ -471,8 +471,13 @@ export default function NFTMarketplace({
         ),
       ];
 
-      // Resolve metadata one-at-a-time to avoid ordering issues
+      // Resolve metadata one-at-a-time to avoid ordering issues. Ids that
+      // positively resolve as FUNGIBLE are dropped below: the atoms==1
+      // heuristic alone also catches whole units of 0-decimal tokens, and
+      // rendering those as NFT cards misrepresents the order. Only ids with
+      // NO info at all keep the unknown-collection fallback.
       const metaMap = new Map<string, { name: string; ticker: string; iconUri: string | null }>();
+      const fungibleIds = new Set<string>();
       await Promise.all(
         uniqueIds.map(async id => {
           try {
@@ -480,6 +485,10 @@ export default function NFTMarketplace({
               "node_get_tokens_info",
               { token_ids: [id] },
             );
+            if (info?.type === "FungibleToken") {
+              fungibleIds.add(id);
+              return;
+            }
             if (info?.type === "NonFungibleToken") {
               const meta = info.content.metadata!;
               metaMap.set(id, {
@@ -495,6 +504,10 @@ export default function NFTMarketplace({
       );
 
       const enriched: NFTListing[] = nftCandidates
+        .filter(o => {
+          const id = (o.initially_given as { type: "Token"; content: { id: string } }).content.id;
+          return !fungibleIds.has(id);
+        })
         .map(o => {
           const id = (o.initially_given as { type: "Token"; content: { id: string } }).content.id;
           // Listings with unresolvable metadata stay visible to buyers
@@ -564,10 +577,6 @@ export default function NFTMarketplace({
       );
 
       const enriched: NFTListing[] = nftSells
-        .filter(o => {
-          const id = (o.initially_given as { type: "Token"; content: { id: string } }).content.id;
-          return metaMap.has(id);
-        })
         .map(o => {
           const id = (o.initially_given as { type: "Token"; content: { id: string } }).content.id;
           // Own listings must survive unresolvable metadata (RPC glitch, unknown

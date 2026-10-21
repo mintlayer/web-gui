@@ -953,17 +953,28 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
       const asks = asksRaw.map(normalizeActiveOrder);
       const bids = bidsRaw.map(normalizeActiveOrder);
 
-      // Sort asks ascending by price (ML/token), bids descending
-      const priceOf = (o: OrderInfo, side: "ask" | "bid") => {
-        const d = o.existing_order_data;
-        if (!d) return 0;
-        const tok = parseFloat(side === "ask" ? d.give_balance.decimal : d.ask_balance.decimal);
-        const ml  = parseFloat(side === "ask" ? d.ask_balance.decimal  : d.give_balance.decimal);
-        return tok ? ml / tok : 0;
+      // Rank by EXACT decimal comparison (cross-multiplied atom integers):
+      // float division can collapse two distinct prices to the same double,
+      // and the tie then lets a market buy fill the wrong (more expensive)
+      // order. Display formatting elsewhere still uses floats.
+      const priceCmp = (a: OrderInfo, b: OrderInfo, side: "ask" | "bid") => {
+        const dec = (o: OrderInfo) => {
+          const d = o.existing_order_data;
+          if (!d) return { ml: "0", tok: "0" };
+          return side === "ask"
+            ? { ml: d.ask_balance.atoms, tok: d.give_balance.atoms }
+            : { ml: d.give_balance.atoms, tok: d.ask_balance.atoms };
+        };
+        const da = dec(a);
+        const db = dec(b);
+        // ml/tok compare: da.ml * db.tok vs db.ml * da.tok
+        const lhs = BigInt(da.ml) * BigInt(db.tok);
+        const rhs = BigInt(db.ml) * BigInt(da.tok);
+        return lhs === rhs ? 0 : lhs < rhs ? -1 : 1;
       };
 
-      setPairAsks(asks.sort((a, b) => priceOf(a, "ask") - priceOf(b, "ask")));
-      setPairBids(bids.sort((a, b) => priceOf(b, "bid") - priceOf(a, "bid")));
+      setPairAsks(asks.sort((a, b) => priceCmp(a, b, "ask")));
+      setPairBids(bids.sort((a, b) => priceCmp(b, a, "bid")));
     } catch (err) {
       if (seq !== loadSeqRef.current) return;
       setPairError(friendlyError(err));
@@ -977,6 +988,11 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
     setSelectedTokenId(id);
     setPairAsks([]);
     setPairBids([]);
+    // A row-click prefill from the previous pair must not survive: the form
+    // would otherwise sit at the old pair's price and place a nonsense
+    // order on the new one. (Null is ignored by the panel effect, so typed
+    // values are kept.)
+    setBookPrefill(null);
     if (id) loadPairOrders(id);
   };
 

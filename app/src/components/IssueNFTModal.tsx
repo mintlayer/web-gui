@@ -92,8 +92,10 @@ export default function IssueNFTModal({ ipfsEnabled, onClose, onIssued }: Props)
       if (ipfsEnabled && !url) {
         throw new Error('IPFS upload succeeded but returned no URL - cannot proceed without media URI');
       }
-      // Chain max is 32 bytes; SHA-256 hex is 64 chars → truncate to 32
-      setMediaHash(hash.slice(0, 32));
+      // SHA-256 hex is 64 chars = the full 32-byte digest, and the API cap
+      // is 64 chars. Slicing the HEX to 32 kept only half the digest - no
+      // off-chain verifier comparing sha256(media) could ever match it.
+      setMediaHash(hash);
       if (url) setMediaUri(url);
     } catch (err) {
       setError(`Media upload failed: ${(err as Error).message}`);
