@@ -155,9 +155,13 @@ function nftIconUrl(info: TokenInfo | undefined): string | null {
           const ticker = tokenTicker(info);
           const nft = isNFT(info);
           const iconUrl = nftIconUrl(info);
-          const explorerBase = network === 'testnet'
-            ? 'https://lovelace.explorer.mintlayer.org'
-            : 'https://explorer.mintlayer.org';
+          const explorerBase = (process.env.ML_EXPLORER_URL ?? (
+            network === 'testnet'
+              ? 'https://lovelace.explorer.mintlayer.org'
+              : network === 'mainnet'
+                ? 'https://explorer.mintlayer.org'
+                : ''
+          )).replace(/\/+$/, '');
 
           return (
             <tr class="bg-gray-900 hover:bg-gray-800/40 transition-colors">
@@ -200,10 +204,14 @@ function nftIconUrl(info: TokenInfo | undefined): string | null {
               </td>
               <td class="px-4 py-3 hidden sm:table-cell">
                 <span class="inline-flex items-center gap-1">
-                  <a href={`${explorerBase}/token/${tokenId}`} target="_blank" rel="noopener"
-                     class="font-mono text-xs text-mint-400 hover:text-mint-300 transition-colors">
-                    {tokenId.slice(0, 12)}…{tokenId.slice(-6)}
-                  </a>
+                  {explorerBase ? (
+                    <a href={`${explorerBase}/token/${tokenId}`} target="_blank" rel="noopener"
+                       class="font-mono text-xs text-mint-400 hover:text-mint-300 transition-colors">
+                      {tokenId.slice(0, 12)}…{tokenId.slice(-6)}
+                    </a>
+                  ) : (
+                    <span class="font-mono text-xs">{tokenId.slice(0, 12)}…{tokenId.slice(-6)}</span>
+                  )}
                   <button type="button"
                     class="inline-flex items-center text-gray-600 hover:text-mint-400 transition-colors"
                     data-copy-value={tokenId} title="Copy token ID">

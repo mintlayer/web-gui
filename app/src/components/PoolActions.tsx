@@ -84,9 +84,15 @@ export function CreatePoolForm({ initialDecommissionAddress, onSuccess }: Create
       setSuccess(true);
       setAmount(""); setMarginPct(""); setCostPerBlock("0"); setTotp("");
       onSuccess?.();
-      // Refresh decommission address for next pool
-      const addr = await freshAddress();
-      setDecommAddr(addr);
+      // Refresh decommission address for the next pool. Best-effort: the
+      // create already succeeded and the modal is closed - a stale error here
+      // would resurface as "failed" the next time the form is opened.
+      try {
+        const addr = await freshAddress();
+        setDecommAddr(addr);
+      } catch {
+        // Next open falls back to the initial address.
+      }
     } catch (err) {
       setError((err as Error).message);
     } finally {

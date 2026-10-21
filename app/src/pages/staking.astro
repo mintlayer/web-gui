@@ -36,6 +36,11 @@ try {
   loadError = (err as Error).message;
 }
 
+// staking_list_created_block_ids returns blocks in the wallet's internal
+// hash-key order, NOT height order (BTreeMap iteration upstream) - sort once
+// so the 'Latest' badge and the 'most recent' table actually are.
+createdBlocks.sort((a, b) => b.height - a.height);
+
 // Both staking_list_pools and staking_list_created_block_ids encode pool_id via
 // Address::new(chain_config, pool_id).to_string() - same bech32 format, safe to group.
 const blocksByPool = createdBlocks.reduce<Record<string, typeof createdBlocks>>((acc, b) => {
@@ -44,9 +49,13 @@ const blocksByPool = createdBlocks.reduce<Record<string, typeof createdBlocks>>(
 }, {});
 
 const network     = (process.env.NETWORK ?? 'mainnet').toLowerCase();
-const explorerBase = network === 'testnet'
-  ? 'https://lovelace.explorer.mintlayer.org'
-  : 'https://explorer.mintlayer.org';
+const explorerBase = (process.env.ML_EXPLORER_URL ?? (
+  network === 'testnet'
+    ? 'https://lovelace.explorer.mintlayer.org'
+    : network === 'mainnet'
+      ? 'https://explorer.mintlayer.org'
+      : ''
+)).replace(/\/+$/, '');
 
 // Group delegations by pool_id
 const delegationsByPool = delegations.reduce<Record<string, DelegationInfo[]>>((acc, d) => {
@@ -82,7 +91,7 @@ const delegationsByPool = delegations.reduce<Record<string, DelegationInfo[]>>((
       <div class="space-y-4">
         {pools.map((pool) => {
           const poolBlocks  = blocksByPool[pool.pool_id] ?? [];
-          const latestBlock = poolBlocks.length > 0 ? poolBlocks[poolBlocks.length - 1] : null;
+          const latestBlock = poolBlocks.length > 0 ? poolBlocks[0] : null;
           const poolDelegs  = delegationsByPool[pool.pool_id] ?? [];
           const totalDelegs = poolDelegs.reduce((sum, d) => sum + parseFloat(d.balance.decimal), 0);
 
@@ -180,7 +189,7 @@ const delegationsByPool = delegations.reduce<Record<string, DelegationInfo[]>>((
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-800/60">
-            {[...createdBlocks].reverse().slice(0, 50).map(b => (
+            {createdBlocks.slice(0, 50).map(b => (
               <tr class="bg-gray-900 hover:bg-gray-800/60 transition-colors">
                 <td class="px-4 py-2.5 font-mono text-gray-300">#{b.height.toLocaleString()}</td>
                 <td class="px-4 py-2.5 font-mono text-xs text-gray-500 break-all">

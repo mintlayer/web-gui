@@ -5,6 +5,7 @@ import TokenManagePanel from '@/components/TokenManagePanel';
 import { TokenIdTooltip } from '@/components/TokenIdTooltip';
 import { rpc } from '@/lib/client-rpc';
 import { getTokensInfoByIds } from '@/lib/token-info-client';
+import { explorerBase as explorerBaseFn } from '@/lib/explorer-base';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -95,9 +96,7 @@ export default function IssuedTokensPanel({ network }: Props) {
   const [manageTokenId, setManageTokenId] = useState<string | null>(null);
   const [failedTokenIds, setFailedTokenIds] = useState<Set<string>>(new Set());
 
-  const explorerBase = network === 'testnet'
-    ? 'https://lovelace.explorer.mintlayer.org'
-    : 'https://explorer.mintlayer.org';
+  const explorerBase = explorerBaseFn();
 
   async function fetchLiveInfos(ids: string[]): Promise<Map<string, TokenLiveInfo>> {
     if (ids.length === 0) return new Map();
@@ -388,10 +387,14 @@ export default function IssuedTokensPanel({ network }: Props) {
                   </td>
                   <td className="px-4 py-3">
                     <span className="inline-flex items-center gap-1">
-                      <a href={`${explorerBase}/token/${token.tokenId}`} target="_blank" rel="noopener"
-                         className="font-mono text-xs text-mint-400 hover:text-mint-300 transition-colors">
-                        {token.tokenId.slice(0, 16)}…
-                      </a>
+                      {explorerBase ? (
+                        <a href={`${explorerBase}/token/${token.tokenId}`} target="_blank" rel="noopener"
+                           className="font-mono text-xs text-mint-400 hover:text-mint-300 transition-colors">
+                          {token.tokenId.slice(0, 16)}…
+                        </a>
+                      ) : (
+                        <span className="font-mono text-xs">{token.tokenId.slice(0, 16)}…</span>
+                      )}
                       <CopyButton value={token.tokenId} title="Copy token ID" />
                     </span>
                   </td>

@@ -44,11 +44,16 @@ function makeContext(request: Request): APIContext {
 }
 
 const validBody = {
-  address: 'mtc1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjkzs',
+  // Valid bech32m address (live Mintlayer testnet fixture). The route
+  // pre-decodes the address against the configured network's HRP before
+  // burning a TOTP code, so a fake string would 400 before step-up.
+  address: 'tmt1q9rlgx4dsse920z35xh5d8s5ydlj3xl7gqeze89c',
   amount: '1.5',
   asset_type: 'ml',
   totp_code: '123456',
 };
+
+process.env.NETWORK = 'testnet';
 
 describe('POST /api/send', () => {
   beforeEach(() => {

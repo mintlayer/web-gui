@@ -3,6 +3,7 @@ import { json } from '@/lib/api-utils';
 import { rpcCall, WalletRpcError } from '@/lib/wallet-rpc';
 import { requireStepUp, totpFromBody } from '@/lib/step-up';
 import { isValidAmount } from '@/lib/validation';
+import { decode as bech32Decode, hrpForNetwork } from '@/lib/bech32';
 
 /**
  * POST /api/send - send ML coins or tokens (incl. NFTs).
@@ -52,6 +53,22 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
   }
   if (assetType === 'token' && !tokenId) {
     return json({ ok: false, error: 'token_id is required for token sends' }, 400);
+  }
+  // Knowable failures must not consume a code: decode the pasted address
+  // structurally and check its HRP against this deployment's network BEFORE
+  // step-up. The daemon stays authoritative for checksum and semantic checks
+  // (this only rejects strings that could never be valid here).
+  try {
+    const expectedHrp = hrpForNetwork('ml', (process.env.NETWORK ?? 'mainnet').toLowerCase());
+    const { prefix } = bech32Decode(address, 'bech32m');
+    if (expectedHrp && prefix !== expectedHrp) {
+      return json(
+        { ok: false, error: `Destination address looks like a "${prefix}" address - this network expects "${expectedHrp}" addresses` },
+        400,
+      );
+    }
+  } catch {
+    return json({ ok: false, error: 'Destination address is not a valid Mintlayer address' }, 400);
   }
 
   const stepUp = requireStepUp(totpFromBody(body), request, clientAddress as string | undefined);
