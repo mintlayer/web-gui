@@ -455,12 +455,17 @@ fn classify_send_error(msg: &str) -> Option<(axum::http::StatusCode, String)> {
         || lower.contains("connection closed")
         || lower.contains("timed out")
         || lower.contains("timeout")
+        || lower.contains("lookup address information")
+        || lower.contains("name resolution")
+        || lower.contains("name or service not known")
     {
         // jsonrpc/reqwest transport failures while talking to bitcoind: a
         // start-the-node state the UI already knows about, not an internal
         // error - and the TOTP code the user just typed should not be burned
         // on a condition it cannot fix. Checked BEFORE the broadcast arm so
         // "broadcast failed: connection refused" reads as a node problem.
+        // The DNS substrings cover a STOPPED container (docker's embedded
+        // DNS stops answering for it), the most common down presentation.
         Some((
             axum::http::StatusCode::BAD_GATEWAY,
             "bitcoin node is unreachable - start the bitcoin stack and retry".into(),
@@ -588,11 +593,31 @@ async fn create_wallet(
                         .into_response();
                 }
             }
-            Err(_) => { /* unreachable node: let the sync attempt surface it */ }
+            Err(_) => {
+                // Fail closed: an unreachable node makes the prune state
+                // UNKNOWABLE. Committing a full-history restore here would
+                // freeze it permanently once a pruned node returns (the
+                // sync-time guard refuses every scan, so last_sync_time
+                // could never advance past created_at = 0). Generated
+                // wallets (created_at = now) keep the lenient path because
+                // they are horizon-safe by construction.
+                return (
+                    axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                    Json(json!({
+                        "ok": false,
+                        "error": "Cannot verify the node's prune status - the bitcoin node is unreachable. Start the bitcoin stack and retry the restore.",
+                    })),
+                )
+                    .into_response();
+            }
         }
     }
 
     if let Err(e) = save_seed(&state.seed_path(), &mnemonic, state.config.network, created_at) {
+        // A failed write can leave a truncated seed.json behind; without
+        // this cleanup every retry 409s on "wallet already exists" and the
+        // wallet is unrecoverable through the API (shell-only fix).
+        let _ = tokio::fs::remove_file(&state.seed_path()).await;
         return internal_error(e.context("persisting seed"));
     }
 

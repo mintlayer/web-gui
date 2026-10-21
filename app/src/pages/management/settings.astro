@@ -994,6 +994,11 @@ Astro.response.headers.set('Cache-Control', 'no-store');
               const res = await fetch('/api/update-check');
               const data = await res.json();
               const u = data.update ?? {};
+              // The degrade path reports the failure as a TOP-LEVEL error
+              // field (UpdateStatus itself has none), so read it there -
+              // u.error was always undefined and a dead feed rendered as
+              // "Up to date".
+              const checkFailed = typeof data.error === 'string' && data.error.length > 0;
               applyAutoState(data.autoInstall === true, data.includePrereleases === true);
               if (u.available === true && u.latest) {
                 latestTag = u.latest.tag;
@@ -1016,7 +1021,7 @@ Astro.response.headers.set('Cache-Control', 'no-store');
                 }
                 upgradeToggle!.disabled = false;
               } else if (u.current) {
-                stateEl!.textContent = u.error
+                stateEl!.textContent = checkFailed
                   ? `Running v${u.current} - could not reach the release feed.`
                   : `Up to date (v${u.current}).`;
               } else {
