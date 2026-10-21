@@ -219,7 +219,17 @@ async function installPluginInner(buffer: Buffer): Promise<PluginManifest> {
   }
 }
 
-export function uninstallPlugin(id: string): void {
+export async function uninstallPlugin(id: string): Promise<void> {
+  // Serialize against installs too: an uninstall interleaving with a queued
+  // install's registry write could drop the fresh install from the registry
+  // (files on disk, id gone) or resurrect the uninstalled id (files gone,
+  // id still listed). Same queue, same reasoning as installPlugin.
+  const done = installQueue.then(() => uninstallInner(id));
+  installQueue = done.catch(() => {});
+  return done;
+}
+
+async function uninstallInner(id: string): Promise<void> {
   const plugins = getInstalledPlugins();
   const idx = plugins.findIndex((p) => p.id === id);
   if (idx === -1) throw new Error(`Plugin "${id}" is not installed`);

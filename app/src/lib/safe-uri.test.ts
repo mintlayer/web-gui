@@ -21,6 +21,14 @@ describe('safeRelativePath (login next= redirect)', () => {
     expect(safeRelativePath('/foo\x00bar')).toBe('/');
     expect(safeRelativePath('/foo\x7fbar')).toBe('/');
   });
+
+  it('rejects non-ASCII code points that undici refuses in header values', () => {
+    // undici rejects any ByteString above U+00FF, so U+2028 (survives URL
+    // encoding as %E2%80%A8) crashed the redirect after irreversible side
+    // effects - guard is printable-ASCII only, which subsumes the controls.
+    expect(safeRelativePath('/foo\u2028bar')).toBe('/');
+    expect(safeRelativePath('/foo\u00e9bar')).toBe('/');
+  });
 });
 
 describe('safeExternalUri (javascript: URI sink)', () => {
