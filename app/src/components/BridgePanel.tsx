@@ -446,7 +446,12 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
           /* malformed cap value - leave the uncapped target */
         }
       }
-      setAmount(formatUnits(target, base.decimals).replace(/\.?0+$/, ''));
+      // Trim formatUnits' cosmetic padding ("100.0" -> "100") but ONLY
+      // when a decimal point exists: for 0-decimals tokens formatUnits
+      // emits no fraction at all (1000n -> "1000") and a bare trailing-zero
+      // strip would corrupt the amount 10^n-fold ("1000" -> "1").
+      const s = formatUnits(target, base.decimals);
+      setAmount(s.includes('.') ? s.replace(/0+$/, '').replace(/\.$/, '') : s);
     },
     [ethBalanceBase, assetTicker, asset?.maxAmountPerRequest],
   );
