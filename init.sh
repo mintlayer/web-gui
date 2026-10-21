@@ -482,7 +482,6 @@ hint ""
 ENABLE_INDEXER="yes"
 confirm ENABLE_INDEXER "Enable the indexer? (disable only if you don't need Token Management or Trading)" "Y"
 
-POSTGRES_PASSWORD=""
 API_WEB_SERVER_PORT="3000"
 if [[ "$ENABLE_INDEXER" == "yes" ]]; then
   if [[ "$USE_RANDOM_PASSWORDS" == "yes" ]]; then
@@ -505,6 +504,12 @@ if [[ "$ENABLE_INDEXER" == "yes" ]]; then
     printf "${CYAN}│${RESET}  ${RED}Enter a valid port number (1-65535)${RESET}\n"
     prompt API_WEB_SERVER_PORT "Port:" "3000"
   done
+else
+  # Inert while the indexer profile is off, but pre-filled so a later manual
+  # `docker compose --profile indexer up -d` works instead of crash-looping
+  # postgres (it refuses an empty superuser password). Parity with the
+  # deploy flavors.
+  POSTGRES_PASSWORD=$(rand_pass)
 fi
 
 divider

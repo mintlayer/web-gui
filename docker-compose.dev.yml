@@ -1,10 +1,11 @@
 # Development override - mounts source so Astro HMR picks up changes instantly.
 #
-# Usage:
-#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up web-gui
+# Usage: first run `make dev-env` (creates .env.dev), then `make dev`.
+# The raw compose command also needs the env file explicitly:
+#   docker compose --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml up web-gui
 #
 # On first run (or after adding packages) rebuild the image:
-#   docker compose -f docker-compose.yml -f docker-compose.dev.yml build web-gui
+#   docker compose --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml build web-gui
 
 services:
   web-gui:

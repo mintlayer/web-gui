@@ -823,7 +823,7 @@
   const SCRIPT_FILE = { windows: 'windows.ps1', macos: 'mac.sh', linux: 'linux.sh' }[OS];
   const INSTALL_CMD = OS === 'windows'
     ? 'powershell -c "irm https://get.mintlayer.org/windows.ps1 | iex"'
-    : `bash <(curl -sSL https://get.mintlayer.org/${SCRIPT_FILE})`;
+    : `bash <(curl -fsSL https://get.mintlayer.org/${SCRIPT_FILE})`;
   const PROMPT_CHAR = OS === 'windows' ? 'PS>' : '$';
 
   // ── Patch hero on load ───────────────────────────────────────────────────

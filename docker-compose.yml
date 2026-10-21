@@ -197,7 +197,10 @@ services:
     depends_on:
       - bitcoind
     environment:
-      BTCEXP_BITCOIND_URI: "bitcoin://${BITCOIN_RPC_USERNAME}:${BITCOIN_RPC_PASSWORD}@bitcoind:8332?timeout=15000"
+      BTCEXP_BITCOIND_USER: "${BITCOIN_RPC_USERNAME}"
+      BTCEXP_BITCOIND_PASSWORD: "${BITCOIN_RPC_PASSWORD}"
+      BTCEXP_BITCOIND_HOST: "bitcoind"
+      BTCEXP_BITCOIND_PORT: "8332"
       BTCEXP_HOST: "0.0.0.0"
       BTCEXP_PORT: "3002"
       BTCEXP_ADDRESS_API: "none"
