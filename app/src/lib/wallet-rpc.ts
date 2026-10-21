@@ -170,7 +170,9 @@ export type WalletOpenResult =
   | { status: 'ok' }
   | { status: 'needs_password' }
   | { status: 'not_found' }
-  | { status: 'error'; message: string };
+  // `error` preserves the thrown value (usually a WalletRpcError) so API
+  // routes can apply code-based redaction instead of guessing from text.
+  | { status: 'error'; message: string; error?: unknown };
 
 /**
  * Returns true if the error indicates no wallet is currently open.
@@ -222,7 +224,7 @@ export async function ensureWalletOpen(walletPath = '/home/mintlayer/mintlayer.w
       return { status: 'not_found' };
     }
     console.error(`[wallet] auto-open failed for ${walletPath}: ${msg}`);
-    return { status: 'error', message: msg };
+    return { status: 'error', message: msg, error: err };
   }
 }
 

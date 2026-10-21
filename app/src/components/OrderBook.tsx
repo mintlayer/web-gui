@@ -827,6 +827,11 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
   const [pairError, setPairError] = useState<string | null>(null);
   const [mlBalance, setMlBalance] = useState<string | null>(null);
   const [tokenBalance, setTokenBalance] = useState<string | null>(null);
+  // Client-resolved decimals for the SELECTED pair: the SSR balance lookup
+  // only covers held tokens, so a zero-balance pair would otherwise fall
+  // back to the 18-generic gate and let a knowable daemon rejection burn a
+  // TOTP code. Resolved on every pair load alongside the book.
+  const [pairDecimalsOverride, setPairDecimalsOverride] = useState<number | null>(null);
   // Incremented each time a new pair is selected; loadPairOrders checks it before
   // writing state so stale in-flight responses are silently discarded.
   const loadSeqRef = useRef(0);
@@ -967,7 +972,7 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
     setPairError(null);
     try {
       const tokenCurrency = { type: "Token", content: tokenId };
-      const [asksRaw, bidsRaw, balance] = await Promise.all([
+      const [asksRaw, bidsRaw, balance, infoMap] = await Promise.all([
         // Asks: give Token, ask ML - sorted by price ascending (cheapest ask first)
         rpc<ActiveOrderRaw[]>("order_list_all_active", {
           account: 0,
@@ -983,10 +988,20 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
         rpc<{ coins: { decimal: string }; tokens: Record<string, { decimal: string }> }>(
           "account_balance", { account: 0, utxo_states: ["Confirmed"], with_locked: "Unlocked" }
         ),
+        // Decimals come from token info, not the balance list: a zero-balance
+        // pair has no balance entry at all.
+        getTokensInfoByIds([tokenId]),
       ]);
 
       // Discard if a newer request was started while we were awaiting
       if (seq !== loadSeqRef.current) return;
+
+      const info = infoMap.get(tokenId) ?? null;
+      if (info?.type === "FungibleToken") {
+        setPairDecimalsOverride(info.content.number_of_decimals);
+      } else {
+        setPairDecimalsOverride(null);
+      }
 
       setMlBalance(balance.coins.decimal);
       setTokenBalance(balance.tokens[tokenId]?.decimal ?? "0");
@@ -1176,7 +1191,7 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
             pairBids={pairBids}
             mlBalance={mlBalance}
             tokenBalance={tokenBalance}
-            pairDecimals={balanceTokens.find(b => b.tokenId === selectedTokenId)?.decimals ?? 18}
+            pairDecimals={pairDecimalsOverride ?? balanceTokens.find(b => b.tokenId === selectedTokenId)?.decimals ?? 18}
             onCreated={refreshOwn}
             onPairRefresh={() => selectedTokenId && loadPairOrders(selectedTokenId)}
             prefill={bookPrefill}

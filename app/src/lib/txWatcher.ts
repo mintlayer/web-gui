@@ -43,10 +43,14 @@ function ensureStream() {
 
   const source = es;
   source.onerror = () => {
-    // Close the errored EventSource before dropping the reference - without
-    // this a second watchTx could open a duplicate stream (Minor hardening).
-    source.close();
-    es = null;
+    // EventSource reconnects transient drops on its own (readyState
+    // CONNECTING) - closing here would kill auto-recovery and leave every
+    // in-flight watchTx to burn the full 5-minute timeout on a tx that may
+    // have confirmed during the blip. Close ONLY when the browser gave up
+    // (CLOSED); the next watchTx then opens a fresh stream.
+    if (source.readyState === EventSource.CLOSED) {
+      es = null;
+    }
   };
 }
 
