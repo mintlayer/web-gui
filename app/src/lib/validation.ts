@@ -15,7 +15,10 @@ export function isPositiveDecimal(value: string): boolean {
  */
 export function isValidAmount(value: string, maxDecimals: number): boolean {
   const t = value.trim();
-  return new RegExp(`^\\d{1,38}(\\.\\d{1,${maxDecimals}})?$`).test(t) && parseFloat(t) > 0;
+  // maxDecimals 0 is legal (indivisible tokens): {1,0} would throw
+  // "numbers out of order in {} quantifier", so the fraction group is omitted.
+  const frac = maxDecimals > 0 ? `(\\.\\d{1,${maxDecimals}})?` : '';
+  return new RegExp(`^\\d{1,38}${frac}$`).test(t) && parseFloat(t) > 0;
 }
 
 /** EVM address: 0x + 40 hex chars (checksum handled by ethers at the edges). */

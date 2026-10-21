@@ -24,6 +24,7 @@ import { pathToFileURL } from 'node:url';
 import { getPref, setPref, deletePref } from './prefs-db';
 import { rpcCall } from './wallet-rpc';
 import { ALLOWED_RPC_METHODS } from './rpc-allowlist';
+import { indexerBaseUrl } from './indexer';
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -126,6 +127,10 @@ async function installPluginInner(buffer: Buffer): Promise<PluginManifest> {
   // mkdtemp gives a unique directory per install - two same-millisecond
   // uploads must not share an extraction target.
   const tmpDir = mkdtempSync(join(tmpdir(), 'plugin-install-'));
+  // The escape check canonicalizes every extracted entry; the base must be
+  // canonical too or a symlinked TMPDIR (e.g. macOS /tmp -> /private/tmp)
+  // rejects every path and fails 100% of installs.
+  const realTmp = realpathSync(tmpDir);
   // The archive itself lives OUTSIDE the extraction dir: a plugin.tgz next
   // to the extracted entries would break the single-directory (npm pack)
   // layout detection below and, for flat layouts, leak the 50 MB raw
@@ -160,7 +165,7 @@ async function installPluginInner(buffer: Buffer): Promise<PluginManifest> {
       } catch {
         throw new Error(`Archive contains path escaping extraction directory: ${p}`);
       }
-      if (!real.startsWith(tmpDir + '/') && real !== tmpDir) {
+      if (!real.startsWith(realTmp + '/') && real !== realTmp) {
         throw new Error(`Archive contains path escaping extraction directory: ${p}`);
       }
     }
@@ -293,7 +298,8 @@ export function makePluginContext(pluginId: string, request: Request): PluginCon
     setPref: (key, value) => setPref(`plugins.${pluginId}.data.${key}`, value),
     indexerBaseUrl:
       process.env.INDEXER_ENABLED === 'true'
-        ? (process.env.INDEXER_URL ?? null)
+        ? // Same normalization as the built-in clients (trailing-slash 404s).
+          indexerBaseUrl()
         : null,
     request,
   };
