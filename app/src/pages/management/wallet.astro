@@ -207,6 +207,12 @@ if (Astro.request.method === 'POST') {
         // rendering 'Wallet file is closed.' with a Reopen button while the
         // info card above shows the freshly opened wallet.
         sessionState = info ? 'open' : 'unknown';
+        // Refresh staking too: recovery closed the old wallet (staking
+        // stops with it), so a pre-import 'staking' snapshot would show a
+        // ghost 'Cannot lock while staking is running' on the new wallet.
+        isStaking = await getStakingStatus(0)
+          .then((s) => s === 'Staking')
+          .catch(() => false);
         actionSuccess = 'Wallet recovered from seed phrase and blockchain scan complete.';
         }
       }
@@ -494,7 +500,7 @@ Astro.response.headers.set('Cache-Control', 'no-store');
             ? 'Key lock state unknown - check that the wallet daemon is reachable.'
             : isLocked
               ? 'Keys are locked. Enter your password to unlock.'
-              : 'Keys are unlocked. Enter your password to lock.'}
+              : 'Keys are unlocked. Lock them to require the password for signing.'}
       </p>
       {sessionState === 'closed' || isLocked === null ? null : isLocked ? (
         <form method="POST" class="flex items-center gap-2">
@@ -520,12 +526,6 @@ Astro.response.headers.set('Cache-Control', 'no-store');
       ) : (
         <form method="POST" class="flex items-center gap-2">
           <input type="hidden" name="action" value="lock" />
-          <input
-            type="password"
-            name="password"
-            placeholder="Password"
-            class="rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-gray-200 placeholder:text-gray-600 focus:outline-none focus:border-mint-600 w-36"
-          />
           <button
             type="submit"
             class="rounded-lg bg-gray-700 hover:bg-gray-600 px-4 py-2 text-sm text-white font-medium transition-colors"
@@ -688,9 +688,12 @@ Astro.response.headers.set('Cache-Control', 'no-store');
   const importBtn = document.getElementById('import-seed-btn') as HTMLButtonElement | null;
 
   function cleanSeed(val: string): string {
-    // "1. alpha 2. bravo" or "1 alpha 2 bravo 3charlie" → "alpha bravo charlie"
+    // Strip pasted list markers: "1. alpha 2. bravo" or "1 alpha 2 bravo
+    // 3charlie" → "alpha bravo charlie". The separator after the digits is
+    // optional - BIP39 words contain no digits, so every digit run here is
+    // marker noise (a glued "3charlie" must clean like "3 charlie").
     return val
-      .replace(/\b\d+[.\s]\s*/g, ' ')
+      .replace(/\b\d+[.\s]*/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
   }

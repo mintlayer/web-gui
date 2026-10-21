@@ -932,9 +932,10 @@ Astro.response.headers.set('Cache-Control', 'no-store');
             setNote(noteEl, 'Queued - pulling images, then restarting. The interface goes down briefly at the end.', 'info');
             watchWebGui(Date.now(), (ok) => {
               // Success: the containers just changed under us - reload
-              // lands on the new version. Failure: onDone already
-              // rendered the error note; stay on the page.
+              // lands on the new version. Failure: the note already says
+              // what went wrong - re-arm the button (a reload retries).
               if (ok) window.location.reload();
+              else upgradeToggle!.disabled = false;
             });
           });
 
@@ -953,6 +954,7 @@ Astro.response.headers.set('Cache-Control', 'no-store');
             setNote(rollbackNote, 'Queued - restoring previous images, then restarting.', 'info');
             watchWebGui(Date.now(), (ok) => {
               if (ok) window.location.reload();
+              else rollbackToggle!.disabled = false;
             });
           });
 
