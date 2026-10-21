@@ -54,8 +54,20 @@ envhas BITCOIN_TXINDEX 0 || fail "BITCOIN_TXINDEX not pruned-default (case 1)"
 grep -q 'up -d' "$DOCKER_LOG" || fail "compose up not called (case 1)"
 grep -q -- '--profile bitcoin' "$DOCKER_LOG" || fail "profile flag missing (case 1)"
 grep -q -- 'up -d bitcoind btc-explorer bdk-wallet' "$DOCKER_LOG" || fail "explicit bitcoin service list missing (case 1)"
+grep -q 'mkdir -p /pd/bitcoin-data /pd/bitcoin-wallet-data' "$DOCKER_LOG" || fail "bind-mount dirs not pre-created (case 1)"
+grep -q 'chown -R "1000:1000"' "$DOCKER_LOG" || fail "bitcoin dirs not owned by ML_USER_ID (case 1)"
 grep -q '"ok":true' "$REQ/bitcoin.result" || fail "ok result missing (case 1)"
 [ ! -e "$REQ/bitcoin.req" ] && [ ! -e "$REQ/bitcoin.req.lock" ] || fail "request not consumed (case 1)"
+# 1b. pretty-printed / hostile pruned values must not silently default true
+# (a drift-induced pruned=true irreversibly deletes chain data on restart)
+req bitcoin.req '{"action":"enable","service":"bitcoin","network":"mainnet","pruned":false}'
+run_enabler >/dev/null || fail "enabler exited non-zero (case 1b)"
+envhas BITCOIN_PRUNE 0 || fail "explicit pruned=false not honored (case 1b)"
+req bitcoin.req '{"action":"enable","service":"bitcoin","network":"mainnet","pruned":" True"}'
+run_enabler >/dev/null || fail "enabler exited non-zero (case 1b hostile)"
+grep -q '"ok":false' "$REQ/bitcoin.result" || fail "hostile pruned value not rejected (case 1b)"
+grep -q '^BITCOIN_PRUNE=0$' "$PROJ/.env" || fail "hostile pruned value changed flags (case 1b)"
+
 grep -q 'SESSION_SECRET=secret-do-not-touch' "$PROJ/.env" || fail ".env secrets damaged (case 1)"
 pass "enable bitcoin pruned default"
 
@@ -233,6 +245,7 @@ req web-gui.req '{"action":"upgrade","service":"web-gui","tag":"v1.0.0-rc4","bit
 run_enabler || fail "enabler exited non-zero (case 15)"
 grep -q '^BITCOIND_IMAGE=bitcoin/bitcoin:27$' "$PROJ/.env" || fail "user core pin overwritten (case 15)"
 grep -q '^MANAGED_BITCOIND_IMAGE=bitcoin/bitcoin:26$' "$PROJ/.env" || fail "managed mirror clobbered (case 15)"
+grep -q '^PREVIOUS_BITCOIN_IMAGE=' "$PROJ/.env" && fail "stale core anchor kept past a no-bump upgrade (case 15)"
 pass "user-pinned core respected"
 
 # 15. rollback restores the previous pins and clears the anchors
@@ -341,5 +354,25 @@ grep -q '^COMPOSE_PROFILES=indexer$' "$W/proj/.env" || fail "re-enable after key
 grep -qE '^POSTGRES_PASSWORD=[A-Za-z0-9]{32}$' "$W/proj/.env" || fail "indexer enable did not generate a POSTGRES_PASSWORD (case 23)"
 rm -rf "$W"
 pass "pf_add seeds missing profiles key; indexer enable generates POSTGRES_PASSWORD"
+
+# 24. upgrade + rollback on an install with NO image pins: the rollback
+# anchor must carry the RESOLVED compose default (an empty anchor made
+# rollback a silent no-op while the stack already ran the new tags).
+W="$WORK/case24"; mkdir -p "$W/bin" "$W/proj" "$W/req"
+printf '#!/bin/sh\nexit 0\n' > "$W/bin/docker"; chmod +x "$W/bin/docker"
+touch "$W/proj/docker-compose.yml"
+printf 'NETWORK=mainnet\nSESSION_SECRET=x\n' > "$W/proj/.env"
+req24() { printf '%s\n' "$2" > "$W/req/$1"; }
+run24() { PATH="$W/bin:$PATH" PROJECT_DIR="$W/proj" ENV_FILE="$W/proj/.env" COMPOSE_FILES=docker-compose.yml REQUESTS_DIR="$W/req" sh "$HERE/enabler.sh" --once >/dev/null; }
+req24 web-gui.req '{"action":"upgrade","service":"web-gui","tag":"v1.0.0-rc6"}'
+run24 || fail "enabler exited non-zero (case 24 upgrade)"
+grep -q '^PREVIOUS_WEB_GUI_IMAGE=ghcr.io/mintlayer/web-gui/web-gui:latest$' "$W/proj/.env" || fail "anchor missing resolved compose default (case 24)"
+grep -q '^WEB_GUI_IMAGE=ghcr.io/mintlayer/web-gui/web-gui:v1.0.0-rc6$' "$W/proj/.env" || fail "upgrade pin missing (case 24)"
+req24 web-gui.req '{"action":"rollback","service":"web-gui"}'
+run24 || fail "enabler exited non-zero (case 24 rollback)"
+grep -q '^WEB_GUI_IMAGE=ghcr.io/mintlayer/web-gui/web-gui:latest$' "$W/proj/.env" || fail "rollback did not restore the compose default (case 24)"
+grep -q '^PREVIOUS_WEB_GUI_IMAGE=' "$W/proj/.env" && fail "anchor not consumed (case 24)"
+rm -rf "$W"
+pass "no-pin install upgrades and rolls back through the compose default"
 
 printf 'ALL ENABLER TESTS PASSED\n'

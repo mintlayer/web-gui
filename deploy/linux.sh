@@ -1322,7 +1322,7 @@ PASSKEY_ORIGIN=$([[ "$ENABLE_HTTPS" == "yes" && -n "$DOMAIN" ]] && echo "https:/
 # mainnet ~700 GB with txindex / testnet ~50 GB / prune keeps ~15-25 GB.
 BITCOIN_ENABLED=false
 BITCOIN_NETWORK=${NETWORK}
-BITCOIN_CORE_CHAIN=
+BITCOIN_CORE_CHAIN=$([ "$NETWORK" = "mainnet" ] && echo main || echo test)
 BITCOIN_RPC_USERNAME=bitcoin_user
 BITCOIN_RPC_PASSWORD=
 BITCOIN_WALLET_HTTP_USERNAME=
@@ -1400,10 +1400,12 @@ pref_sql() {
     -v "$(pwd)/mintlayer-data/prefs:/prefs" \
     alpine \
     sh -c 'apk add -q --no-progress sqlite >/dev/null 2>&1 && sqlite3 /prefs/mintlayer_prefs.sqlite && chmod 600 /prefs/mintlayer_prefs.sqlite && chmod 700 /prefs'
-# The seeding container runs as root; hand the prefs DB back to the invoking
-# user so only the app can read the TOTP secret / password hash.
+# The seeding container runs as root; hand the prefs DB back to the ids the
+# app actually runs as (ML_USER_ID/ML_GROUP_ID after the >=1000 clamp - the
+# raw invoking uid can be below 1000, which the app container can never
+# write, and SQLite needs the -wal/-shm siblings).
 docker run --rm -v "$(pwd)/mintlayer-data/prefs:/prefs" alpine \
-  chown -R "$(id -u):$(id -g)" /prefs 2>/dev/null || true
+  chown -R "${ML_USER_ID:-1000}:${ML_GROUP_ID:-1000}" /prefs 2>/dev/null || true
 ok "Credentials written to mintlayer-data/prefs/mintlayer_prefs.sqlite"
 
 # ── Create data directory ─────────────────────────────────────────────────────

@@ -101,8 +101,9 @@ write_result() {
     err_json=""
     if [ -n "$error" ]; then
         # ASCII-only tail: keeps the JSON valid even when cut mid-UTF-8-sequence;
-        # remaining C0 controls are dropped (illegal inside JSON strings).
-        error=$(printf '%s' "$error" | tail -c "$MAX_ERR_CHARS" | tr '\200-\377' '-' | tr '\n' ' ' | tr '\t' ' ' | tr -d '\000-\010\013\014\016-\037')
+        # remaining C0 controls are dropped (illegal inside JSON strings) -
+        # including CR, which tr's earlier mappings do not cover.
+        error=$(printf '%s' "$error" | tail -c "$MAX_ERR_CHARS" | tr '\200-\377' '-' | tr '\n' ' ' | tr '\t' ' ' | tr -d '\000-\037')
         # crude but sufficient escaping for the fixed vocabulary of errors
         error=$(printf '%s' "$error" | sed 's/\\/\\\\/g; s/"/\\"/g')
         err_json=",\"error\":\"$error\""
@@ -212,7 +213,7 @@ apply_upgrade() {
         base=$(image_base "$cur")
         # Already at the target: a re-run must not clobber the rollback anchor.
         [ "$cur" = "$base:$tag" ] && continue
-        printf '%s %s %s\n' "$key" "$svc" "$base:$tag" >> "$targets"
+        printf '%s %s %s %s\n' "$key" "$svc" "$base:$tag" "$cur" >> "$targets"
     done
 
     # Bitcoin Core: only when the release declares a version AND we manage the
@@ -243,7 +244,7 @@ apply_upgrade() {
 
     # Pull everything BEFORE touching .env: a failed pull changes nothing.
     pull_failed=""
-    while read -r key svc ref; do
+    while read -r key svc ref _; do
         log "pulling $ref"
         docker pull "$ref" >/dev/null 2>&1 < /dev/null || pull_failed="$pull_failed $svc"
     done < "$targets"
@@ -253,15 +254,28 @@ apply_upgrade() {
         return 1
     fi
     # Save the rollback anchors (only for keys that actually move), then flip.
-    while read -r key svc ref; do
-        set_env_key "$ENV_FILE" "PREVIOUS_$key" "$(get_env_key "$key")"
+    # The anchor is the RESOLVED current reference (compose default included):
+    # an empty anchor would make rollback a silent no-op, which for a bad
+    # release means staying on the broken image with no way back.
+    while read -r key svc ref cur; do
+        set_env_key "$ENV_FILE" "PREVIOUS_$key" "$cur"
         set_env_key "$ENV_FILE" "$key" "$ref"
     done < "$targets"
     rm -f "$targets"
     if [ -n "$bump_bitcoind" ]; then
-        set_env_key "$ENV_FILE" PREVIOUS_BITCOIN_IMAGE "$(get_env_key BITCOIND_IMAGE)"
+        # Anchor the compose default explicitly (bitcoin/bitcoin:25) when no
+        # pin exists, so rollback can actually restore the pre-upgrade core.
+        prev_core=$(get_env_key BITCOIND_IMAGE)
+        [ -n "$prev_core" ] || prev_core="bitcoin/bitcoin:25"
+        set_env_key "$ENV_FILE" PREVIOUS_BITCOIN_IMAGE "$prev_core"
         set_env_key "$ENV_FILE" BITCOIND_IMAGE "$bump_bitcoind"
         set_env_key "$ENV_FILE" MANAGED_BITCOIND_IMAGE "$bump_bitcoind"
+    else
+        # No core change in this upgrade: a PREVIOUS_BITCOIN_IMAGE anchor left
+        # by an older bump describes an image that no longer runs (the pin was
+        # replaced out-of-band), and a later rollback would clobber the
+        # user's current pin with it. Stale anchors are dropped, not restored.
+        delete_env_key "$ENV_FILE" PREVIOUS_BITCOIN_IMAGE
     fi
 
     log "starting upgraded services (tag $tag)"
@@ -319,6 +333,17 @@ apply_request() {
             set_env_key "$ENV_FILE" BITCOIN_PRUNE "$prune_flag"
             set_env_key "$ENV_FILE" BITCOIN_TXINDEX "$txindex_flag"
             pf_add bitcoin
+            # Pre-create the bind mounts with the right owner: docker
+            # auto-creates missing bind sources as root, and both bitcoind
+            # and the bdk sidecar run as non-root users - without this they
+            # crash-loop on a datadir they cannot write. This sidecar's
+            # project mount is read-only, so the dirs are made through a
+            # throwaway container on the docker socket we already hold.
+            ml_uid=$(get_env_key ML_USER_ID); [ -n "$ml_uid" ] || ml_uid=1000
+            ml_gid=$(get_env_key ML_GROUP_ID); [ -n "$ml_gid" ] || ml_gid="$ml_uid"
+            docker run --rm -v "$PROJECT_DIR:/pd" alpine:3.20 sh -c \
+                "mkdir -p /pd/bitcoin-data /pd/bitcoin-wallet-data && chown -R \"$ml_uid:$ml_gid\" /pd/bitcoin-data /pd/bitcoin-wallet-data" \
+                || { log "mkdir helper failed"; return 1; }
             log "enabled bitcoin network=$network pruned=$pruned, starting containers"
             # Explicit service lists: a profile-wide `up -d` would also
             # recreate any other service whose config-hash changed - including
@@ -405,10 +430,20 @@ process_file() {
     # the request between read and claim, silently dropping the new one.
     mv "$path" "$path.lock" || return 0
 
+    # Size cap before reading: the volume is written by the web container,
+    # and a planted multi-GB file would OOM the sidecar that holds the
+    # docker socket (real requests are well under 1 KiB).
+    if [ "$(wc -c < "$path.lock" 2>/dev/null || echo 99999999)" -gt 65536 ]; then
+        log "oversized request ignored: $name"
+        write_result "$service" false "request too large"
+        rm -f "$path.lock"
+        return 0
+    fi
+
     payload=$(cat "$path.lock") || { log "unreadable request: $name"; rm -f "$path.lock"; write_result "$service" false "unreadable request"; return 0; }
     action=$(printf '%s' "$payload" | grep -o '"action":"[a-z]*"' | head -1 | cut -d'"' -f4)
     network=$(printf '%s' "$payload" | grep -o '"network":"[a-z]*"' | head -1 | cut -d'"' -f4)
-    pruned=$(printf '%s' "$payload" | grep -o '"pruned":[^,}]*' | head -1 | cut -d: -f2 | tr -d '"')
+    pruned=$(printf '%s' "$payload" | grep -o '"pruned":[^,}]*' | head -1 | cut -d: -f2 | tr -d '"' | tr -d ' \t')
     tag=$(printf '%s' "$payload" | grep -o '"tag":"[A-Za-z0-9._-]*"' | head -1 | cut -d'"' -f4)
     bitcoind=$(printf '%s' "$payload" | grep -o '"bitcoind":"[A-Za-z0-9._-]*"' | head -1 | cut -d'"' -f4)
 
@@ -426,7 +461,13 @@ process_file() {
     # network/pruned only accompany enable requests
     if [ "$action" = "enable" ] && [ "$service" = "bitcoin" ]; then
         case "$network" in mainnet|testnet|regtest) ;; *) write_result "$service" false "invalid network"; rm -f "$path.lock"; return 0 ;; esac
-        [ "$pruned" = "true" ] || [ "$pruned" = "false" ] || pruned="true"
+        # Missing field keeps the documented default (true, matches setup).
+        # An UNRECOGNIZED value must reject, not default: defaulting would
+        # flip a full-node install to pruned (BITCOIN_PRUNE=550 + TXINDEX=0),
+        # which irreversibly deletes chain data on restart. Whitespace from
+        # pretty-printed JSON was already stripped at extraction.
+        [ -n "$pruned" ] || pruned=true
+        case "$pruned" in true|false) ;; *) write_result "$service" false "invalid pruned flag"; rm -f "$path.lock"; return 0 ;; esac
     fi
 
     log "applying $action $service"

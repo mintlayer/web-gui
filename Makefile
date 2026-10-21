@@ -15,7 +15,7 @@ up:
 
 ## Stop and remove all containers (including optional profiles and orphaned run containers)
 down:
-	docker compose --profile indexer --profile wallet_cli --profile bitcoin down --remove-orphans
+	docker compose --profile indexer --profile wallet_cli --profile bitcoin --profile web --profile watchtower down --remove-orphans
 
 ## Full clean restart: tear down everything, fix stuck networks, then bring up fresh
 ## Fixes "Network still in use" / "network not found" errors from dangling containers.
@@ -36,7 +36,7 @@ restart: down
 ## host-wide `docker prune` would eat stopped containers from unrelated
 ## projects on shared machines.
 nuke:
-	docker compose --profile indexer --profile wallet_cli --profile bitcoin down --remove-orphans --volumes 2>/dev/null || true
+	docker compose --profile indexer --profile wallet_cli --profile bitcoin --profile web --profile watchtower down --remove-orphans --volumes 2>/dev/null || true
 	docker compose up -d
 
 ## Rebuild and restart only the web-gui container

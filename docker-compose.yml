@@ -409,7 +409,12 @@ services:
       - -c
       - |
         caddy run --config /etc/caddy/Caddyfile --adapter caddyfile &
-        while :; do
+        CADDY_PID=$$!
+        # Watch the caddy child: sh is PID 1, so a dead caddy would leave the
+        # container Up forever (restart policy never fires, TLS silently
+        # dead). Exiting makes the container - and restart: unless-stopped -
+        # take care of recovery.
+        while kill -0 "$$CADDY_PID" 2>/dev/null; do
           if [ -f /data/caddy/pki/authorities/local/root.crt ]; then
             if ! cmp -s /data/caddy/pki/authorities/local/root.crt /ca-public/root.crt 2>/dev/null; then
               cp -f /data/caddy/pki/authorities/local/root.crt /ca-public/root.crt
@@ -419,6 +424,10 @@ services:
           fi
           sleep 5
         done
+        # caddy died: exit non-zero so the restart policy acts instead of
+        # serving a broken TLS endpoint behind a healthy-looking container.
+        echo "caddy exited unexpectedly" >&2
+        exit 1
     profiles:
       - web
     restart: unless-stopped

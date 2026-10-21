@@ -1066,7 +1066,10 @@ DUCKDNS_TOKEN=$DuckdnsToken
 #   docker compose --profile bitcoin up -d
 BITCOIN_ENABLED=false
 BITCOIN_NETWORK=$Network
-BITCOIN_CORE_CHAIN=
+# Core's -chain wants "main"/"test" (never "mainnet") - derived here so a
+# later manual bitcoin enable cannot pair a mainnet bitcoind with a testnet
+# bdk wallet (genesis mismatch crash-loop).
+BITCOIN_CORE_CHAIN=$(if ($Network -eq 'mainnet') { 'main' } else { 'test' })
 BITCOIN_RPC_USERNAME=bitcoin_user
 BITCOIN_RPC_PASSWORD=
 BITCOIN_WALLET_HTTP_USERNAME=
@@ -1117,9 +1120,12 @@ New-Item -ItemType Directory -Force -Path (Join-Path $script:InstallDir 'mintlay
 New-Item -ItemType Directory -Force -Path (Join-Path $script:InstallDir 'mintlayer-data\plugins') | Out-Null
 
 $sqlLines = [System.Collections.Generic.List[string]]::new()
-# sql_lit: escape a value for use inside a single-quoted SQL literal -
-# embedded quotes must not terminate the statement mid-seed.
-function sql_lit([string]$v) { return $v.Replace("'", "''") }
+# sql_lit: escape a value for use inside a JSON-string row stored as an SQL
+# literal. JSON strings need backslash and double-quote escaped FIRST (a
+# trailing " or \ would otherwise corrupt the row the app JSON.parses),
+# then the SQL literal doubles single quotes - same order as init.sh's
+# sql_json; diverging produced rows that silently vanished on read.
+function sql_lit([string]$v) { return $v.Replace('\', '\\').Replace('"', '\"').Replace("'", "''") }
 $sqlLines.Add("CREATE TABLE IF NOT EXISTS prefs (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
 $sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('auth.password_hash', '`"$(sql_lit $UiPasswordHash)`"');")
 $sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('auth.totp_secret',   '`"$(sql_lit $UiTotpSecret)`"');")
