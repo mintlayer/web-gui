@@ -491,6 +491,10 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
             next.kind === 'completed' ? 'done' : next.kind === 'manual' ? 'manual' : 'failed',
           );
         }
+        // Flip the collapsed history row's chip too: the section only
+        // re-reads on a token bump, and the card saying 'Completed' above
+        // a row still reading 'In progress' reads as a contradiction.
+        setHistoryToken((t) => t + 1);
       }
       const advanced = next.step > latest.lastStep;
       // First sight of the deposit hash (ML→ETH submits without one) -
@@ -512,6 +516,14 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
       pollFailuresRef.current += 1;
       if (pollFailuresRef.current >= POLL_FAILURE_LIMIT) {
         setPollUnavailable(true);
+        // Release the form: with the phase stuck at 'polling' the submit
+        // button stayed disabled forever, and when no poll ever succeeded
+        // the notice lives on the progress card, which never renders
+        // (trackedProgress stays null). Same guard as the terminal branch:
+        // never stomp a new submission's phase.
+        if (!submittingRef.current && !SUBMIT_PHASES.has(submitPhaseRef.current)) {
+          setPhase('idle');
+        }
       }
     }
   }, []);
@@ -784,17 +796,40 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
           throw new Error((signed.error ?? 'Failed to create the bridge transaction.') + consumedHint);
         }
         setPhase('submitting');
-        const res = await sdk.broadcastBridgeRequest({
-          source_chain: sourceChain,
-          destination_chain: destinationChain,
-          asset: asset.ticker,
-          amount: amount.trim(),
-          receiver_address: receiver.trim(),
-          deposit_transactions: [
-            { raw_transaction: signed.raw_transaction, intent: signed.intent },
-          ],
-        });
-        trackRequest(res.bridge_request_uuid, '');
+        try {
+          const res = await sdk.broadcastBridgeRequest({
+            source_chain: sourceChain,
+            destination_chain: destinationChain,
+            asset: asset.ticker,
+            amount: amount.trim(),
+            receiver_address: receiver.trim(),
+            deposit_transactions: [
+              { raw_transaction: signed.raw_transaction, intent: signed.intent },
+            ],
+          });
+          trackRequest(res.bridge_request_uuid, '');
+        } catch (broadcastErr) {
+          // The signed transaction was handed to the bridge backend, which
+          // broadcasts it itself: a dropped response here can mean the
+          // deposit ALREADY went through (the e2m analogue records its
+          // orphan from the on-chain hash; nothing observable is left
+          // client-side here). Record a provisional row so a retrying user
+          // sees that attempt one may have landed, then say so in the error.
+          appendHistory({
+            uuid: `unknown-${Date.now()}`,
+            direction,
+            asset: assetTicker,
+            amount: amount.trim(),
+            receiver: receiver.trim(),
+            startedAt: new Date().toISOString(),
+            status: 'Submitted; result unknown - check before retrying',
+          });
+          setHistoryToken((t) => t + 1);
+          const detail = broadcastErr instanceof Error ? broadcastErr.message : String(broadcastErr);
+          throw new Error(
+            `${detail} - after signing, the bridge did not answer: the deposit MAY have gone through. Check the history list below before retrying.`,
+          );
+        }
       }
     } catch (err) {
       // Wallet rejections are user choices, not failures - an EvmError with
@@ -1296,6 +1331,23 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
                 Stop tracking (the bridge keeps processing)
               </button>
             )}
+          </div>
+        )}
+
+        {tracked && pollUnavailable && !trackedProgress && (
+          <div role="alert" className="rounded-lg border border-amber-800 bg-amber-900/20 px-3 py-3 text-sm text-amber-200">
+            <p className="mb-2">
+              Live status unavailable - the bridge service did not answer recent checks. The
+              bridge request itself keeps running; its outcome appears in the history list below
+              once the service recovers.
+            </p>
+            <button
+              type="button"
+              onClick={dismissTracked}
+              className="text-xs text-gray-400 underline hover:opacity-80"
+            >
+              Stop tracking (the bridge keeps processing)
+            </button>
           </div>
         )}
 

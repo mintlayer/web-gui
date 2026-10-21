@@ -50,9 +50,13 @@ function Row({
   // instead of surfacing a generic error on a guaranteed 404, and render
   // the stored status text as final.
   const orphan = entry.uuid.startsWith('orphan-');
+  // unknown- rows: the m2e broadcast call failed AFTER signing - the bridge
+  // may or may not hold the request, and no id exists to poll. Render the
+  // stored status as final and point the user at an explorer.
+  const unknownOutcome = entry.uuid.startsWith('unknown-');
 
   const load = useCallback(async () => {
-    if (orphan) return;
+    if (orphan || unknownOutcome) return;
     try {
       const d = await sdk.getBridgeRequest(entry.uuid);
       const p = deriveProgress(d);
@@ -63,7 +67,7 @@ function Row({
     } catch {
       setFailed(true);
     }
-  }, [entry.uuid, orphan]);
+  }, [entry.uuid, orphan, unknownOutcome]);
 
   useEffect(() => {
     if (open && !detail && !failed) void load();
@@ -101,7 +105,11 @@ function Row({
         <div className="px-1 pb-3 text-xs text-gray-400">
           <p className="font-mono break-all">receiver {entry.receiver}</p>
           <p className="font-mono break-all">
-            {orphan ? `deposit tx ${entry.uuid.slice('orphan-'.length)} (the bridge request never submitted)` : `request ${entry.uuid}`}
+            {orphan
+              ? `deposit tx ${entry.uuid.slice('orphan-'.length)} (the bridge request never submitted)`
+              : unknownOutcome
+                ? 'outcome unknown - the bridge did not answer after signing; check an explorer before retrying'
+                : `request ${entry.uuid}`}
           </p>
           {failed && (
             <p className="mt-1 text-red-300">
