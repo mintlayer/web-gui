@@ -11,6 +11,9 @@
  */
 import { BrowserProvider, Contract, formatUnits, parseUnits } from 'ethers';
 
+// Re-exported for components that must stay in integer base-unit land.
+export { formatUnits, parseUnits };
+
 export const ERC20_ABI = [
   'function balanceOf(address owner) view returns (uint256)',
   'function approve(address spender, uint256 amount) returns (bool)',
@@ -146,13 +149,25 @@ export async function getTokenBalance(
   tokenAddress: string,
   userAddress: string,
 ): Promise<string> {
+  const b = await getTokenBalanceBase(tokenAddress, userAddress);
+  return formatUnits(b.raw, b.decimals);
+}
+
+/** Balance as exact base units + the token's own decimals: callers doing
+ * arithmetic (fraction buttons, caps) must not go through float strings -
+ * at 18 decimals 2^53 is only ~0.009 tokens and rounding lands above the
+ * real balance. */
+export async function getTokenBalanceBase(
+  tokenAddress: string,
+  userAddress: string,
+): Promise<{ raw: bigint; decimals: number }> {
   const p = provider();
   const token = new Contract(tokenAddress, ERC20_ABI, p);
   // Read the decimals from the token itself: assuming 18 shows USDC/USDT
   // (6 decimals) balances 10^12x too small and breaks the Max buttons.
-  const decimals = await token.decimals();
-  const balance = await token.balanceOf(userAddress);
-  return formatUnits(balance, Number(decimals));
+  const decimals = Number(await token.decimals());
+  const raw = (await token.balanceOf(userAddress)) as bigint;
+  return { raw, decimals };
 }
 
 /**

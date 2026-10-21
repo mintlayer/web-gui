@@ -28,7 +28,7 @@ elif [[ "$_SELF" == /dev/fd/* ]] || [[ "$_SELF" == /proc/*/fd/* ]]; then
   chmod +x "$_tmp"
   if [[ $(wc -l < "$_tmp") -lt 10 ]]; then
     printf '%s\n' "ERROR: could not recover the installer from the input pipe." \
-      "Download it first: curl -sSL <installer-url> -o install.sh && bash install.sh" >&2
+      "Download it first: curl -fsSL <installer-url> -o install.sh && bash install.sh" >&2
     exit 1
   fi
   export ML_TMP_SELF="$_tmp"
@@ -43,14 +43,14 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 # Mintlayer Web GUI - remote installer
 # Served at https://get.mintlayer.org/linux.sh  (also mac.sh)
-# Usage: bash <(curl -sSL https://get.mintlayer.org/linux.sh)
-#        bash <(curl -sSL https://get.mintlayer.org/mac.sh)
+# Usage: bash <(curl -fsSL https://get.mintlayer.org/linux.sh)
+#        bash <(curl -fsSL https://get.mintlayer.org/mac.sh)
 #
 # Non-interactive (for AI agents / automation):
 #   ML_NONINTERACTIVE=1 NETWORK=mainnet \
 #     INSTALL_DIR=~/mintlayer WEB_UI_PASSWORD=... \
 #     ML_USER_ID=$(id -u) ML_GROUP_ID=$(id -g) \
-#     bash <(curl -sSL https://get.mintlayer.org/linux.sh)
+#     bash <(curl -fsSL https://get.mintlayer.org/linux.sh)
 # The web UI password is printed once in the final summary; the TOTP secret is
 # written to <INSTALL_DIR>/mintlayer-totp.txt. See agent-prompt.txt.
 # ─────────────────────────────────────────────────────────────────────────────

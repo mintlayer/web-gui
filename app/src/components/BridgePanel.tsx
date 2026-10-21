@@ -23,10 +23,12 @@ import {
 import {
   connectMetaMask,
   depositToBridge,
+  formatUnits,
   getConnectedAccount,
-  getTokenBalance,
+  getTokenBalanceBase,
   hasEthereumProvider,
   normalizeEvmRejection,
+  parseUnits,
   switchChain,
 } from '@/lib/evm';
 import { suggestAddressCorrection, hrpForNetwork } from '@/lib/bech32-correct';
@@ -308,6 +310,12 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
   const [ethBalances, setEthBalances] = useState<Record<string, string | null>>(
     () => Object.create(null),
   );
+  // Exact base units + decimals per asset, parallel to ethBalances: the
+  // fraction buttons must truncate in integer land (float math at 18 dp
+  // can round ABOVE the balance and guarantee a deposit revert).
+  const [ethBalanceBase, setEthBalanceBase] = useState<
+    Record<string, { raw: bigint; decimals: number } | null>
+  >(() => Object.create(null));
 
   useEffect(() => {
     let cancelled = false;
@@ -354,20 +362,28 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
   useEffect(() => {
     if (!ethAccount) {
       setEthBalances(Object.create(null));
+      setEthBalanceBase(Object.create(null));
       return;
     }
     let cancelled = false;
     void Promise.all(
       assets.map(async (a) => {
-        if (!a.ethAddress) return [a.ticker, null] as const;
-        const b = await getTokenBalance(a.ethAddress, ethAccount).catch(() => null);
-        return [a.ticker, b] as const;
+        if (!a.ethAddress) return [a.ticker, null, null] as const;
+        const base = await getTokenBalanceBase(a.ethAddress, ethAccount).catch(() => null);
+        const formatted = base ? formatUnits(base.raw, base.decimals) : null;
+        return [a.ticker, formatted, base] as const;
       }),
     ).then((entries) => {
       if (cancelled) return;
       const next: Record<string, string | null> = Object.create(null);
-      for (const [ticker, balance] of entries) next[ticker] = balance;
+      const nextBase: Record<string, { raw: bigint; decimals: number } | null> =
+        Object.create(null);
+      for (const [ticker, balance, base] of entries) {
+        next[ticker] = balance;
+        nextBase[ticker] = base;
+      }
       setEthBalances(next);
+      setEthBalanceBase(nextBase);
     });
     return () => {
       cancelled = true;
@@ -413,25 +429,26 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
   // 25% / 50% / Max of the wallet balance, capped by the per-request max.
   const applyFraction = useCallback(
     (fraction: number) => {
-      if (ethBalance === null) return;
-      const balance = parseFloat(ethBalance);
-      if (!Number.isFinite(balance) || balance <= 0) return;
-      let target = balance * fraction;
+      const base = ethBalanceBase[assetTicker];
+      if (!base || base.raw <= 0n) return;
+      // Integer math on base units throughout: floats lose integer precision
+      // past 2^53 (at 18 decimals that is ~0.009 tokens), so the old
+      // truncation could land ABOVE the true balance and make the deposit
+      // revert in transferFrom. 25%/50%/Max map to exact bigint factors.
+      const pct = BigInt(Math.round(fraction * 100));
+      let target = (base.raw * pct) / 100n;
       const max = asset?.maxAmountPerRequest;
       if (max !== undefined && /^\d+(\.\d+)?$/.test(max)) {
-        target = Math.min(target, parseFloat(max));
+        try {
+          const maxBase = parseUnits(max, base.decimals);
+          if (target > maxBase) target = maxBase;
+        } catch {
+          /* malformed cap value - leave the uncapped target */
+        }
       }
-      // Truncate toward zero at the token's own precision: the formatted
-      // balance carries exactly the token's decimal count (formatUnits), so
-      // a 6-decimal USDC amount is cut at 6 dp. The old hardcoded 8 dp
-      // produced amounts parseUnits rejects for 6-decimal assets
-      // ("fractional component exceeds decimals") before any wallet prompt.
-      const decimals = (ethBalance.split('.')[1] ?? '').length;
-      const factor = 10 ** decimals;
-      const scaled = Math.floor(target * factor) / factor;
-      setAmount(scaled.toFixed(decimals).replace(/\.?0+$/, ''));
+      setAmount(formatUnits(target, base.decimals).replace(/\.?0+$/, ''));
     },
-    [ethBalance, asset?.maxAmountPerRequest],
+    [ethBalanceBase, assetTicker, asset?.maxAmountPerRequest],
   );
 
   /** Persist a freshly broadcast bridge so the card survives refreshes. */

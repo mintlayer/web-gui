@@ -479,6 +479,8 @@ services:
   api-blockchain-scanner-daemon:
     <<: *common
     image: "${ML_API_SCANNER_IMAGE:-ghcr.io/mintlayer/web-gui/api-blockchain-scanner-daemon:latest}"
+    # No baked-in CMD in the runtime image - pass the binary explicitly.
+    command: "/usr/bin/api-blockchain-scanner-daemon"
     depends_on:
       - node-daemon
       - postgres
@@ -499,6 +501,8 @@ services:
 
   api-web-server:
     image: "${ML_API_WEB_SERVER_IMAGE:-ghcr.io/mintlayer/web-gui/api-web-server:latest}"
+    # No baked-in CMD in the runtime image - pass the binary explicitly.
+    command: "/usr/bin/api-web-server"
     depends_on:
       - postgres
       - node-daemon
