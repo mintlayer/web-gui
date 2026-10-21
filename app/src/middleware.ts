@@ -89,10 +89,16 @@ export const onRequest = defineMiddleware(async (context, next) => {
 
   const sessionVersion = getPref<number>('auth.session_version') ?? 0;
   if (!verifySessionToken(token, sessionVersion)) {
-    const nextParam =
-      pathname !== '/' && !pathname.startsWith('/api/')
-        ? `?next=${encodeURIComponent(pathname)}`
-        : '';
+    if (pathname.startsWith('/api/')) {
+      // fetch() follows 302s silently, so API consumers would read login
+      // HTML as a 200 and report "Wallet service error (HTTP 200)" instead
+      // of an expired session. Browsers navigating pages keep the redirect.
+      return new Response(JSON.stringify({ error: 'session_expired' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    const nextParam = pathname !== '/' ? `?next=${encodeURIComponent(pathname)}` : '';
     return new Response(null, {
       status: 302,
       headers: { Location: `/login${nextParam}` },

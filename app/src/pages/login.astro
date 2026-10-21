@@ -15,7 +15,7 @@ import {
 import { verifyAndBurnTotpCode } from '@/lib/step-up';
 import { safeRelativePath } from '@/lib/safe-uri';
 import { getStringPref, getPref, setPref, deletePref } from '@/lib/prefs-db';
-import { readFormData } from '@/lib/api-utils';
+import { readFormData, readFormWithinLimit, LOGIN_BODY_LIMIT } from '@/lib/api-utils';
 import TotpQrCode from '@/components/TotpQrCode';
 import { getCredentials, isValidRpId, getRpId } from '@/lib/passkey';
 
@@ -86,8 +86,9 @@ if (Astro.request.method === 'POST' && unconfigured) {
   } else {
     // readFormData swallows malformed multipart bodies (bad boundary,
     // truncated part) instead of letting formData() throw a 500 on the
-    // one route that must never look broken.
-    const form = await readFormData(Astro.request);
+    // one route that must never look broken; the cap keeps unauthenticated
+    // multi-GB bodies out of memory.
+    const form = await readFormWithinLimit(Astro.request, LOGIN_BODY_LIMIT);
     if (!form) {
       errorMessage = 'Invalid form submission. Try again.';
     } else if (form.get('restart') === '1') {
@@ -181,7 +182,7 @@ if (Astro.request.method === 'POST' && !unconfigured) {
   if (!checkLoginRateLimit(ip)) {
     errorMessage = 'Too many login attempts. Try again in 15 minutes.';
   } else {
-    const form = await readFormData(Astro.request);
+    const form = await readFormWithinLimit(Astro.request, LOGIN_BODY_LIMIT);
     if (!form) {
       errorMessage = 'Invalid form submission. Try again.';
     } else {

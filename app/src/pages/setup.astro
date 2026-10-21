@@ -87,7 +87,13 @@ function friendlyWalletError(message: string): string {
 }
 
 if (Astro.request.method === 'POST') {
-  const form = await Astro.request.formData();
+  // Same guard as login: malformed multipart becomes an inline error, and
+  // the buffer is capped BEFORE the 50 MB file check below could ever see
+  // it (formData() would otherwise ingest the whole body first).
+  const form = await readFormWithinLimit(Astro.request, UPLOAD_BODY_LIMIT);
+  if (!form) {
+    result = { action: 'error', message: 'Invalid form submission — please try again.' };
+  } else {
   const action = form.get('action') as string;
 
   // ── Create new wallet (generate seed) ──────────────────────────────────────
@@ -166,6 +172,7 @@ if (Astro.request.method === 'POST') {
         result = { action: 'error', message: friendlyWalletError((err as Error).message) };
       }
     }
+  }
   }
 }
 // This page renders seed-phrase material after wallet creation - never cache it.

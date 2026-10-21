@@ -97,14 +97,33 @@ export function isValidRpId(rpId: string): boolean {
   return rpId.length > 0;
 }
 
-export function getRpId(requestUrl: string): string {
+export function getRpId(request: Request | string): string {
   if (process.env.PASSKEY_RP_ID) return process.env.PASSKEY_RP_ID;
-  return new URL(requestUrl).hostname;
+  return proxyAwareUrl(request).hostname;
 }
 
-export function getOrigin(requestUrl: string): string {
+export function getOrigin(request: Request | string): string {
   if (process.env.PASSKEY_ORIGIN) return process.env.PASSKEY_ORIGIN;
-  return new URL(requestUrl).origin;
+  return proxyAwareUrl(request).origin;
+}
+
+/**
+ * WebAuthn compares the SERVER-declared rpId/origin against the BROWSER's
+ * origin, which is always the TLS URL a user visits. Behind the shipped
+ * caddy gateway the raw socket URL is http://<host> (the node adapter does
+ * not apply X-Forwarded-Proto - the same reason lib/csrf.ts exists), so the
+ * bare fallback breaks registration AND login on every HTTPS deployment.
+ * Mirror csrf.ts: honor X-Forwarded-* only under TRUST_PROXY, else the
+ * request's own URL.
+ */
+function proxyAwareUrl(request: Request | string): URL {
+  if (typeof request === 'string') return new URL(request);
+  const url = new URL(request.url);
+  if (process.env.TRUST_PROXY !== 'true') return url;
+  const firstForwarded = (v: string | null) => v?.split(',')[0]?.trim() || undefined;
+  const proto = (firstForwarded(request.headers.get('x-forwarded-proto')) ?? url.protocol.replace(/:$/, '')).toLowerCase();
+  const host = firstForwarded(request.headers.get('x-forwarded-host')) ?? request.headers.get('host') ?? url.host;
+  return new URL(`${proto}://${host}`);
 }
 
 // ── Challenge cookie header helpers ───────────────────────────────────────────

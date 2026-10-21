@@ -19,6 +19,11 @@
  * (new URL('/\\evil.com', 'http://x.test').href === 'http://evil.com/').
  */
 export function safeRelativePath(raw: string): string {
+  // Control characters (CR/LF, NUL, DEL) would crash the login redirect:
+  // undici rejects them in header values, and the throw happens after the
+  // session was minted - an avoidable 500 on a crafted ?next=. Degrade like
+  // every other unsafe value.
+  if (/[\r\n\u0000-\u001f\u007f]/.test(raw)) return '/';
   return raw.startsWith('/') && !raw.startsWith('//') && !raw.startsWith('/\\') ? raw : '/';
 }
 

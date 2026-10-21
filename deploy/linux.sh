@@ -306,6 +306,10 @@ services:
       # its X-Forwarded-Proto/Host or every form POST fails the CSRF
       # origin check (browser says https, raw socket says http).
       TRUST_PROXY: "true"
+      # WebAuthn: empty means the app derives rpId/origin from the
+      # proxy-aware request URL (X-Forwarded-* under TRUST_PROXY).
+      PASSKEY_RP_ID: "${PASSKEY_RP_ID:-}"
+      PASSKEY_ORIGIN: "${PASSKEY_ORIGIN:-}"
       PORT: "4321"
     restart: unless-stopped
 
@@ -1304,6 +1308,13 @@ ENABLE_HTTPS=${ENABLE_HTTPS}
 DOMAIN=${DOMAIN}
 DUCKDNS_SUBDOMAIN=${DUCKDNS_SUBDOMAIN}
 DUCKDNS_TOKEN=${DUCKDNS_TOKEN}
+
+# WebAuthn (passkeys): defaults derived from the deployment shape. The app
+# also honors X-Forwarded-* under TRUST_PROXY, but explicit values remove
+# any dependence on header handling. Empty RP_ID/ORIGIN are fine: the app
+# falls back to the proxy-aware request origin.
+PASSKEY_RP_ID=$([[ "$ENABLE_HTTPS" == "yes" && -n "$DOMAIN" ]] && echo "$DOMAIN" || echo "")
+PASSKEY_ORIGIN=$([[ "$ENABLE_HTTPS" == "yes" && -n "$DOMAIN" ]] && echo "https://$DOMAIN" || echo "")
 
 # ── Optional Bitcoin stack (profile: bitcoin) ────────────────────────────────
 # To enable: set BITCOIN_ENABLED=true, fill in RPC credentials (generate e.g.

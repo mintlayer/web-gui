@@ -136,6 +136,10 @@ services:
       # X-Forwarded-For with the real client IP. Direct/LAN exposure must keep
       # it unset - X-Forwarded-* is attacker-controllable then.
       TRUST_PROXY: "${TRUST_PROXY:-}"
+      # WebAuthn: init.sh writes these into .env; without the passthrough
+      # compose never injects them and passkeys silently fail on TLS setups.
+      PASSKEY_RP_ID: "${PASSKEY_RP_ID:-}"
+      PASSKEY_ORIGIN: "${PASSKEY_ORIGIN:-}"
       PORT: "4321"
     restart: unless-stopped
 

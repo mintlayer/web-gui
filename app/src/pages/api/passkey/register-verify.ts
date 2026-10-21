@@ -13,8 +13,8 @@ import {
 import { json } from '@/lib/api-utils';
 
 export const POST: APIRoute = async ({ request }) => {
-  const rpId = getRpId(request.url);
-  const origin = getOrigin(request.url);
+  const rpId = getRpId(request);
+  const origin = getOrigin(request);
 
   if (!isValidRpId(rpId)) {
     return json({ error: 'Passkeys require a DNS hostname.' }, 400);

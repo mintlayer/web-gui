@@ -16,7 +16,7 @@ export const GET: APIRoute = async ({ request, clientAddress }) => {
     return json({ error: 'Too many requests. Please slow down.' }, 429);
   }
 
-  const rpId = getRpId(request.url);
+  const rpId = getRpId(request);
 
   if (!isValidRpId(rpId)) {
     return json({ error: 'Passkeys require a DNS hostname.' }, 400);
