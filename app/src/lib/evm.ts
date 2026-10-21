@@ -233,6 +233,18 @@ export async function depositToBridge(
     }
   }
 
+  // Re-verify the chain right before the deposit: the approve can mine
+  // for minutes, and a chain switched during that window (other tab,
+  // mobile push) must not carry the deposit.
+  if (typeof expectedChainId === 'number') {
+    const { chainId } = await p.getNetwork();
+    if (chainId !== BigInt(expectedChainId)) {
+      throw new EvmError(
+        'Your wallet switched to a different network. Switch back to the bridge network and try again.',
+      );
+    }
+  }
+
   const bridge = new Contract(bridgeContractAddress, BRIDGE_DEPOSIT_ABI, signer);
   onProgress?.('deposit');
   const depositTx = await bridge.deposit(tokenAddress, amountWei, mintlayerAddress);

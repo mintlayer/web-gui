@@ -110,10 +110,28 @@ export function togglePlugin(id: string, enabled: boolean): void {
 // ── Install / Uninstall ───────────────────────────────────────────────────────
 
 export async function installPlugin(buffer: Buffer): Promise<PluginManifest> {
+  // Serialize installs: the read-modify-write on the registry pref and the
+  // duplicate-id check must not interleave with another install's, or a
+  // concurrent install silently vanishes from the registry (files stay on
+  // disk, admin has to re-upload + burn another TOTP code).
+  const done = installQueue.then(() => installPluginInner(buffer));
+  // Swallow here so the queue never rejects; the caller still sees the error.
+  installQueue = done.catch(() => {});
+  return done;
+}
+
+let installQueue: Promise<unknown> = Promise.resolve();
+
+async function installPluginInner(buffer: Buffer): Promise<PluginManifest> {
   // mkdtemp gives a unique directory per install - two same-millisecond
   // uploads must not share an extraction target.
   const tmpDir = mkdtempSync(join(tmpdir(), 'plugin-install-'));
-  const tmpTgz = join(tmpDir, 'plugin.tgz');
+  // The archive itself lives OUTSIDE the extraction dir: a plugin.tgz next
+  // to the extracted entries would break the single-directory (npm pack)
+  // layout detection below and, for flat layouts, leak the 50 MB raw
+  // archive into the served plugin directory.
+  const dlDir = mkdtempSync(join(tmpdir(), 'plugin-dl-'));
+  const tmpTgz = join(dlDir, 'plugin.tgz');
 
   try {
     writeFileSync(tmpTgz, buffer);
@@ -197,6 +215,7 @@ export async function installPlugin(buffer: Buffer): Promise<PluginManifest> {
   } finally {
     try { rmSync(tmpTgz); } catch { /* ignore */ }
     try { rmSync(tmpDir, { recursive: true }); } catch { /* ignore */ }
+    try { rmSync(dlDir, { recursive: true }); } catch { /* ignore */ }
   }
 }
 

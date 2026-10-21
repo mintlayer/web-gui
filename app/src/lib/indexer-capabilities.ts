@@ -13,7 +13,11 @@
  * checked independently so partial deployments are handled honestly).
  */
 
-const INDEXER_URL = process.env.INDEXER_URL ?? 'http://api-web-server:3000';
+// Trailing slash stripped: an operator-supplied base like
+// 'http://api-web-server:3000/' would otherwise produce '//api/v2/...'
+// paths that the api server 404s, and every indexer feature would look
+// dead while the container is perfectly healthy.
+const INDEXER_URL = (process.env.INDEXER_URL ?? 'http://api-web-server:3000').replace(/\/+$/, '');
 
 const CAPABILITIES_TTL_MS = 60_000;
 

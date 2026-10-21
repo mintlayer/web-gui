@@ -66,7 +66,11 @@ function isValidChainPayload(_hrp: string, data: number[], encoding: Bech32Encod
       if (programLen < Math.ceil((2 * 8) / 5) || programLen > Math.ceil((40 * 8) / 5)) return false;
     }
   }
-  // ML: final payload validation is the wallet daemon's job on submit.
+  // ML addresses are bech32m (BIP-350 style): a string that only carries
+  // the legacy bech32 checksum must not be reported valid, and a typo in a
+  // real bech32m address must not be excused because it accidentally
+  // satisfies the legacy constant.
+  if (chain === "ml" && encoding !== "bech32m") return false;
   return true;
 }
 
