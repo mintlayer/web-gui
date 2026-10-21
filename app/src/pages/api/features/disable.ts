@@ -6,6 +6,7 @@ import {
   isFeatureService,
   isRequestPending,
   queueFeatureRequest,
+  SERVICE_ACTIONS,
 } from '@/lib/feature-requests';
 import { isBitcoinEnabled } from '@/lib/bitcoin-wallet';
 
@@ -39,6 +40,12 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     return json({ ok: false, error: 'Unknown service' }, 400);
   }
   const service = body.service;
+
+  // SERVICE_ACTIONS also covers 'web-gui' (upgrade/rollback) - reject the
+  // mismatched pair BEFORE step-up so no TOTP is burned on it.
+  if (!(SERVICE_ACTIONS[service] as readonly string[]).includes('disable')) {
+    return json({ ok: false, error: 'Unknown service' }, 400);
+  }
 
   // Current-state checks come before step-up: /api/features/status already
   // exposes this state to any signed-in session, so burning a fresh TOTP for

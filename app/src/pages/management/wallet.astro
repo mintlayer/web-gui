@@ -174,7 +174,11 @@ if (Astro.request.method === 'POST') {
       actionSuccess = 'Wallet reopened.';
     } else if (action === 'import_seed') {
       const confirm = (form.get('confirm') as string | null) ?? '';
-      const mnemonic = ((form.get('mnemonic') as string | null) ?? '').trim();
+      // A browser File part also satisfies the non-null check - guard the
+      // cast so the error is our message, not "(intermediate value).trim is
+      // not a function".
+      const mnemonicRaw = form.get('mnemonic');
+      const mnemonic = (typeof mnemonicRaw === 'string' ? mnemonicRaw : '').trim();
       const totpCode = (form.get('totp_code') as string | null) ?? '';
       const totpSecret = getStringPref('auth.totp_secret');
       if (confirm !== 'I CONFIRM') {
