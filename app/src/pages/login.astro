@@ -10,6 +10,8 @@ import {
   makeSessionCookieHeader,
   checkLoginRateLimit,
   recordLoginFailure,
+  checkBootstrapRateLimit,
+  recordBootstrapAttempt,
   SESSION_COOKIE_NAME,
   verifySessionToken, getClientAddress, generateTotpSecret } from '@/lib/auth';
 import { verifyAndBurnTotpCode } from '@/lib/step-up';
@@ -124,6 +126,15 @@ if (Astro.request.method === 'POST' && unconfigured) {
       } else if (password !== confirm) {
         errorMessage = 'Passwords do not match.';
       } else {
+        // Step 1 has no password to fail on, so the login limiter above
+        // never trips: count every staged attempt against its own limiter
+        // or the 210k-iteration KDF below is free CPU for anyone on the
+        // network while the node sits unconfigured.
+        const bootstrapKey = getClientAddress(Astro.request, Astro.clientAddress as string | undefined);
+        if (!checkBootstrapRateLimit(bootstrapKey)) {
+          errorMessage = 'Too many setup attempts. Try again later.';
+        } else {
+        recordBootstrapAttempt(bootstrapKey);
         const bootstrapToken = randomUUID();
         setPref('auth.password_pending', await hashPassword(password));
         setPref('auth.totp_secret_pending', generateTotpSecret());
@@ -136,6 +147,7 @@ if (Astro.request.method === 'POST' && unconfigured) {
             'Set-Cookie': `${BOOTSTRAP_COOKIE}=${bootstrapToken}; Path=/; HttpOnly; SameSite=Strict; Secure; Max-Age=${Math.floor(BOOTSTRAP_TTL_MS / 1000)}`,
           },
         });
+        }
       }
     } else {
       // Step 2: enroll the authenticator by confirming a first code. Only

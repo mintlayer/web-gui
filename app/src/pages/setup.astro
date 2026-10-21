@@ -1,5 +1,7 @@
 ---
 import Layout from '@/layouts/Layout.astro';
+import { UPLOAD_BODY_LIMIT, readFormWithinLimit } from '@/lib/api-utils';
+import { checkBootstrapRateLimit, recordBootstrapAttempt, getClientAddress } from '@/lib/auth';
 import { openWallet, createWallet, recoverWallet } from '@/lib/wallet-rpc';
 import { isBitcoinEnabled, createBitcoinWalletFromSeedWithRetry } from '@/lib/bitcoin-wallet';
 import SeedBackupStep from '@/components/SeedBackupStep';
@@ -94,6 +96,15 @@ if (Astro.request.method === 'POST') {
   if (!form) {
     result = { action: 'error', message: 'Invalid form submission — please try again.' };
   } else {
+  // Every branch below runs key derivation or wallet RPC for an
+  // unauthenticated visitor: gate the whole handler behind the bootstrap
+  // limiter (step 1 of /login uses the same counter) so a fresh install
+  // cannot be turned into a free KDF farm before the owner finishes setup.
+  const setupKey = getClientAddress(Astro.request, Astro.clientAddress as string | undefined);
+  if (!checkBootstrapRateLimit(setupKey)) {
+    result = { action: 'error', message: 'Too many setup attempts. Try again later.' };
+  } else {
+  recordBootstrapAttempt(setupKey);
   const action = form.get('action') as string;
 
   // ── Create new wallet (generate seed) ──────────────────────────────────────
@@ -156,7 +167,7 @@ if (Astro.request.method === 'POST') {
       try {
         const destPath   = '/app/uploads/mintlayer.wallet';
         const daemonPath = '/home/mintlayer/uploads/mintlayer.wallet';
-        const { writeFile, access } = await import('node:fs/promises');
+        const { access } = await import('node:fs/promises');
 
         let walletExists = false;
         try { await access(destPath); walletExists = true; } catch {}
@@ -164,7 +175,14 @@ if (Astro.request.method === 'POST') {
         if (walletExists && !confirmOverwrite) {
           result = { action: 'upload_confirm_needed' };
         } else {
-          await writeFile(destPath, Buffer.from(await fileField.arrayBuffer()));
+          // Write to a temp name and rename into place: a concurrent or
+          // racing POST otherwise opens a window where openWallet runs
+          // against a half-written file, and the fixed path lets a peer
+          // plant bytes between the check and the open.
+          const { writeFile, rename, access } = await import('node:fs/promises');
+          const tmpPath = `${destPath}.${Date.now()}.tmp`;
+          await writeFile(tmpPath, Buffer.from(await fileField.arrayBuffer()));
+          await rename(tmpPath, destPath);
           await openWallet(daemonPath, password);
           result = { action: 'upload_success' };
         }
@@ -172,6 +190,7 @@ if (Astro.request.method === 'POST') {
         result = { action: 'error', message: friendlyWalletError((err as Error).message) };
       }
     }
+  }
   }
   }
 }
