@@ -84,7 +84,7 @@ impl Config {
                 password: self.rpc_pass.clone(),
             },
             network: self.network,
-            wallet_name: "bdk-sidecar".to_string(),
+            wallet_name: WALLET_NAME.to_string(),
             sync_params: Some(RpcSyncParams {
                 start_time: sync_start_time,
                 // Matches INITIAL_SCRIPT_CACHE below: the initial importdescriptors
@@ -108,6 +108,31 @@ fn require_env(name: &str) -> Result<String> {
 // ── State ──────────────────────────────────────────────────────────────────────
 
 type BdkWallet = Wallet<AnyDatabase>;
+
+/// The wallet bitcoind loads for this sidecar. Wallet-scoped RPC calls
+/// (getwalletinfo for the rescan probe) must target /wallet/<name>: on the
+/// bare endpoint bitcoind only answers when exactly one wallet is loaded,
+/// so the scan-retry probe would silently no-op on any other setup.
+const WALLET_NAME: &str = "bdk-sidecar";
+
+/// Error marker for "a wallet sync holds the lock": the send endpoint maps
+/// it to the same 503 the read endpoints return, instead of parking the
+/// request (and still broadcasting after the client timed out).
+const SYNC_BUSY: &str = "wallet sync in progress";
+
+/// True when a sync horizon may be scanned on a pruned node. `cutoff` is
+/// the unix time of the oldest block bitcoind still serves (its prune
+/// window start); a horizon at or after that can never miss coins. With 24h
+/// of slack, a wallet created right now always passes, while restores aimed
+/// inside the pruned range are refused. `cutoff` unknown (stats RPC
+/// unavailable): only a just-created wallet is considered safe.
+fn horizon_safe_on_pruned(horizon: u64, cutoff: Option<i64>, now: u64) -> bool {
+    if horizon == 0 {
+        return false;
+    }
+    let cutoff = cutoff.map(|t| t.max(0) as u64).unwrap_or(now);
+    horizon.saturating_add(24 * 3600) >= cutoff
+}
 
 /// How many addresses per keychain to derive and cache up front. Keep this
 /// small - see the comment on `start_script_count` in `Config::rpc_config`.
@@ -247,9 +272,34 @@ async fn node_rpc(
     method: &str,
     params: serde_json::Value,
 ) -> Result<serde_json::Value> {
+    post_rpc(state, &state.config.rpc_url, method, params).await
+}
+
+/// Same as `node_rpc` but scoped to this sidecar's wallet. Calls like
+/// getwalletinfo only answer on /wallet/<name> when bitcoind serves more
+/// than one wallet (or none).
+async fn node_wallet_rpc(
+    state: &AppState,
+    method: &str,
+    params: serde_json::Value,
+) -> Result<serde_json::Value> {
+    let url = format!(
+        "{}/wallet/{}",
+        state.config.rpc_url.trim_end_matches('/'),
+        WALLET_NAME
+    );
+    post_rpc(state, &url, method, params).await
+}
+
+async fn post_rpc(
+    state: &AppState,
+    url: &str,
+    method: &str,
+    params: serde_json::Value,
+) -> Result<serde_json::Value> {
     let res = state
         .node
-        .post(&state.config.rpc_url)
+        .post(url)
         .basic_auth(&state.config.rpc_user, Some(&state.config.rpc_pass))
         .json(&json!({ "jsonrpc": "1.0", "id": "bdk", "method": method, "params": params }))
         .send()
@@ -545,7 +595,9 @@ async fn create_wallet(
 /// so restores converge without the user nudging POST /sync. Stops as soon
 /// as Core reports the scan finished and a retry still fails.
 async fn schedule_scan_retry(st: Arc<AppState>) {
-    let scanning = node_rpc(&st, "getwalletinfo", json!([]))
+    // Wallet-scoped on purpose: getwalletinfo on the bare endpoint only
+    // answers when bitcoind has exactly one wallet loaded.
+    let scanning = node_wallet_rpc(&st, "getwalletinfo", json!([]))
         .await
         .ok()
         .and_then(|v| v.get("scanning").cloned())
@@ -578,15 +630,26 @@ fn spawn_sync(state: &Arc<AppState>) -> bool {
         if let Ok(info) = node_rpc(&st, "getblockchaininfo", json!([])).await {
             let pruned = info.get("pruned").and_then(|b| b.as_bool()).unwrap_or(false);
             let prune_height = info.get("pruneheight").and_then(|b| b.as_u64()).unwrap_or(0);
-            if pruned && (horizon == 0 || horizon < prune_height) {
-                error!(
-                    "wallet sync horizon {horizon} is older than the prune window (pruneheight {prune_height}) - sync refused; switch to a full node (BITCOIN_PRUNE=0, BITCOIN_TXINDEX=1) and resync"
-                );
-                *st.last_sync_error.lock().unwrap_or_else(|p| p.into_inner()) =
-                    Some(format!(
-                        "sync refused: the node is pruned to block {prune_height}, newer than this wallet's sync horizon"
-                    ));
-                refused = true;
+            if pruned {
+                // bitcoind's pruneheight is a BLOCK HEIGHT while the horizon
+                // is a unix timestamp - comparing them directly is always
+                // false and silently disabled the guard. Convert the prune
+                // window to time via getblockstats so restores aimed inside
+                // the pruned range are actually refused.
+                let cutoff = node_rpc(&st, "getblockstats", json!([prune_height, ["time"]]))
+                    .await
+                    .ok()
+                    .and_then(|v| v.get("time").and_then(|t| t.as_i64()));
+                if !horizon_safe_on_pruned(horizon, cutoff, now_unix()) {
+                    error!(
+                        "wallet sync horizon {horizon} reaches inside the prune window (pruneheight {prune_height}) - sync refused; switch to a full node (BITCOIN_PRUNE=0, BITCOIN_TXINDEX=1) and resync"
+                    );
+                    *st.last_sync_error.lock().unwrap_or_else(|p| p.into_inner()) =
+                        Some(format!(
+                            "sync refused: the node is pruned to block {prune_height}, newer than this wallet's sync horizon"
+                        ));
+                    refused = true;
+                }
             }
         }
         if !refused {
@@ -725,7 +788,12 @@ async fn balance(State(state): State<Arc<AppState>>) -> Response {
 
 /// POST /address/new - derive a fresh receive address.
 async fn new_address(State(state): State<Arc<AppState>>) -> Response {
-    let mut wallet = state.wallet.lock().await;
+    // Same contention rule as /balance: during a scan the overview route
+    // still polls this endpoint, and parking here stalls every page load
+    // for the full client timeout even though only the lock is busy.
+    let Ok(mut wallet) = state.wallet.try_lock() else {
+        return sync_busy_response();
+    };
     match wallet.as_mut() {
         Some(w) => match w.get_address(AddressIndex::New) {
             Ok(info) => Json(json!({ "ok": true, "address": info.address.to_string() })).into_response(),
@@ -737,7 +805,9 @@ async fn new_address(State(state): State<Arc<AppState>>) -> Response {
 
 /// GET /address/current - last unused address (for the Receive view).
 async fn current_address(State(state): State<Arc<AppState>>) -> Response {
-    let mut wallet = state.wallet.lock().await;
+    let Ok(mut wallet) = state.wallet.try_lock() else {
+        return sync_busy_response();
+    };
     match wallet.as_mut() {
         Some(w) => match w.get_address(AddressIndex::LastUnused) {
             Ok(info) => Json(json!({ "ok": true, "address": info.address.to_string() })).into_response(),
@@ -841,7 +911,13 @@ async fn send(State(state): State<Arc<AppState>>, Json(req): Json<SendReq>) -> R
     let res = spawn_blocking(move || -> Result<String> {
         let start_time = *st.sync_start_time.lock().unwrap_or_else(|p| p.into_inner());
         let chain = RpcBlockchain::from_config(&st.config.rpc_config(start_time))?;
-        let mut guard = st.wallet.blocking_lock();
+        // Never park behind a scan: a request that parks here outlives the
+        // client's 60s timeout, the user sees "may or may not have been
+        // broadcast" and a retry then queues a SECOND spend behind the same
+        // lock - the textbook path to paying twice. Fail fast with the same
+        // 503 the read endpoints use; the UI disables the form while a scan
+        // runs so this is rarely surfaced raw.
+        let mut guard = st.wallet.try_lock().map_err(|_| anyhow!(SYNC_BUSY))?;
         let Some(w) = guard.as_mut() else {
             bail!("wallet not created yet - POST /wallet first");
         };
@@ -874,6 +950,7 @@ async fn send(State(state): State<Arc<AppState>>, Json(req): Json<SendReq>) -> R
             spawn_sync(&state);
             Json(json!({ "ok": true, "txid": txid })).into_response()
         }
+        Ok(Err(e)) if e.to_string().contains(SYNC_BUSY) => sync_busy_response(),
         Ok(Err(e)) => internal_error(e),
         Err(e) => internal_error(anyhow!("join error: {e}")),
     }
@@ -1090,5 +1167,32 @@ mod chain_info_tests {
         assert_eq!(node["reachable"], false);
         assert_eq!(node["pruned"], false);
         assert_eq!(node["synced"], false);
+    }
+}
+
+#[cfg(test)]
+mod prune_guard_tests {
+    use super::horizon_safe_on_pruned;
+
+    #[test]
+    fn refuses_full_history_restores() {
+        assert!(!horizon_safe_on_pruned(0, Some(1_799_900_000), 1_800_000_000));
+    }
+
+    #[test]
+    fn accepts_wallets_created_now() {
+        // created_at within the 24h slack of the prune-window start
+        assert!(horizon_safe_on_pruned(1_799_950_000, Some(1_799_900_000), 1_800_000_000));
+        // and when the stats RPC is unavailable the cutoff is "now"
+        assert!(horizon_safe_on_pruned(1_799_990_000, None, 1_800_000_000));
+    }
+
+    #[test]
+    fn refuses_restores_inside_the_pruned_range() {
+        // a timestamp years old: the old `horizon < prune_height` compare
+        // (1.7e9 < 8.4e5) could never fire and the guard was dead code
+        assert!(!horizon_safe_on_pruned(1_000_000_000, Some(1_799_900_000), 1_800_000_000));
+        // stats unavailable: conservative cutoff = now, old restore refused
+        assert!(!horizon_safe_on_pruned(1_000_000_000, None, 1_800_000_000));
     }
 }

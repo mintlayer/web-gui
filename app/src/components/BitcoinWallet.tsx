@@ -70,6 +70,7 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
   const [noticeIsError, setNoticeIsError] = useState(false);
 
   const [newMnemonic, setNewMnemonic] = useState<string | null>(null);
+  const [seedVerified, setSeedVerified] = useState(false);
 
   // Create / restore (2FA-gated)
   const [setupTotp, setSetupTotp] = useState('');
@@ -113,6 +114,16 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  // While a scan runs, the read endpoints fail fast (503) and the overview
+  // route serves nulls: poll through the scan so balance, history and the
+  // receive address fill in as progress lands instead of sitting empty
+  // until the user hits refresh manually.
+  useEffect(() => {
+    if (!overview?.status?.syncing) return;
+    const t = setInterval(() => { void refresh(); }, 8000);
+    return () => clearInterval(t);
+  }, [overview?.status?.syncing, refresh]);
 
   // Best-effort fee hint for the send form. Re-checked on mount and again
   // right before a send when it is still missing: the node may simply not
@@ -158,6 +169,7 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
       setRestoreConfirm('');
       // Restores return no mnemonic - only a fresh generate shows the backup step.
       setNewMnemonic(res.mnemonic ?? null);
+      setSeedVerified(false);
       await refresh();
     } catch (err) {
       // The code may already be burned by this attempt - never leave stale
@@ -198,8 +210,10 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
     if (restoreConfirm !== 'I UNDERSTAND') return;
     const seed = cleanSeed(restoreSeed);
     const words = seed.split(/\s+/).filter(Boolean);
-    if (words.length !== 12 && words.length !== 24) {
-      setSetupError(`A seed phrase has 12 or 24 words - this one has ${words.length}.`);
+    // BIP39 defines 12/15/18/21/24-word mnemonics; the checksum verdict
+    // belongs to the sidecar (Mnemonic::parse_in).
+    if (![12, 15, 18, 21, 24].includes(words.length)) {
+      setSetupError(`A seed phrase has 12, 15, 18, 21 or 24 words - this one has ${words.length}.`);
       return;
     }
     createWallet(seed);
@@ -526,9 +540,15 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
             mnemonic={newMnemonic}
             walletPath="Bitcoin hot wallet (bdk sidecar on this machine)"
             recoverHint="one-time-only"
+            onVerified={() => setSeedVerified(true)}
           />
-          <button onClick={() => { setNewMnemonic(null); refresh(); }} className={`${primaryBtn} mt-4`}>
-            Continue
+          <button
+            onClick={() => { setNewMnemonic(null); setSeedVerified(false); refresh(); }}
+            disabled={!seedVerified}
+            title={seedVerified ? undefined : 'Verify your phrase to continue - it is never shown again.'}
+            className={`${primaryBtn} mt-4 disabled:opacity-40 disabled:cursor-not-allowed`}
+          >
+            {seedVerified ? 'Continue' : 'Verify your phrase to continue'}
           </button>
         </div>
       )}
@@ -751,8 +771,13 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
                     required
                   />
                 </div>
-                <button type="submit" disabled={busy} className={`${primaryBtn} w-full`}>
-                  {busy ? 'Signing…' : 'Review & send'}
+                <button
+                  type="submit"
+                  disabled={busy || overview.status?.syncing}
+                  title={overview.status?.syncing ? 'A wallet scan is running - sending is paused until it finishes.' : undefined}
+                  className={`${primaryBtn} w-full disabled:opacity-40 disabled:cursor-not-allowed`}
+                >
+                  {overview.status?.syncing ? 'Scanning - sending paused' : busy ? 'Signing…' : 'Review & send'}
                 </button>
               </form>
             </div>

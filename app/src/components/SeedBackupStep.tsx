@@ -13,6 +13,8 @@ export interface SeedBackupStepProps {
    * one-time seed is how backups get skipped.
    */
   recoverHint?: 'management-seed-reveal' | 'one-time-only';
+  /** Fired once when the verification step succeeds. */
+  onVerified?: () => void;
 }
 
 type BackupPhase =
@@ -311,7 +313,7 @@ function SeedSuccessPanel({
 
 // ── Root component ────────────────────────────────────────────────────────────
 
-export default function SeedBackupStep({ mnemonic, walletPath, recoverHint }: SeedBackupStepProps) {
+export default function SeedBackupStep({ mnemonic, walletPath, recoverHint, onVerified }: SeedBackupStepProps) {
   const words = mnemonic.trim().split(/\s+/);
   const [step, setStep] = useState<BackupPhase>({ phase: 'display' });
   const shakeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -333,6 +335,7 @@ export default function SeedBackupStep({ mnemonic, walletPath, recoverHint }: Se
     );
     if (allCorrect) {
       setStep({ phase: 'success' });
+      onVerified?.();
     } else {
       if (shakeTimer.current) clearTimeout(shakeTimer.current);
       // Keep the entries the user got right - clearing all four on a failed
