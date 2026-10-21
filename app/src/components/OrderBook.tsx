@@ -142,6 +142,7 @@ function BuySellPanel({
   pairBids,
   mlBalance,
   tokenBalance,
+  pairDecimals,
   onCreated,
   onPairRefresh,
   prefill,
@@ -152,6 +153,8 @@ function BuySellPanel({
   pairBids: OrderInfo[];
   mlBalance: string | null;
   tokenBalance: string | null;
+  /** Pair token's number_of_decimals (SSR-resolved) for pre-burn validation. */
+  pairDecimals: number;
   onCreated: () => void;
   onPairRefresh: () => void;
   /** Order-book rows never execute here - a click prefills this form. */
@@ -213,6 +216,10 @@ function BuySellPanel({
     type === "limit"
       ? (mulDecimal(amount, "1") !== null && Number(amount) > 0 &&
          mulDecimal(price, "1") !== null && Number(price) > 0 &&
+         // Token legs (give on sell, ask on buy) honor the pair token's
+         // own precision - 18dp-generic gates let knowable rejections
+         // through to burn the code.
+         isValidAmount(amount, pairDecimals) &&
          // The limit order's Coin leg is the ML total: the coin's own
          // precision cap (11 dp) applies to the PRODUCT, not just the
          // inputs - a 26-dp total would 400 after the code check.
@@ -220,7 +227,8 @@ function BuySellPanel({
       : side === "buy"
         ? (mulDecimal(mlAmount, "1") !== null && Number(mlAmount) > 0 &&
            isValidAmount(mlAmount, 11) && !!bestAsk)
-        : (mulDecimal(amount, "1") !== null && Number(amount) > 0 && !!bestBid)
+        : (mulDecimal(amount, "1") !== null && Number(amount) > 0 &&
+           isValidAmount(amount, pairDecimals) && !!bestBid)
   );
 
   const failTotp = () => {
@@ -241,6 +249,12 @@ function BuySellPanel({
           // "0.30000000000000004" the daemon rejects after a wasted TOTP code.
           const total = mulDecimal(amount, price);
           if (total === null) throw new Error("Invalid amount or price");
+          // Token legs honor the pair token's precision: a 3-dp amount on a
+          // 2-decimal token is a guaranteed daemon rejection after the
+          // code check (the API gate is 18dp-generic).
+          if (!isValidAmount(amount, pairDecimals)) {
+            throw new Error(`Amount supports up to ${pairDecimals} decimal places for ${ticker}`);
+          }
           // Re-checked at submit: fields can change between the last
           // render and this handler, and a >11-dp ML total is a
           // guaranteed daemon rejection after the code check.
@@ -279,6 +293,22 @@ function BuySellPanel({
           // fail client-side, not server-side after the code is spent.
           if (mulDecimal(fillAmt, "1") === null || !(Number(fillAmt) > 0)) {
             throw new Error("Enter a plain decimal amount (e.g. 12.5)");
+          }
+          // Market sells exchange tokens - honor the pair token's decimals.
+          if (side === "sell" && !isValidAmount(fillAmt, pairDecimals)) {
+            throw new Error(`Amount supports up to ${pairDecimals} decimal places for ${ticker}`);
+          }
+          // Cap at the target order's remaining ask (both sides): the ask
+          // order's ask_balance is what it still wants (ML for a buy, tokens
+          // for a sell). Overfilling is a guaranteed chainstate rejection
+          // (OrderOverbid) after the code is spent.
+          const remaining = targetOrder.existing_order_data?.ask_balance.decimal;
+          if (
+            remaining !== undefined &&
+            mulDecimal(remaining, "1") !== null &&
+            Number(fillAmt) > Number(remaining)
+          ) {
+            throw new Error(`Order only has ${remaining} ${side === "buy" ? "ML" : ticker} remaining - reduce the amount`);
           }
           const r = await stakeTrade({
             action: "order_fill",
@@ -781,7 +811,7 @@ function PairBookPanel({
 
 interface Props {
   initialOwnOrders: OrderInfo[];
-  balanceTokens?: { tokenId: string; ticker: string }[];
+  balanceTokens?: { tokenId: string; ticker: string; decimals: number }[];
   initialTokenId?: string | null;
 }
 
@@ -1146,6 +1176,7 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
             pairBids={pairBids}
             mlBalance={mlBalance}
             tokenBalance={tokenBalance}
+            pairDecimals={balanceTokens.find(b => b.tokenId === selectedTokenId)?.decimals ?? 18}
             onCreated={refreshOwn}
             onPairRefresh={() => selectedTokenId && loadPairOrders(selectedTokenId)}
             prefill={bookPrefill}
