@@ -1,7 +1,7 @@
 ---
 import ManagementLayout from '@/layouts/ManagementLayout.astro';
-import { listTransactions, listPendingTransactions, getTransactionSignedRaw, isWalletNotOpenError, WalletRpcError, type TransactionInfo } from '@/lib/wallet-rpc';
-import { decodeSignedTransaction, outputVariant, isTransferOutput, outputValueLabel, type DecodedTransaction } from '@/lib/tx-decoder';
+import { listTransactions, listPendingTransactions, getTransactionSignedRaw, isWalletNotOpenError, getTokensInfo, WalletRpcError, type TransactionInfo } from '@/lib/wallet-rpc';
+import { decodeSignedTransaction, outputVariant, isTransferOutput, outputValueLabel, tokenIdsOfOutput, type DecodedTransaction } from '@/lib/tx-decoder';
 
 const network = (process.env.NETWORK ?? 'mainnet').toLowerCase();
 // Three-way map: regtest/signet have no public explorer, links degrade to text.
@@ -38,6 +38,21 @@ try {
   error = err instanceof WalletRpcError ? err.message : (err as Error).message;
 }
 
+// Resolve token precisions once (batched) so transfer amounts render as
+// "1.5 (token …)" instead of raw atoms; unresolved ids fall back to an
+// explicit atoms label inside outputValueLabel.
+const tokenDecimals = new Map<string, number>();
+try {
+  const ids = [...new Set(
+    [...details.values()].flatMap(d => d?.outputs ?? []).flatMap(tokenIdsOfOutput),
+  )];
+  if (ids.length > 0) {
+    for (const info of await getTokensInfo(ids)) {
+      if (info?.type === 'FungibleToken') tokenDecimals.set(info.content.token_id, info.content.number_of_decimals);
+    }
+  }
+} catch { /* no decimals - atoms labels */ }
+
 function formatDate(timestamp: number) {
   return new Date(timestamp * 1000).toLocaleString();
 }
@@ -56,7 +71,7 @@ function outputSummary(detail: DecodedTransaction | null | undefined): string {
   }
 
   // All outputs are Transfer / LockThenTransfer - show value from first output
-  const label = outputValueLabel(detail.outputs[0]);
+  const label = outputValueLabel(detail.outputs[0], tokenDecimals);
   return label ?? 'Transfer';
 }
 ---

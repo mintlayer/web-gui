@@ -48,8 +48,10 @@ export async function recoverThenSwapWallet(
   // 4. The daemon leaves the recovered temp wallet open - close before swap
   try { await deps.walletClose(); } catch { /* already closed */ }
 
-  // 5. Swap: out with the old, in with the recovered temp
-  await deps.unlink(opts.localPath);
+  // 5. Swap: rename ALONE replaces the destination atomically. An unlink
+  //    before the rename would leave a crash window where the canonical
+  //    path is empty while the data lives only in the temp file - the UI
+  //    would then report not_found and invite creating a DIFFERENT wallet.
   await deps.rename(recoverLocalPath, opts.localPath);
 
   // 6. Open the recovered wallet at its canonical path
