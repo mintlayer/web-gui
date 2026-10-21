@@ -51,11 +51,17 @@ function loadStored(): StoredToken[] {
     // (each card dereferences tokenId) - drop, don't trust.
     const parsed: unknown = JSON.parse(localStorage.getItem(LS_KEY) ?? '[]');
     if (!Array.isArray(parsed)) return [];
+    // Token ids are bech32 token addresses from the wallet daemon (mmltk1…,
+    // the RPC post-process dehexifies them), not 64-hex - the old hex-only
+    // guard dropped every legitimate entry on load. Accept the bech32 shape
+    // too; the charset/length cap is junk protection, not validation (the
+    // augment rescan re-resolves real ids against the chain).
     return parsed.filter(
       (t): t is StoredToken =>
         typeof t === 'object' && t !== null &&
         typeof (t as StoredToken).tokenId === 'string' &&
-        /^[0-9a-f]{64}$/i.test((t as StoredToken).tokenId),
+        (/^[0-9a-f]{64}$/i.test((t as StoredToken).tokenId) ||
+          /^[a-z0-9]{20,120}$/i.test((t as StoredToken).tokenId)),
     );
   } catch {
     return [];

@@ -4,11 +4,14 @@ import { listTransactions, listPendingTransactions, getTransactionSignedRaw, isW
 import { decodeSignedTransaction, outputVariant, isTransferOutput, outputValueLabel, type DecodedTransaction } from '@/lib/tx-decoder';
 
 const network = (process.env.NETWORK ?? 'mainnet').toLowerCase();
+// Three-way map: regtest/signet have no public explorer, links degrade to text.
 const EXPLORER_BASE = (process.env.ML_EXPLORER_URL ?? (
-  network === 'testnet'
-    ? 'https://lovelace.explorer.mintlayer.org'
-    : 'https://explorer.mintlayer.org'
-)).replace(/\/$/, '');
+  network === 'mainnet'
+    ? 'https://explorer.mintlayer.org'
+    : network === 'testnet'
+      ? 'https://lovelace.explorer.mintlayer.org'
+      : ''
+)).replace(/\/+$/, '');
 
 let transactions: TransactionInfo[] = [];
 let pending: string[] = [];
@@ -162,6 +165,7 @@ function outputSummary(detail: DecodedTransaction | null | undefined): string {
 
                     <!-- TXID -->
                     <td class="px-4 py-3 font-mono text-xs text-gray-300 whitespace-nowrap">
+                      {EXPLORER_BASE ? (
                       <a
                         href={`${EXPLORER_BASE}/tx/${tx.id}`}
                         target="_blank"
@@ -171,6 +175,9 @@ function outputSummary(detail: DecodedTransaction | null | undefined): string {
                       >
                         {truncateTxId(tx.id)}
                       </a>
+                      ) : (
+                      <span title={tx.id}>{truncateTxId(tx.id)}</span>
+                      )}
                       <button
                         type="button"
                         class="ml-1.5 inline-flex items-center align-middle text-gray-600 hover:text-mint-400 transition-colors"

@@ -5,7 +5,7 @@ import DelegationPanel from '@/components/DelegationPanel';
 import { CreatePoolModal, DecommissionButton } from '@/components/PoolActions';
 import {
   getStakingStatus, listPools, listCreatedBlocks, listDelegations,
-  newAddress, showAddresses, isWalletNotOpenError,
+  showAddresses, isWalletNotOpenError,
   type PoolInfo, type CreatedBlock, type DelegationInfo,
 } from '@/lib/wallet-rpc';
 
@@ -26,9 +26,10 @@ try {
   ]);
   const addresses = await showAddresses(0, false);
   const unusedAddr = addresses.find(a => a.purpose === 'Receive' && !a.used);
-  decommAddress = unusedAddr
-    ? unusedAddr.address
-    : (await newAddress(0)).address;
+  // Prefill ONLY an existing unused address: minting one here ran address_new
+  // on every page view once the wallet ran out of fresh receive addresses.
+  // When none is left the modal fetches lazily on open (PoolActions).
+  decommAddress = unusedAddr ? unusedAddr.address : '';
 } catch (err) {
   if (isWalletNotOpenError(err)) {
     return new Response(null, { status: 302, headers: { Location: '/' } });

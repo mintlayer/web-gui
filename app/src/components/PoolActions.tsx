@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { watchTx } from "@/lib/txWatcher";
 import { submitWithToast } from "@/lib/toastStore";
 import { rpc } from '@/lib/client-rpc';
@@ -36,6 +36,18 @@ export function CreatePoolForm({ initialDecommissionAddress, onSuccess }: Create
   const [totp,         setTotp]         = useState("");
   const totpRef                         = useRef<HTMLInputElement>(null);
 
+  // The page pre-fills only an existing unused address. When the wallet has
+  // none left, fetch one lazily when the form actually opens instead of
+  // minting a fresh address on every page render.
+  useEffect(() => {
+    if (initialDecommissionAddress) return;
+    let alive = true;
+    freshAddress()
+      .then(addr => { if (alive) setDecommAddr(addr); })
+      .catch(() => { /* submit-time validation reports the empty field */ });
+    return () => { alive = false; };
+  }, [initialDecommissionAddress]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -57,6 +69,9 @@ export function CreatePoolForm({ initialDecommissionAddress, onSuccess }: Create
         async () => {
           // Pool creation burns a large network fee (~1000 ML) and is
           // TOTP-gated server-side via /api/stake-trade.
+          if (!decommAddr) {
+            throw new Error('No receive address available yet - reopen the form to fetch one.');
+          }
           const r = await stakeTrade({
             action: "staking_create_pool",
             params: {
