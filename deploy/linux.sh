@@ -185,6 +185,16 @@ bootstrap_remote() {
     read -r input
     INSTALL_DIR="${input:-${HOME}/mintlayer}"
   fi
+  # A path with whitespace completes the install but breaks the
+  # feature-enabler's POSIX-sh compose() helper (unquoted -f args) and
+  # several .env lines - every Settings toggle would fail while the stack
+  # itself works. Same validation style as the domain prompt.
+  while [[ -z "$INSTALL_DIR" ]] || [[ "$INSTALL_DIR" =~ [[:space:]] ]]; do
+    printf "${CYAN}│${RESET}  ${RED}The install path must not contain spaces${RESET}\n"
+    printf "${CYAN}│${RESET}  Directory: ${GRAY}(${HOME}/mintlayer)${RESET} "
+    read -r INSTALL_DIR
+    INSTALL_DIR="${INSTALL_DIR:-${HOME}/mintlayer}"
+  done
 
   mkdir -p "$INSTALL_DIR"
   cd "$INSTALL_DIR"

@@ -885,6 +885,17 @@ PROJECT_DIR_HOST=$(pwd)
 EOF
 )
 chmod 600 .env 2>/dev/null || true
+
+# A checkout path with whitespace completes the install but breaks the
+# feature-enabler's POSIX-sh compose() helper (unquoted -f args) - every
+# Settings toggle would fail while the stack itself works. Fail loudly now.
+case "$PROJECT_DIR_HOST" in
+  *[[:space:]]*)
+    err "The repository path contains whitespace: $PROJECT_DIR_HOST"
+    err "Settings-page feature toggles will not work. Move this checkout to a path without spaces and re-run init.sh."
+    exit 1
+    ;;
+esac
 ok ".env written"
 
 # ── Write credentials to SQLite via temporary alpine container ───────────────
