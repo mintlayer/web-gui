@@ -727,7 +727,14 @@ divider
 # GIDs below 1000 are reserved system groups on Linux and may already exist
 # inside the container (e.g. macOS 'staff' GID 20 = Linux 'dialout' GID 20).
 # Use 1000 in that case - it's the standard unprivileged GID on Linux.
-ML_USER_ID=$(id -u 2>/dev/null || echo "1000")
+# The same floor applies to the UID: a sudo-run installer would otherwise
+# map the container's mintlayer user to uid 0 (root).
+_raw_uid=$(id -u 2>/dev/null || echo "1000")
+if (( _raw_uid < 1000 )); then
+  ML_USER_ID=1000
+else
+  ML_USER_ID=$_raw_uid
+fi
 _raw_gid=$(id -g 2>/dev/null || echo "1000")
 if (( _raw_gid < 1000 )); then
   ML_GROUP_ID=1000
@@ -915,7 +922,7 @@ pref_sql() {
 # The seeding container runs as root; tighten ownership of the prefs DB to the
 # invoking user so the app (and only it) can read the TOTP secret/hash.
 docker run --rm -v "$(pwd)/mintlayer-data/prefs:/prefs" alpine \
-  chown -R "$(id -u):$(id -g)" /prefs 2>/dev/null || true
+  chown -R "${ML_USER_ID}:${ML_GROUP_ID}" /prefs 2>/dev/null || true
 ok "Credentials written to mintlayer-data/prefs/mintlayer_prefs.sqlite"
 
 # ── Create data directories ──────────────────────────────────────────────────
