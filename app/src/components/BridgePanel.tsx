@@ -413,17 +413,23 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
   // 25% / 50% / Max of the wallet balance, capped by the per-request max.
   const applyFraction = useCallback(
     (fraction: number) => {
-      const balance = parseFloat(ethBalance ?? '');
+      if (ethBalance === null) return;
+      const balance = parseFloat(ethBalance);
       if (!Number.isFinite(balance) || balance <= 0) return;
       let target = balance * fraction;
       const max = asset?.maxAmountPerRequest;
       if (max !== undefined && /^\d+(\.\d+)?$/.test(max)) {
         target = Math.min(target, parseFloat(max));
       }
-      // Truncate toward zero at 8 dp - rounding could exceed the real
-      // balance by dust and guarantee a MetaMask revert on Max.
-      const scaled = Math.floor(target * 1e8) / 1e8;
-      setAmount(scaled.toFixed(8).replace(/\.?0+$/, ''));
+      // Truncate toward zero at the token's own precision: the formatted
+      // balance carries exactly the token's decimal count (formatUnits), so
+      // a 6-decimal USDC amount is cut at 6 dp. The old hardcoded 8 dp
+      // produced amounts parseUnits rejects for 6-decimal assets
+      // ("fractional component exceeds decimals") before any wallet prompt.
+      const decimals = (ethBalance.split('.')[1] ?? '').length;
+      const factor = 10 ** decimals;
+      const scaled = Math.floor(target * factor) / factor;
+      setAmount(scaled.toFixed(decimals).replace(/\.?0+$/, ''));
     },
     [ethBalance, asset?.maxAmountPerRequest],
   );
