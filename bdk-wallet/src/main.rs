@@ -143,6 +143,11 @@ struct AppState {
     wallet: AsyncMutex<Option<BdkWallet>>,
     /// Wallet creation unix time - sync horizon for freshly created wallets.
     sync_start_time: Mutex<u64>,
+    /// Unix time of the last SUCCESSFUL sync. After the first sync bdk
+    /// rescans from this point (its recorded db sync time), not from the
+    /// creation horizon - the pruned-mode guard must use the same origin or
+    /// a healthy wallet freezes once it ages out of the prune window.
+    last_sync_time: Mutex<Option<u64>>,
     syncing: AtomicBool,
     /// Human-readable failure from the most recent sync attempt (cleared on
     /// success). Surfaced via /status so a silently-refused or failing scan
@@ -429,6 +434,13 @@ fn classify_send_error(msg: &str) -> Option<(axum::http::StatusCode, String)> {
     let lower = msg.to_lowercase();
     if lower.contains("insufficient") || lower.contains("not enough") {
         Some((axum::http::StatusCode::BAD_REQUEST, "insufficient funds".into()))
+    } else if lower.contains("dust") {
+        // bdk: "Output below the dust limit: N" - a user-fixable amount
+        // problem, not an internal error.
+        Some((
+            axum::http::StatusCode::BAD_REQUEST,
+            "amount is below the dust limit - send a larger amount".into(),
+        ))
     } else if lower.contains("signing failed") || lower.contains("could not finalize") {
         Some((axum::http::StatusCode::BAD_REQUEST, "transaction signing failed".into()))
     } else if lower.contains("wallet not created yet") {
@@ -463,6 +475,8 @@ async fn open_wallet(state: &Arc<AppState>, mnemonic: &str, created_at: u64) -> 
         .await
         .map_err(|e| anyhow!("join error: {e}"))??;
     *state.sync_start_time.lock().unwrap_or_else(|p| p.into_inner()) = created_at;
+    // A different wallet invalidates the previous one's sync-time knowledge.
+    *state.last_sync_time.lock().unwrap_or_else(|p| p.into_inner()) = None;
     *state.wallet.lock().await = Some(wallet);
     Ok(())
 }
@@ -622,7 +636,14 @@ fn spawn_sync(state: &Arc<AppState>) -> bool {
     }
     let st = Arc::clone(state);
     tokio::spawn(async move {
-        let horizon = *st.sync_start_time.lock().unwrap_or_else(|p| p.into_inner());
+        // bdk's next scan starts from the last recorded sync time once one
+        // exists (only a FIRST sync still uses the creation horizon), so the
+        // prune guard evaluates the same origin bdk will actually scan from.
+        let horizon = st
+            .last_sync_time
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or(*st.sync_start_time.lock().unwrap_or_else(|p| p.into_inner()));
         // A scan horizon older than the node's prune window would silently
         // miss coins: refuse instead (covers full-history restores AND
         // narrowed horizons that still fall inside the pruned range).
@@ -668,6 +689,11 @@ fn spawn_sync(state: &Arc<AppState>) -> bool {
                 Ok(Ok(())) => {
                     info!("wallet sync complete");
                     *st.last_sync_error.lock().unwrap_or_else(|p| p.into_inner()) = None;
+                    // Advance the prune-guard horizon: the NEXT scan starts
+                    // from here (bdk's recorded sync time), not from the
+                    // creation horizon, so a wallet kept in sync never ages
+                    // out of the prune window.
+                    *st.last_sync_time.lock().unwrap_or_else(|p| p.into_inner()) = Some(now_unix());
                 }
                 Ok(Err(e)) => {
                     warn!("wallet sync failed: {e:#}");
@@ -1019,6 +1045,7 @@ async fn main() -> Result<()> {
         config,
         wallet: AsyncMutex::new(None),
         sync_start_time: Mutex::new(now_unix()),
+        last_sync_time: Mutex::new(None),
         syncing: AtomicBool::new(false),
         last_sync_error: Mutex::new(None),
         // Bounded timeouts on the bitcoind client: without them a hung/rpc-
@@ -1034,15 +1061,30 @@ async fn main() -> Result<()> {
     // Auto-load the wallet if a seed was previously persisted.
     match fs::read_to_string(state.seed_path()) {
         Ok(raw) => match serde_json::from_str::<SeedFile>(&raw) {
-            Ok(file) => match open_wallet(&state, &file.mnemonic, file.created_at).await {
-                Ok(()) => {
-                    info!("wallet loaded from persisted seed");
-                    // Boot-time scan so balances and history are current
-                    // without manual action after a restart.
-                    spawn_sync(&state);
+            Ok(file) => {
+                if file.network != network_name(state.config.network) {
+                    // seed.json records the network it was created on: opening
+                    // the same seed under another network would silently
+                    // re-derive the other coin path (84'/1'/... vs 84'/0'/...)
+                    // over the same address cache - a wallet that shows 0.00
+                    // forever. Refuse to load and say how to recover.
+                    error!(
+                        "seed.json was created for network '{}' but BITCOIN_NETWORK is '{}' - not loading; restore the previous network or delete the bitcoin-wallet-data dir to start over",
+                        file.network,
+                        network_name(state.config.network)
+                    );
+                } else {
+                    match open_wallet(&state, &file.mnemonic, file.created_at).await {
+                        Ok(()) => {
+                            info!("wallet loaded from persisted seed");
+                            // Boot-time scan so balances and history are current
+                            // without manual action after a restart.
+                            spawn_sync(&state);
+                        }
+                        Err(e) => error!("failed to load persisted wallet: {e:#}"),
+                    }
                 }
-                Err(e) => error!("failed to load persisted wallet: {e:#}"),
-            },
+            }
             Err(e) => error!("seed file unreadable: {e}"),
         },
         Err(_) => info!("no seed found - POST /wallet to create or restore"),
