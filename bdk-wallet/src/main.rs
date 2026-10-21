@@ -617,7 +617,13 @@ async fn create_wallet(
         // A failed write can leave a truncated seed.json behind; without
         // this cleanup every retry 409s on "wallet already exists" and the
         // wallet is unrecoverable through the API (shell-only fix).
-        let _ = tokio::fs::remove_file(&state.seed_path()).await;
+        // BUT a "file already exists" failure proves a CONCURRENT create
+        // won the race and owns that file - removing it would delete the
+        // winner's only seed record (link-seed seeds are never shown to
+        // anyone). Only clean up when we were the creator.
+        if !e.downcast_ref::<std::io::Error>().map_or(false, |io| io.kind() == std::io::ErrorKind::AlreadyExists) {
+            let _ = tokio::fs::remove_file(&state.seed_path()).await;
+        }
         return internal_error(e.context("persisting seed"));
     }
 

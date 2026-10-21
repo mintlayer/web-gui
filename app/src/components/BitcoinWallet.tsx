@@ -175,7 +175,17 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
       // The code may already be burned by this attempt - never leave stale
       // six digits in the field for the user to blindly resubmit.
       setSetupTotp('');
-      setSetupError((err as Error).message);
+      const status = (err as { status?: number }).status;
+      if (status === 409) {
+        // The create mutates server state and may have SUCCEEDED before a
+        // dropped/timed-out response - the retry's 409 ("wallet already
+        // exists") then proves it exists. Refresh and show it instead of
+        // a dead-end error.
+        setSetupError(null);
+        await refresh();
+      } else {
+        setSetupError((err as Error).message);
+      }
     } finally {
       setBusy(false);
     }
@@ -198,7 +208,18 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
       await refresh();
     } catch (err) {
       setLinkTotp('');
-      setLinkError((err as Error).message);
+      const status = (err as { status?: number }).status;
+      if (status === 409) {
+        // The link call mutates server state and may have SUCCEEDED before a
+        // dropped/timed-out response (502/504 path) - a retry 409s because
+        // the wallet already exists. Treat that as success: refresh so the
+        // loaded wallet shows instead of a dead-end error.
+        setLinkError(null);
+        showNotice('BTC wallet already linked - loading it.');
+        await refresh();
+      } else {
+        setLinkError((err as Error).message);
+      }
     } finally {
       setBusy(false);
     }
