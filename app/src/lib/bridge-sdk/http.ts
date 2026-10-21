@@ -53,6 +53,10 @@ export async function apiRequest<T>(
       ? { 'Content-Type': 'application/json', ...headers }
       : headers,
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    // Bounded so a hung bridge host cannot pin a poll forever: uncounted
+    // pending fetches never trip the panel's failure backoff and pile up
+    // until the browser's per-host connection pool starves.
+    signal: AbortSignal.timeout(10_000),
   };
 
   let response: Response;

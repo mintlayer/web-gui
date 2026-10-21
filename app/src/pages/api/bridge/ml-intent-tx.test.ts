@@ -139,7 +139,8 @@ describe('POST /api/bridge/ml-intent-tx', () => {
     const res = await POST(makeCtx({ token_id: 'crv', amount: '1', intent }));
     expect(res.status).toBe(503);
     const body = (await res.json()) as Record<string, unknown>;
-    expect(body.error).toBe('bridge M2E deposits are not configured');
+    // Fail closed: no cross-flavor fallback, the error names the network gap.
+    expect(body.error).toBe('bridge M2E deposits are not configured for this network');
   });
 
   it('returns 503 when the bridge config is unreachable', async () => {

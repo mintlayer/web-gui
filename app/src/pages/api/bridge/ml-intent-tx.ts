@@ -44,14 +44,16 @@ interface AgentsConfig {
 
 function pickFlavorConfig(config: AgentsConfig) {
   const flavors = config.eth_flavor_specific_config ?? {};
-  // Flavor keys are network-specific ('' = mainnet, 'sepolia' = testnet) and
-  // their order is not - pick the one matching the configured network first.
+  // Flavor keys are network-specific ('' = mainnet, 'sepolia' = testnet).
+  // Fail closed on a missing flavor: falling back to another flavor's m2e
+  // config would sign an intent paying a DIFFERENT network's bridge address,
+  // which this deployment's bridge keys do not control - an unrecoverable
+  // transfer. The caller turns null into a 503.
   const preferred = config.network_type === 'mainnet' ? '' : 'sepolia';
-  const key =
-    flavors[preferred]?.m2e != null
-      ? preferred
-      : (Object.keys(flavors).find((k) => flavors[k]?.m2e != null) ?? '');
-  return { flavor: key, cfg: flavors[key] };
+  if (!Object.prototype.hasOwnProperty.call(flavors, preferred) || flavors[preferred]?.m2e == null) {
+    return null;
+  }
+  return { flavor: preferred, cfg: flavors[preferred] };
 }
 
 /**
@@ -118,8 +120,13 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
       // for a request the wallet would reject anyway.
       return json({ ok: false, error: `token ${tokenId} is not bridged` }, 400);
     }
-    const { cfg } = pickFlavorConfig(config);
-    destination = cfg?.m2e?.deposit_tx_destination ?? '';
+    const picked = pickFlavorConfig(config);
+    if (!picked) {
+      // No cross-flavor fallback: paying the other flavor's bridge address
+      // would move funds this deployment does not control.
+      return json({ ok: false, error: 'bridge M2E deposits are not configured for this network' }, 503);
+    }
+    destination = picked.cfg?.m2e?.deposit_tx_destination ?? '';
     if (!destination) {
       return json({ ok: false, error: 'bridge M2E deposits are not configured' }, 503);
     }

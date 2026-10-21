@@ -116,12 +116,12 @@ describe('resolveTokenMetadata', () => {
     expect(fetchImpl).toHaveBeenNthCalledWith(
       1,
       expect.stringContaining('/token/tid1'),
-      { method: 'GET', headers: {} },
+      { method: 'GET', headers: {}, signal: expect.any(AbortSignal) },
     );
     expect(fetchImpl).toHaveBeenNthCalledWith(
       2,
       '/ipfs/QmMeta',
-      { method: 'GET', headers: {} },
+      { method: 'GET', headers: {}, signal: expect.any(AbortSignal) },
     );
     expect(meta?.name).toBe('Bridged Token');
   });

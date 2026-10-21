@@ -45,7 +45,14 @@ function Row({
   const [open, setOpen] = useState(false);
   const [failed, setFailed] = useState(false);
 
+  // Orphan rows (uuid prefixed orphan- = deposit broadcast but the bridge
+  // request never submitted) have no backend record: skip the poll entirely
+  // instead of surfacing a generic error on a guaranteed 404, and render
+  // the stored status text as final.
+  const orphan = entry.uuid.startsWith('orphan-');
+
   const load = useCallback(async () => {
+    if (orphan) return;
     try {
       const d = await sdk.getBridgeRequest(entry.uuid);
       const p = deriveProgress(d);
@@ -56,7 +63,7 @@ function Row({
     } catch {
       setFailed(true);
     }
-  }, [entry.uuid]);
+  }, [entry.uuid, orphan]);
 
   useEffect(() => {
     if (open && !detail && !failed) void load();
@@ -93,7 +100,9 @@ function Row({
       {open && (
         <div className="px-1 pb-3 text-xs text-gray-400">
           <p className="font-mono break-all">receiver {entry.receiver}</p>
-          <p className="font-mono break-all">request {entry.uuid}</p>
+          <p className="font-mono break-all">
+            {orphan ? `deposit tx ${entry.uuid.slice('orphan-'.length)} (the bridge request never submitted)` : `request ${entry.uuid}`}
+          </p>
           {failed && (
             <p className="mt-1 text-red-300">
               Couldn&apos;t load the current status.{' '}

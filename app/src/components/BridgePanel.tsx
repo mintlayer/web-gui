@@ -449,6 +449,14 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
       startedAt: new Date().toISOString(),
     });
     setHistoryToken((t) => t + 1);
+    // Reset the previous bridge's tracking state: a terminal progress card
+    // and a tripped poll backoff would both early-return the poll and WS
+    // effects, so the new bridge would render the old bridge's completed
+    // steps and never get refreshed.
+    setTrackedProgress(null);
+    setTrackedRequest(null);
+    setPollUnavailable(false);
+    pollFailuresRef.current = 0;
     setPhase('polling');
   }
 
@@ -719,7 +727,11 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
           // history entry so the deposit stays visible, then surface the
           // broadcast error with the tx hash for support/contact.
           appendHistory({
-            uuid: txHash,
+            // The bridge backend never saw this deposit, so no request with
+            // this id can ever resolve: prefix the id so the history rows
+            // render without polling a guaranteed 404 and never offer the
+            // dead Retry button.
+            uuid: `orphan-${txHash}`,
             direction,
             asset: assetTicker,
             amount: amount.trim(),
@@ -929,6 +941,7 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
             setDirection(next);
             setError(null);
             setInfo(null);
+            setReceiverSuggestion(null);
           }
         }}
       >
@@ -944,7 +957,7 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
             role="radio"
             aria-checked={direction === key}
             tabIndex={direction === key ? 0 : -1}
-            onClick={() => { setDirection(key); setError(null); setInfo(null); }}
+            onClick={() => { setDirection(key); setError(null); setInfo(null); setReceiverSuggestion(null); }}
             className={`rounded-xl border px-4 py-3 text-left transition-colors ${
               direction === key
                 ? 'border-mint-600 bg-mint-900/20'
