@@ -111,9 +111,12 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     return json(result);
   } catch (err) {
     const status = (err as { status?: number }).status ?? 500;
+    // 502/504 pass through (parity with wallet.ts): the link mutates state
+    // and may have SUCCEEDED after the client gave up - flattening to 400
+    // invites a retry that 409s and burns a second TOTP.
     return json(
       { ok: false, error: (err as Error).message },
-      status === 503 ? 503 : status === 409 ? 409 : 400,
+      status === 503 ? 503 : status === 504 ? 504 : status === 409 ? 409 : status === 502 ? 502 : 400,
     );
   }
 };

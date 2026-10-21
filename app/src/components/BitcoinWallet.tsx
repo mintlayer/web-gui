@@ -28,15 +28,23 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: init?.body ? { 'Content-Type': 'application/json' } : undefined,
   });
-  // Auth expiry and proxy errors return the login HTML or a plain-text 403,
-  // never JSON - parsing those surfaces a raw SyntaxError instead of the cause.
+  // Auth expiry returns the login HTML (or a plain-text 403), never JSON.
+  // Only a REAL auth signal bounces to /login: a 5xx rendered as an Astro
+  // error page is a server outage, and telling the user their session
+  // expired masks it.
   const contentType = res.headers.get('content-type') ?? '';
-  if (res.redirected || res.status === 401 || !contentType.includes('application/json')) {
+  if (res.redirected || res.status === 401 || res.status === 403 || (!res.ok && !contentType.includes('application/json'))) {
     window.location.assign('/login');
     throw new Error('Your session expired - redirecting to login…');
   }
   const data = (await res.json()) as T & { ok?: boolean; error?: string };
-  if (!res.ok || data.ok === false) throw new Error(data.error ?? `Request failed (${res.status})`);
+  if (!res.ok || data.ok === false) {
+    // Carry the HTTP status: callers distinguish 409 "already exists"
+    // (recovery: refresh + show the wallet) from real failures.
+    const err = new Error(data.error ?? `Request failed (${res.status})`) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
   return data;
 }
 
@@ -176,11 +184,10 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
       // six digits in the field for the user to blindly resubmit.
       setSetupTotp('');
       const status = (err as { status?: number }).status;
-      if (status === 409) {
-        // The create mutates server state and may have SUCCEEDED before a
-        // dropped/timed-out response - the retry's 409 ("wallet already
-        // exists") then proves it exists. Refresh and show it instead of
-        // a dead-end error.
+      // Only an "already exists" 409 proves the create landed (a dropped
+      // response after success). The pruned-node restore refusal ALSO
+      // 409s - treating that as success would hide a real refusal.
+      if (status === 409 && /already exists/i.test((err as Error).message)) {
         setSetupError(null);
         await refresh();
       } else {
@@ -209,11 +216,9 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
     } catch (err) {
       setLinkTotp('');
       const status = (err as { status?: number }).status;
-      if (status === 409) {
-        // The link call mutates server state and may have SUCCEEDED before a
-        // dropped/timed-out response (502/504 path) - a retry 409s because
-        // the wallet already exists. Treat that as success: refresh so the
-        // loaded wallet shows instead of a dead-end error.
+      // Same as the create path: only "already exists" proves the link
+      // landed; the pruned-node refusal is a different 409 and must show.
+      if (status === 409 && /already exists/i.test((err as Error).message)) {
         setLinkError(null);
         showNotice('BTC wallet already linked - loading it.');
         await refresh();
