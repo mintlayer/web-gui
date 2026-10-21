@@ -179,10 +179,19 @@ if (Astro.request.method === 'POST') {
           // racing POST otherwise opens a window where openWallet runs
           // against a half-written file, and the fixed path lets a peer
           // plant bytes between the check and the open.
-          const { writeFile, rename, access } = await import('node:fs/promises');
-          const tmpPath = `${destPath}.${Date.now()}.tmp`;
-          await writeFile(tmpPath, Buffer.from(await fileField.arrayBuffer()));
-          await rename(tmpPath, destPath);
+          const { writeFile, rename, access, unlink } = await import('node:fs/promises');
+          // randomUUID (not Date.now()): two POSTs in the same millisecond
+          // would otherwise share a temp name and clobber each other.
+          const tmpPath = `${destPath}.${crypto.randomUUID()}.tmp`;
+          try {
+            await writeFile(tmpPath, Buffer.from(await fileField.arrayBuffer()));
+            await rename(tmpPath, destPath);
+          } catch (e) {
+            // An aborted write must not leak orphan .tmp files in the
+            // uploads dir (the rename succeeded case consumed it already).
+            await unlink(tmpPath).catch(() => {});
+            throw e;
+          }
           await openWallet(daemonPath, password);
           result = { action: 'upload_success' };
         }

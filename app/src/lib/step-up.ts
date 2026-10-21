@@ -70,10 +70,14 @@ export function isTotpThrottled(key: string, now: number = Date.now()): boolean 
  * bot so a code observed at one channel cannot be replayed at another.
  */
 export function verifyAndBurnTotpCode(
-  code: string,
+  rawCode: string,
   secret: string,
   throttleKey?: string,
 ): TotpCheck {
+  // Trim here so EVERY caller treats ' 123456 ' uniformly - a paste with
+  // whitespace used to fail one caller while passing another, and failed
+  // checks burn throttle slots.
+  const code = rawCode.trim();
   const now = Date.now();
   pruneUsedCodes(now);
   pruneTotpFailures(now);
