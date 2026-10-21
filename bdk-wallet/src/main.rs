@@ -10,7 +10,7 @@ use axum::{
 use bdk::blockchain::rpc::{Auth, RpcBlockchain, RpcConfig, RpcSyncParams};
 use bdk::blockchain::{Blockchain, ConfigurableBlockchain};
 use bdk::database::any::SqliteDbConfiguration;
-use bdk::database::{AnyDatabase, AnyDatabaseConfig, ConfigurableDatabase};
+use bdk::database::{AnyDatabase, AnyDatabaseConfig, ConfigurableDatabase, Database};
 use bdk::wallet::AddressIndex;
 use bdk::{FeeRate, SignOptions, SyncOptions, TransactionDetails, Wallet};
 use bdk::bitcoin::{bip32::ExtendedPrivKey, Address, Network};
@@ -149,6 +149,11 @@ struct AppState {
     /// a healthy wallet freezes once it ages out of the prune window.
     last_sync_time: Mutex<Option<u64>>,
     syncing: AtomicBool,
+    /// Why the persisted wallet is NOT loaded (network mismatch, corrupt db,
+    /// unreadable seed). Surfaced via /status so the UI shows the actual
+    /// cause instead of offering the dead "Try Sync" remedy (a sync can
+    /// never load a wallet - only create/link can).
+    load_error: Mutex<Option<String>>,
     /// Human-readable failure from the most recent sync attempt (cleared on
     /// success). Surfaced via /status so a silently-refused or failing scan
     /// is visible to the client instead of a permanent 0.00 balance.
@@ -445,6 +450,21 @@ fn classify_send_error(msg: &str) -> Option<(axum::http::StatusCode, String)> {
         Some((axum::http::StatusCode::BAD_REQUEST, "transaction signing failed".into()))
     } else if lower.contains("wallet not created yet") {
         Some((axum::http::StatusCode::CONFLICT, "wallet not created yet - POST /wallet first".into()))
+    } else if lower.contains("unreachable")
+        || lower.contains("connection refused")
+        || lower.contains("connection closed")
+        || lower.contains("timed out")
+        || lower.contains("timeout")
+    {
+        // jsonrpc/reqwest transport failures while talking to bitcoind: a
+        // start-the-node state the UI already knows about, not an internal
+        // error - and the TOTP code the user just typed should not be burned
+        // on a condition it cannot fix. Checked BEFORE the broadcast arm so
+        // "broadcast failed: connection refused" reads as a node problem.
+        Some((
+            axum::http::StatusCode::BAD_GATEWAY,
+            "bitcoin node is unreachable - start the bitcoin stack and retry".into(),
+        ))
     } else if lower.contains("broadcast") || lower.contains("bitcoind rpc error") {
         Some((axum::http::StatusCode::BAD_GATEWAY, "bitcoin node refused the transaction".into()))
     } else if lower.contains("fee rate") || lower.contains("feerate") {
@@ -471,12 +491,30 @@ fn internal_error(e: anyhow::Error) -> Response {
 /// Load the wallet in a blocking task and store it in the shared state.
 async fn open_wallet(state: &Arc<AppState>, mnemonic: &str, created_at: u64) -> Result<()> {    let config = Arc::clone(&state.config);
     let mnemonic = mnemonic.to_string();
-    let wallet = spawn_blocking(move || build_wallet(&config, &mnemonic))
-        .await
-        .map_err(|e| anyhow!("join error: {e}"))??;
+    let loaded = spawn_blocking(move || {
+        let wallet = build_wallet(&config, &mnemonic)?;
+        // Seed the in-memory horizon from bdk's own PERSISTED sync record
+        // (wallet.sqlite's SyncTime, written at the end of every sync). The
+        // prune guard must evaluate the same origin bdk scans from - which
+        // across a restart is the db record, not the seed's created_at.
+        // Without this, a healthy wallet whose created_at aged past the
+        // prune window is refused forever on a pruned node: the refusal
+        // precedes any sync, so the in-memory time could never advance.
+        let db_sync_time = wallet
+            .database()
+            .get_sync_time()
+            .ok()
+            .flatten()
+            .map(|st| st.block_time.timestamp);
+        Ok::<(BdkWallet, Option<u64>), anyhow::Error>((wallet, db_sync_time))
+    })
+    .await
+    .map_err(|e| anyhow!("join error: {e}"))??;
+    let (wallet, db_sync_time) = loaded;
     *state.sync_start_time.lock().unwrap_or_else(|p| p.into_inner()) = created_at;
-    // A different wallet invalidates the previous one's sync-time knowledge.
-    *state.last_sync_time.lock().unwrap_or_else(|p| p.into_inner()) = None;
+    // A different wallet invalidates the previous one's sync-time knowledge;
+    // a persisted bdk sync record supersedes it (see above).
+    *state.last_sync_time.lock().unwrap_or_else(|p| p.into_inner()) = db_sync_time;
     *state.wallet.lock().await = Some(wallet);
     Ok(())
 }
@@ -679,8 +717,12 @@ fn spawn_sync(state: &Arc<AppState>) -> bool {
                 let start_time = *sb.sync_start_time.lock().unwrap_or_else(|p| p.into_inner());
                 let chain = RpcBlockchain::from_config(&sb.config.rpc_config(start_time))?;
                 let mut guard = sb.wallet.blocking_lock();
-                if let Some(w) = guard.as_mut() {
-                    w.sync(&chain, SyncOptions::default())?;
+                match guard.as_mut() {
+                    Some(w) => w.sync(&chain, SyncOptions::default())?,
+                    // Lost a race with a failed load after the route-level
+                    // check: fail loudly instead of reporting success (a
+                    // success would clear last_sync_error and fake progress).
+                    None => return Err(anyhow!("no wallet loaded")),
                 }
                 Ok(())
             })
@@ -716,6 +758,17 @@ fn spawn_sync(state: &Arc<AppState>) -> bool {
 
 /// POST /sync - sync the wallet against bitcoind (no-op while one runs).
 async fn sync(State(state): State<Arc<AppState>>) -> Response {
+    // A sync can never LOAD a wallet - only create/link/open can - so with
+    // no wallet loaded this is a knowable failure, not a success: 409 keeps
+    // the UI from recommending a dead remedy and leaves last_sync_error
+    // (e.g. the boot load failure) intact.
+    if state.wallet.lock().await.is_none() {
+        return (
+            axum::http::StatusCode::CONFLICT,
+            Json(json!({ "ok": false, "error": "no wallet loaded" })),
+        )
+            .into_response();
+    }
     let started = spawn_sync(&state);
     Json(json!({ "ok": true, "syncStarted": started })).into_response()
 }
@@ -749,6 +802,11 @@ async fn status(State(state): State<Arc<AppState>>) -> Response {
         },
         Err(_) => (true, None),
     };
+    let load_error = state
+        .load_error
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
 
     Json(json!({
         "ok": true,
@@ -759,6 +817,7 @@ async fn status(State(state): State<Arc<AppState>>) -> Response {
         "balance": balance,
         "syncing": syncing,
         "lastSyncError": last_sync_error,
+        "loadError": load_error,
     }))
     .into_response()
 }
@@ -1047,6 +1106,7 @@ async fn main() -> Result<()> {
         sync_start_time: Mutex::new(now_unix()),
         last_sync_time: Mutex::new(None),
         syncing: AtomicBool::new(false),
+        load_error: Mutex::new(None),
         last_sync_error: Mutex::new(None),
         // Bounded timeouts on the bitcoind client: without them a hung/rpc-
         // wedged node pins sync/send handlers until the HTTP client gives up
@@ -1073,19 +1133,36 @@ async fn main() -> Result<()> {
                         file.network,
                         network_name(state.config.network)
                     );
+                    *state
+                        .load_error
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner()) = Some(format!(
+                        "seed.json was created for network '{}' but BITCOIN_NETWORK is '{}' - switch back or delete the bitcoin-wallet-data dir to start over",
+                        file.network,
+                        network_name(state.config.network)
+                    ));
                 } else {
                     match open_wallet(&state, &file.mnemonic, file.created_at).await {
                         Ok(()) => {
                             info!("wallet loaded from persisted seed");
+                            *state.load_error.lock().unwrap_or_else(|p| p.into_inner()) = None;
                             // Boot-time scan so balances and history are current
                             // without manual action after a restart.
                             spawn_sync(&state);
                         }
-                        Err(e) => error!("failed to load persisted wallet: {e:#}"),
+                        Err(e) => {
+                            error!("failed to load persisted wallet: {e:#}");
+                            *state.load_error.lock().unwrap_or_else(|p| p.into_inner()) =
+                                Some(format!("persisted wallet failed to load: {e:#}"));
+                        }
                     }
                 }
             }
-            Err(e) => error!("seed file unreadable: {e}"),
+            Err(e) => {
+                error!("seed file unreadable: {e}");
+                *state.load_error.lock().unwrap_or_else(|p| p.into_inner()) =
+                    Some(format!("seed file unreadable: {e}"));
+            }
         },
         Err(_) => info!("no seed found - POST /wallet to create or restore"),
     }

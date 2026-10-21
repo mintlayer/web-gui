@@ -511,7 +511,7 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
         <div className={card}>
           <h2 className="text-base font-semibold text-gray-100 mb-2">Or restore from a different seed</h2>
           <p className="text-sm text-gray-400 mb-4">
-            Use a <span className="text-gray-200 font-medium">different 12 or 24-word seed phrase</span> for the BTC wallet.
+            Use a <span className="text-gray-200 font-medium">different seed phrase</span> for the BTC wallet (12, 15, 18, 21 or 24 words).
             The words are then stored by the BTC sidecar on this machine.
           </p>
           <button onClick={() => { setRestoreOpen(true); setSetupError(null); setRestoreConfirm(''); }} disabled={busy} className={`${primaryBtn} mb-4`}>
@@ -573,7 +573,7 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
           <div className={`${card} w-full max-w-lg max-h-[90vh] overflow-y-auto`}>
             <h2 className="text-base font-semibold text-gray-100 mb-2">Restore from seed phrase</h2>
             <p className="text-sm text-gray-400 mb-3">
-              Enter your 12 or 24-word seed phrase. It is stored by the BTC sidecar on this machine.
+              Enter your seed phrase (12, 15, 18, 21 or 24 words). It is stored by the BTC sidecar on this machine.
             </p>
             <form onSubmit={submitRestore} className="space-y-3">
               <div>
@@ -590,7 +590,7 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
                   className={`${input} resize-none`}
                 />
                 <p className="mt-1 text-xs text-gray-500">
-                  {restoreSeed.trim() ? restoreSeed.trim().split(/\s+/).length : 0} of 12 or 24 words
+                  {restoreSeed.trim() ? restoreSeed.trim().split(/\s+/).length : 0} words
                 </p>
               </div>
               <div>
@@ -688,9 +688,17 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
               ) : overview.status?.walletLoaded ? (
                 <p className="text-sm text-gray-500">Wallet is loading…</p>
               ) : (
-                <div className="text-sm text-yellow-300">
-                  Wallet file exists but could not be loaded. Try Sync, and if it persists restart
-                  the bitcoin wallet service (docker compose --profile bitcoin up -d).
+                <div className="text-sm text-yellow-300 space-y-2">
+                  <p>
+                    {overview.status?.loadError ??
+                      'Wallet file exists but could not be loaded.'}
+                  </p>
+                  {!overview.status?.loadError && (
+                    <p>
+                      Try Sync, and if it persists restart the bitcoin wallet service (docker
+                      compose --profile bitcoin up -d).
+                    </p>
+                  )}
                 </div>
               )}
             </div>
@@ -773,8 +781,14 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
                 </div>
                 <button
                   type="submit"
-                  disabled={busy || overview.status?.syncing}
-                  title={overview.status?.syncing ? 'A wallet scan is running - sending is paused until it finishes.' : undefined}
+                  disabled={busy || overview.status?.syncing || offline}
+                  title={
+                    offline
+                      ? 'The bitcoin node is unreachable - start the bitcoin stack and retry.'
+                      : overview.status?.syncing
+                        ? 'A wallet scan is running - sending is paused until it finishes.'
+                        : undefined
+                  }
                   className={`${primaryBtn} w-full disabled:opacity-40 disabled:cursor-not-allowed`}
                 >
                   {overview.status?.syncing ? 'Scanning - sending paused' : busy ? 'Signing…' : 'Review & send'}

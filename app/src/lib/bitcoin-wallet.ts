@@ -81,6 +81,8 @@ export interface BitcoinStatus {
   syncing?: boolean;
   /** Human-readable failure from the most recent sync attempt. */
   lastSyncError?: string | null;
+  /** Why the persisted wallet is not loaded (network mismatch, corrupt db). */
+  loadError?: string | null;
 }
 
 export interface BitcoinTransaction {
