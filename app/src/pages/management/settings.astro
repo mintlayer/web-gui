@@ -114,6 +114,11 @@ if (Astro.request.method === 'POST') {
 
     if (!['filebase', 'pinata', ''].includes(provider)) {
       result = { action: 'error', section, message: `Invalid provider: ${provider}` };
+    } else if (!getStringPref('auth.totp_secret')) {
+      // Verify against a configured secret only: burning against an empty
+      // one reports 'Invalid authenticator code.' and burns throttle slots
+      // while the real problem is that setup was never finished.
+      result = { action: 'error', section, message: '2FA is not configured. Complete first-time setup at /setup to enable it.' };
     } else {
       // Pinata/Filebase keys are third-party account credentials: whoever sets
       // them can pivot into the owner's pinning account. Same sensitivity class

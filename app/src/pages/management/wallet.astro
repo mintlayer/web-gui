@@ -202,6 +202,11 @@ if (Astro.request.method === 'POST') {
           { rpcPath: WALLET_RPC_PATH, localPath: WALLET_LOCAL_PATH, mnemonic },
         );
         info = await walletInfo().catch(() => null);
+        // Recompute the session state from the re-probe: a successful
+        // import on a previously closed wallet would otherwise keep
+        // rendering 'Wallet file is closed.' with a Reopen button while the
+        // info card above shows the freshly opened wallet.
+        sessionState = info ? 'open' : 'unknown';
         actionSuccess = 'Wallet recovered from seed phrase and blockchain scan complete.';
         }
       }
