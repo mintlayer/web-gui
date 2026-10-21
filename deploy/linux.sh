@@ -178,6 +178,12 @@ bootstrap_remote() {
   printf "${CYAN}◆${RESET} ${BOLD}Install location${RESET}\n"
   if [[ "$NONINTERACTIVE_MODE" == "yes" ]]; then
     INSTALL_DIR="${INSTALL_DIR:-${HOME}/mintlayer}"
+    # No stdin to re-prompt: a whitespace path here must FAIL, not be
+    # silently redirected to the default while the log claims otherwise.
+    if [[ "$INSTALL_DIR" =~ [[:space:]] ]]; then
+      err "INSTALL_DIR must not contain spaces (got: $INSTALL_DIR)"
+      exit 1
+    fi
     printf "${GRAY}│  Non-interactive: installing to %s${RESET}\n" "$INSTALL_DIR"
   else
     printf "${GRAY}│  Where should Mintlayer Web GUI be installed?${RESET}\n"
