@@ -2,10 +2,10 @@ import type { APIRoute } from 'astro';
 import { generateTotpSecret, getClientAddress } from '@/lib/auth';
 import { verifyAndBurnTotpCode } from '@/lib/step-up';
 import { getStringPref, setPref } from '@/lib/prefs-db';
-import { json, readFormData } from '@/lib/api-utils';
+import { json, LOGIN_BODY_LIMIT, readFormWithinLimit } from '@/lib/api-utils';
 
 export const POST: APIRoute = async ({ request, clientAddress }) => {
-  const form = await readFormData(request);
+  const form = await readFormWithinLimit(request, LOGIN_BODY_LIMIT);
   if (!form) return json({ ok: false, error: 'Invalid request body' }, 400);
 
   // Coerce non-strings (e.g. File parts) to '' so they fail validation cleanly

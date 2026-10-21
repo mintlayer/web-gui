@@ -1,10 +1,10 @@
 import type { APIRoute } from 'astro';
 import { resolvePasswordChange, applyPasswordChange } from '@/lib/password-change';
-import { json, readFormData } from '@/lib/api-utils';
+import { json, LOGIN_BODY_LIMIT, readFormWithinLimit } from '@/lib/api-utils';
 import { getClientAddress } from '@/lib/auth';
 
 export const POST: APIRoute = async ({ request, clientAddress }) => {
-  const form = await readFormData(request);
+  const form = await readFormWithinLimit(request, LOGIN_BODY_LIMIT);
   if (!form) return json({ ok: false, error: 'Invalid request body' }, 400);
 
   // form.get() returns string | File | null; a File part would bypass the length

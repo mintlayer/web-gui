@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@/lib/prefs-db', () => ({
   setPref: vi.fn(),
+  getStringPref: vi.fn(() => ''),
 }));
 
 vi.mock('@/lib/step-up', () => ({

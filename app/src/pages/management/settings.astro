@@ -158,8 +158,10 @@ if (Astro.request.method === 'POST') {
     // throwing on .trim().
     const rawThreshold = str(form.get('large_send_threshold'));
     const thresholdNum = Number(rawThreshold);
+    // >= 1: 0 would alert on every send (the behavior the comment below
+    // warns about); the form's min="1" already promises this to UI users.
     const threshold =
-      rawThreshold.trim() !== '' && Number.isFinite(thresholdNum) && thresholdNum >= 0
+      rawThreshold.trim() !== '' && Number.isFinite(thresholdNum) && thresholdNum >= 1
         ? String(Math.floor(thresholdNum))
         : '100';
     setPref('telegram.notify.large_send_threshold', threshold);
@@ -878,6 +880,10 @@ Astro.response.headers.set('Cache-Control', 'no-store');
               try {
                 const res = await fetch('/api/features/status');
                 const data = await res.json();
+                // A successful poll resets the counter: 3 CUMULATIVE blips
+                // across a 12-minute watch are normal LAN noise, only 3
+                // consecutive ones mean the watcher is really gone.
+                failures = 0;
                 const state = data.services?.['web-gui'];
                 if (!state) return;
                 if (state.pending) return;
@@ -896,10 +902,11 @@ Astro.response.headers.set('Cache-Control', 'no-store');
               } catch {
                 failures += 1;
                 if (failures >= 3) {
-                  // The enabler replaced this very container - a reload lands
-                  // on the new version.
                   window.clearInterval(timer);
                   setNote(noteEl, 'Applying - the interface restarts. Reload in a minute.', 'info');
+                  // Re-arm the buttons: without onDone the Upgrade/Roll back
+                  // controls stay disabled until a manual reload.
+                  onDone(false);
                 }
               }
             }, 4000);
