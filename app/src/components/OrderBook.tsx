@@ -1044,6 +1044,11 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
     setSelectedTokenId(id);
     setPairAsks([]);
     setPairBids([]);
+    // Drop the previous pair's decimals NOW: deselection loads nothing, so
+    // the stale override would otherwise validate manual-token orders
+    // against the wrong precision (false rejections one way, a burned TOTP
+    // the other) until some future pair load replaced it.
+    setPairDecimalsOverride(null);
     // A row-click prefill from the previous pair must not survive: the form
     // would otherwise sit at the old pair's price and place a nonsense
     // order on the new one. (Null is ignored by the panel effect, so typed
