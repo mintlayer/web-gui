@@ -31,7 +31,12 @@ function ensureStream() {
       if (msg.type === 'TxUpdated') {
         watchers.get(msg.tx_id)?.(msg.state);
       } else if (msg.type === 'TxDropped') {
-        watchers.get(msg.tx_id)?.({ type: 'Inactive' });
+        // A drop is definitive - the tx left the mempool. Map to Conflicted
+        // (which watchTx rejects immediately) instead of Inactive, whose
+        // keep-waiting semantics would burn the full timeout and then
+        // surface a neutral 'not tracked' hint for a tx that can never
+        // confirm.
+        watchers.get(msg.tx_id)?.({ type: 'Conflicted', content: { with_block: '' } });
       }
     } catch { /* ignore malformed */ }
   };

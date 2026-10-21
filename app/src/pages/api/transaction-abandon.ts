@@ -40,7 +40,17 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     return json({ ok: true }, 200);
   } catch (err) {
     if (err instanceof WalletRpcError) {
-      return json({ ok: false, error: err.message }, 502);
+      // Transport-class failures (-32000/-32001 and daemon HTTP statuses)
+      // embed the daemon URL in their message - redact like every other
+      // money endpoint (send.ts, stake-trade.ts, rpc.ts) does.
+      const transport = err.code === -32000 || err.code === -32001 || err.code >= 400;
+      if (transport) console.error('[transaction-abandon]', err.message);
+      return json(
+        { ok: false, error: transport
+          ? 'The wallet service is unavailable. Check that all services are running.'
+          : err.message },
+        502,
+      );
     }
     return json(
       { ok: false, error: 'The wallet service is unavailable. Check that all services are running.' },

@@ -76,7 +76,9 @@ function friendlyError(err: unknown): string {
     const gotMatch = raw.match(/got:\s*Amount\s*\{\s*atoms:\s*(\d+)\s*\}/i);
     const gotAtoms = gotMatch ? BigInt(gotMatch[1]) : null;
     const gotML = gotAtoms !== null
-      ? (Number(gotAtoms) / 1e11).toLocaleString(undefined, { maximumFractionDigits: 8 }) + ' ML'
+      // ML atoms carry 9 decimals (the scale the daemon validates with),
+      // not 1e11 - the old divisor understated the balance 100x.
+      ? (Number(gotAtoms) / 1e9).toLocaleString(undefined, { maximumFractionDigits: 8 }) + ' ML'
       : null;
     return gotML
       ? `Insufficient funds - your balance (${gotML}) is too low to cover this transaction including fees.`

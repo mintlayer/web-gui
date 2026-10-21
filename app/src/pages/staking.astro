@@ -123,7 +123,7 @@ const delegationsByPool = delegations.reduce<Record<string, DelegationInfo[]>>((
                 </div>
                 <div>
                   <p class="text-xs text-gray-500 mb-0.5">Margin</p>
-                  <p class="font-mono text-sm text-gray-200">{parseFloat(pool.margin_ratio_per_thousand).toFixed(1)}%</p>
+                  <p class="font-mono text-sm text-gray-200">{(parseFloat(pool.margin_ratio_per_thousand) / 10).toFixed(1)}%</p>
                 </div>
                 <div>
                   <p class="text-xs text-gray-500 mb-0.5">Cost / Block</p>

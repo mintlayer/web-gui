@@ -229,8 +229,27 @@ function outputSummary(detail: DecodedTransaction | null | undefined): string {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ totp_code: totp, transaction_id: txId }),
     });
-    const data = await res.json() as { ok: boolean; error?: { message: string } };
-    if (!data.ok) throw new Error(data.error?.message ?? 'Abandon failed');
+    // A session-expiry 302 is followed transparently and lands on login
+    // HTML: res.json() would throw a parser error that masks the real
+    // problem, so detect the redirect first.
+    if (res.redirected) {
+      throw new Error('Your session expired - redirecting to login…');
+    }
+    let data: unknown;
+    try {
+      data = await res.json();
+    } catch {
+      throw new Error('Abandon failed - unexpected server response.');
+    }
+    if (!(data as { ok?: boolean }).ok) {
+      // The endpoint returns error as a string (validation, step-up) while
+      // some paths use an object shape - surface whichever arrived so a
+      // wrong 2FA code does not show as a generic failure and burn retries
+      // against the step-up throttle.
+      const err = (data as { error?: unknown }).error;
+      const msg = typeof err === 'string' ? err : (err as { message?: string } | undefined)?.message;
+      throw new Error(msg ?? 'Abandon failed');
+    }
   }
 
   function setAllBusy(busy: boolean) {
