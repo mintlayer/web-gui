@@ -95,7 +95,10 @@ function validateParams(action: string, p: Params): string | null {
       if (typeof m.media_hash !== 'string' || m.media_hash.length > 64) return 'media_hash is invalid';
       if (typeof m.name !== 'string' || m.name.length > 200) return 'name is invalid';
       if (m.description !== null && typeof m.description !== 'string') return 'description is invalid';
-      if (m.ticker !== null && typeof m.ticker !== 'string') return 'ticker is invalid';
+      // The daemon's TokenTicker constraint is 1-5 alphanumerics (the
+      // fungible path enforces the same) - reject here pre-burn instead of
+      // after a wasted code.
+      if (m.ticker !== null && !isStr(m.ticker, TICKER_RE)) return 'ticker must be 1-5 letters/digits';
       if (m.creator !== null) return 'creator must be null';
       if (!isHexField(m.icon_uri) || !isHexField(m.media_uri) || !isHexField(m.additional_metadata_uri)) {
         return 'metadata URIs are invalid';

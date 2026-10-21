@@ -253,13 +253,14 @@ export default function IssueNFTModal({ ipfsEnabled, onClose, onIssued }: Props)
             <input
               id="ticker"
               value={ticker}
-              onChange={e => setTicker(e.target.value.toUpperCase())}
+              onChange={e => setTicker(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
               maxLength={5}
+              pattern="[A-Z0-9]{1,5}"
               placeholder="MYNFT"
               required
               className={inp}
             />
-            <p className="text-xs text-gray-500 mt-1">Short identifier, up to 5 characters</p>
+            <p className="text-xs text-gray-500 mt-1">Short identifier, up to 5 letters/digits</p>
           </div>
 
           {/* Media file - always shown, but label differs by mode */}

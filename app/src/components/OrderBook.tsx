@@ -11,6 +11,7 @@ import { stakeTrade } from '@/lib/stake-trade-client';
 import { TotpField } from '@/components/ui/TotpField';
 import { aggregateLevels, fmtQty } from '@/components/orderBookDepth';
 import { mulDecimal, divDecimal } from '@/lib/decimal';
+import { isValidAmount } from '@/lib/validation';
 
 // Raw shape returned by order_list_all_active (flat, no existing_order_data wrapper)
 interface ActiveOrderRaw {
@@ -76,9 +77,8 @@ function friendlyError(err: unknown): string {
     const gotMatch = raw.match(/got:\s*Amount\s*\{\s*atoms:\s*(\d+)\s*\}/i);
     const gotAtoms = gotMatch ? BigInt(gotMatch[1]) : null;
     const gotML = gotAtoms !== null
-      // ML atoms carry 9 decimals (the scale the daemon validates with),
-      // not 1e11 - the old divisor understated the balance 100x.
-      ? (Number(gotAtoms) / 1e9).toLocaleString(undefined, { maximumFractionDigits: 8 }) + ' ML'
+      // ML carries 11 decimals (1 ML = 10^11 atoms, consensus conventions).
+      ? (Number(gotAtoms) / 1e11).toLocaleString(undefined, { maximumFractionDigits: 8 }) + ' ML'
       : null;
     return gotML
       ? `Insufficient funds - your balance (${gotML}) is too low to cover this transaction including fees.`
@@ -212,9 +212,14 @@ function BuySellPanel({
   const canSubmit = !loading && !!effectiveTokenId && totp.length === 6 && (
     type === "limit"
       ? (mulDecimal(amount, "1") !== null && Number(amount) > 0 &&
-         mulDecimal(price, "1") !== null && Number(price) > 0)
+         mulDecimal(price, "1") !== null && Number(price) > 0 &&
+         // The limit order's Coin leg is the ML total: the coin's own
+         // precision cap (11 dp) applies to the PRODUCT, not just the
+         // inputs - a 26-dp total would 400 after the code check.
+         isValidAmount(mulDecimal(amount, price) ?? "", 11))
       : side === "buy"
-        ? (mulDecimal(mlAmount, "1") !== null && Number(mlAmount) > 0 && !!bestAsk)
+        ? (mulDecimal(mlAmount, "1") !== null && Number(mlAmount) > 0 &&
+           isValidAmount(mlAmount, 11) && !!bestAsk)
         : (mulDecimal(amount, "1") !== null && Number(amount) > 0 && !!bestBid)
   );
 
@@ -236,6 +241,12 @@ function BuySellPanel({
           // "0.30000000000000004" the daemon rejects after a wasted TOTP code.
           const total = mulDecimal(amount, price);
           if (total === null) throw new Error("Invalid amount or price");
+          // Re-checked at submit: fields can change between the last
+          // render and this handler, and a >11-dp ML total is a
+          // guaranteed daemon rejection after the code check.
+          if (!isValidAmount(total, 11)) {
+            throw new Error("The ML total supports up to 11 decimal places - adjust the amount or price");
+          }
           // conclude_address is required - fetch a fresh receive address
           const addrRes = await rpc<{ address: string }>("address_new", { account: 0 });
           const r = await stakeTrade({

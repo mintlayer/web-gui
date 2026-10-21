@@ -46,6 +46,11 @@ const MAX_BATCH = 5;
 // before a code is burned.
 const ID_RE = /^[a-z0-9]{10,120}$/i;
 const DECIMAL_RE = /^\d{1,20}(\.\d{1,18})?$/;
+// The native coin carries 11 decimals (1 ML = 10^11 atoms, consensus
+// conventions). ML-denominated amounts are pre-burn validated against 11 so
+// an over-precise value 400s here instead of dying daemon-side after the
+// code check. Token legs keep the 0-18 token decimal range.
+const COIN_DECIMALS = 11;
 
 function isStr(v: unknown, re: RegExp): boolean {
   return typeof v === 'string' && re.test(v);
@@ -60,11 +65,19 @@ function isAmountField(v: unknown): boolean {
     isValidAmount((v as Params).decimal as string, 18);
 }
 
+// ML-denominated variant: the coin's own precision cap applies.
+function isMlAmount(v: unknown): boolean {
+  return isObj(v) && typeof (v as Params).decimal === 'string' &&
+    isValidAmount((v as Params).decimal as string, COIN_DECIMALS);
+}
+
 // Order legs carry either a decimal or an atom amount (NFTs trade in atoms).
-function isCoinAmount(v: unknown): boolean {
+// maxDecimals differs per leg type: Coin legs are ML (11), token legs use
+// the token's own 0-18 range.
+function isCoinAmount(v: unknown, maxDecimals: number): boolean {
   if (!isObj(v)) return false;
   const a = v as Params;
-  if (typeof a.decimal === 'string') return isValidAmount(a.decimal, 18);
+  if (typeof a.decimal === 'string') return isValidAmount(a.decimal, maxDecimals);
   // Atoms path must be a positive integer string: a zero amount is rejected
   // daemon-side as a zero-value order, which would burn a TOTP code on a
   // knowable 400 (the decimal path already enforces > 0 via isValidAmount).
@@ -76,12 +89,12 @@ function isOrderLeg(v: unknown): boolean {
   if (!isObj(v)) return false;
   const leg = v as Params;
   if (leg.type === 'Coin') {
-    return isObj(leg.content) && isCoinAmount((leg.content as Params).amount);
+    return isObj(leg.content) && isCoinAmount((leg.content as Params).amount, COIN_DECIMALS);
   }
   if (leg.type === 'Token') {
     if (!isObj(leg.content)) return false;
     const c = leg.content as Params;
-    return isStr(c.id, ID_RE) && isCoinAmount(c.amount);
+    return isStr(c.id, ID_RE) && isCoinAmount(c.amount, 18);
   }
   return false;
 }
@@ -100,13 +113,13 @@ function validateParams(action: string, p: Params): string | null {
     case 'delegation_stake': {
       if (p.account !== 0) return 'account must be 0';
       if (!isStr(p.delegation_id, ID_RE)) return 'delegation_id is required';
-      if (!isAmountField(p.amount)) return 'amount is invalid';
+      if (!isMlAmount(p.amount)) return 'amount is invalid';
       return null;
     }
     case 'delegation_withdraw': {
       if (p.account !== 0) return 'account must be 0';
       if (!isStr(p.delegation_id, ID_RE)) return 'delegation_id is required';
-      if (!isAmountField(p.amount)) return 'amount is invalid';
+      if (!isMlAmount(p.amount)) return 'amount is invalid';
       if (!isStr(p.address, ID_RE)) return 'address is required';
       return null;
     }
@@ -118,9 +131,9 @@ function validateParams(action: string, p: Params): string | null {
     }
     case 'staking_create_pool': {
       if (p.account !== 0) return 'account must be 0';
-      if (!isAmountField(p.amount)) return 'amount is invalid';
-      if (!isObj(p.cost_per_block) || typeof (p.cost_per_block as Params).decimal !== 'string' ||
-          !DECIMAL_RE.test((p.cost_per_block as Params).decimal as string)) return 'cost_per_block is invalid';
+      if (!isMlAmount(p.amount)) return 'amount is invalid';
+      // ML per block: the coin precision cap applies here too.
+      if (!isMlAmount(p.cost_per_block)) return 'cost_per_block is invalid';
       if (typeof p.margin_ratio_per_thousand !== 'string' ||
           !DECIMAL_RE.test(p.margin_ratio_per_thousand) ||
           parseFloat(p.margin_ratio_per_thousand) <= 0 ||
@@ -146,6 +159,9 @@ function validateParams(action: string, p: Params): string | null {
     case 'order_fill': {
       if (p.account !== 0) return 'account must be 0';
       if (!isStr(p.order_id, ID_RE)) return 'order_id is required';
+      // Denominated in the ASK leg's currency, which may be a token with
+      // up to 18 decimals - the order itself is not loaded here, so the
+      // generic (looser) bound is the only correct pre-burn check.
       if (!isAmountField(p.fill_amount_in_ask_currency)) return 'fill amount is invalid';
       if (p.output_address !== undefined && p.output_address !== null) return 'output_address must be null';
       return null;

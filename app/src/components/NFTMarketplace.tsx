@@ -28,6 +28,14 @@ interface ActiveOrderRaw {
   ask_balance: { atoms: string; decimal: string };
   give_balance: { atoms: string; decimal: string };
   is_own: boolean;
+  is_marked_as_concluded_in_wallet: boolean;
+  is_marked_as_frozen_in_wallet: boolean;
+  existing_order_data: {
+    ask_balance: { atoms: string; decimal: string };
+    give_balance: { atoms: string; decimal: string };
+    creation_timestamp: { timestamp: number };
+    is_frozen: boolean;
+  } | null;
 }
 
 interface NFTListing {
@@ -38,6 +46,7 @@ interface NFTListing {
   iconUri: string | null; // already resolved to HTTP URL
   priceML: string;        // decimal string
   isOwn: boolean;
+  frozen: boolean;        // frozen orders cannot be cancelled daemon-side
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -386,8 +395,13 @@ function NFTCard({
         <p className="text-xs text-gray-500 font-mono truncate">{listing.nftId.slice(0, 16)}…</p>
       </div>
       <div className="text-sm font-semibold text-mint-400">{listing.priceML} ML</div>
+      {listing.frozen && (
+        <span className="rounded border border-amber-800 bg-amber-900/20 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-amber-300 self-start">
+          Frozen - cancel unavailable
+        </span>
+      )}
       {showBuy && <BuyButton listing={listing} onDone={onAction} totp={totp} onTotpConsumed={onTotpConsumed} />}
-      {showCancel && <CancelButton orderId={listing.orderId} onDone={onAction} totp={totp} onTotpConsumed={onTotpConsumed} />}
+      {showCancel && !listing.frozen && <CancelButton orderId={listing.orderId} onDone={onAction} totp={totp} onTotpConsumed={onTotpConsumed} />}
     </div>
   );
 }
@@ -522,6 +536,7 @@ export default function NFTMarketplace({
             iconUri: meta.iconUri,
             priceML: o.ask_balance.decimal,
             isOwn: o.is_own,
+            frozen: !!(o.existing_order_data?.is_frozen || o.is_marked_as_frozen_in_wallet),
           };
         });
 
@@ -591,6 +606,7 @@ export default function NFTMarketplace({
             iconUri: meta.iconUri,
             priceML: data.ask_balance.decimal,
             isOwn: true,
+            frozen: !!(data.is_frozen || o.is_marked_as_frozen_in_wallet),
           };
         });
 
