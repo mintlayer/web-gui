@@ -52,10 +52,11 @@ impl Config {
             "regtest" => Network::Regtest,
             "signet" => Network::Signet,
             other => {
-                eprintln!(
-                    "BITCOIN_NETWORK='{other}' is not one of mainnet|testnet|regtest|signet - falling back to MAINNET"
-                );
-                Network::Bitcoin
+                // Fail closed: a typo must not silently become a MAINNET
+                // wallet. Key-holding misconfigurations abort the start.
+                return Err(anyhow::anyhow!(
+                    "BITCOIN_NETWORK='{other}' is not one of mainnet|testnet|regtest|signet"
+                ));
             }
         };
         Ok(Self {
@@ -524,11 +525,40 @@ async fn create_wallet(
                 );
             }
             let _ = fs::remove_file(state.config.data_dir.join("wallet.sqlite"));
+            // Sqlite keeps write-ahead log / journal sidecars next to the db;
+            // a stale one could be replayed into the retried wallet's fresh
+            // database and resurrect rows from the failed attempt.
+            let _ = fs::remove_file(state.config.data_dir.join("wallet.sqlite-wal"));
+            let _ = fs::remove_file(state.config.data_dir.join("wallet.sqlite-shm"));
+            let _ = fs::remove_file(state.config.data_dir.join("wallet.sqlite-journal"));
             internal_error(anyhow!(
                 "wallet file could not be opened after creation ({e:#}); the failed wallet files were removed so you can retry"
             ))
         }
     }
+}
+
+/// After a failed sync, check whether bitcoind is still rescanning the
+/// wallet (a restore/link seeds importdescriptors with an old timestamp,
+/// and Core scans in the background for a long time). While it is, every
+/// immediate retry would hit the RPC read timeout again - re-arm the sync
+/// so restores converge without the user nudging POST /sync. Stops as soon
+/// as Core reports the scan finished and a retry still fails.
+async fn schedule_scan_retry(st: Arc<AppState>) {
+    let scanning = node_rpc(&st, "getwalletinfo", json!([]))
+        .await
+        .ok()
+        .and_then(|v| v.get("scanning").cloned())
+        .map(|s| s.is_object() || s.as_bool().unwrap_or(false))
+        .unwrap_or(false);
+    if !scanning {
+        return;
+    }
+    info!("bitcoind is rescanning the wallet - retrying sync in 30s");
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        spawn_sync(&st);
+    });
 }
 
 /// Kick off a background sync unless one is already running. Returns false
@@ -580,11 +610,13 @@ fn spawn_sync(state: &Arc<AppState>) -> bool {
                     warn!("wallet sync failed: {e:#}");
                     *st.last_sync_error.lock().unwrap_or_else(|p| p.into_inner()) =
                         Some(format!("last sync failed: {e}"));
+                    schedule_scan_retry(Arc::clone(&st)).await;
                 }
                 Err(e) => {
                     warn!("sync task join error: {e}");
                     *st.last_sync_error.lock().unwrap_or_else(|p| p.into_inner()) =
                         Some(format!("last sync failed: {e}"));
+                    schedule_scan_retry(Arc::clone(&st)).await;
                 }
             }
         }
@@ -611,16 +643,22 @@ async fn status(State(state): State<Arc<AppState>>) -> Response {
         .lock()
         .unwrap_or_else(|p| p.into_inner())
         .clone();
-    let wallet = state.wallet.lock().await;
-    let (wallet_loaded, balance) = match wallet.as_ref() {
-        Some(w) => match w.get_balance() {
-            Ok(b) => (true, Some(balance_json(&b))),
-            Err(e) => {
-                warn!("get_balance failed: {e}");
-                (true, None)
-            }
+    // A scan holds the wallet mutex for the whole background rescan, which
+    // can run for hours on a restore. Never make the polling client wait on
+    // it: answer from the scan state instead (the wallet must be loaded for
+    // a sync to be running at all), so status chips keep updating.
+    let (wallet_loaded, balance) = match state.wallet.try_lock() {
+        Ok(wallet) => match wallet.as_ref() {
+            Some(w) => match w.get_balance() {
+                Ok(b) => (true, Some(balance_json(&b))),
+                Err(e) => {
+                    warn!("get_balance failed: {e}");
+                    (true, None)
+                }
+            },
+            None => (false, None),
         },
-        None => (false, None),
+        Err(_) => (true, None),
     };
 
     Json(json!({
@@ -665,7 +703,12 @@ fn chain_node_json(chain: Option<&serde_json::Value>) -> serde_json::Value {
 
 /// GET /balance - totals in satoshis (strings).
 async fn balance(State(state): State<Arc<AppState>>) -> Response {
-    let wallet = state.wallet.lock().await;
+    // Contended (a scan owns the wallet): fail fast instead of pinning the
+    // caller until its client timeout - the UI keeps polling and shows the
+    // scanning state until the lock frees up.
+    let Ok(wallet) = state.wallet.try_lock() else {
+        return sync_busy_response();
+    };
     let Some(w) = wallet.as_ref() else {
         return wallet_not_created();
     };
@@ -714,7 +757,9 @@ async fn txs(
     State(state): State<Arc<AppState>>,
     axum::extract::Query(q): axum::extract::Query<TxsQuery>,
 ) -> Response {
-    let wallet = state.wallet.lock().await;
+    let Ok(wallet) = state.wallet.try_lock() else {
+        return sync_busy_response();
+    };
     let Some(w) = wallet.as_ref() else {
         return wallet_not_created();
     };
@@ -815,22 +860,20 @@ async fn send(State(state): State<Arc<AppState>>, Json(req): Json<SendReq>) -> R
         let tx = psbt.extract_tx();
         let txid = tx.txid().to_string();
         chain.broadcast(&tx)?;
-        // Mark the spent outputs locally right away: without a post-broadcast
-        // sync the wallet db still lists them as available, so a second send
-        // re-selects the same UTXOs and builds a conflicting transaction the
-        // node rejects. Best-effort - a failure only leaves the balance
-        // stale until the next sync.
-        if let Some(w) = guard.as_mut() {
-            if let Err(e) = w.sync(&chain, SyncOptions::default()) {
-                warn!("post-broadcast sync failed: {e:#}");
-            }
-        }
         Ok(txid)
     })
     .await;
 
     match res {
-        Ok(Ok(txid)) => Json(json!({ "ok": true, "txid": txid })).into_response(),
+        Ok(Ok(txid)) => {
+            // Mark the spent outputs in the background: doing the catch-up
+            // inline after broadcast can exceed the client timeout and make
+            // an already-broadcast transaction look failed. The UI refreshes
+            // on its own; a failed or skipped sync only leaves the balance
+            // stale until the next one.
+            spawn_sync(&state);
+            Json(json!({ "ok": true, "txid": txid })).into_response()
+        }
         Ok(Err(e)) => internal_error(e),
         Err(e) => internal_error(anyhow!("join error: {e}")),
     }
@@ -864,6 +907,16 @@ async fn fee_estimate(State(state): State<Arc<AppState>>) -> Response {
 
 async fn health() -> &'static str {
     "ok"
+}
+
+/// 503 used by read endpoints when a wallet sync holds the lock: callers
+/// poll again shortly; nothing is wrong with the node itself.
+fn sync_busy_response() -> Response {
+    (
+        axum::http::StatusCode::SERVICE_UNAVAILABLE,
+        Json(json!({ "ok": false, "error": "wallet sync in progress - try again shortly", "syncing": true })),
+    )
+        .into_response()
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────────

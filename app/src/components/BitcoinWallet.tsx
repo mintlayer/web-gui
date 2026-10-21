@@ -92,6 +92,7 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
   const [sendError, setSendError] = useState<string | null>(null);
   const [sentTxid, setSentTxid] = useState<string | null>(null);
   const [feeSatVb, setFeeSatVb] = useState<number | null>(null);
+  const [feeUnavailable, setFeeUnavailable] = useState(false);
   const [addrSuggestion, setAddrSuggestion] = useState<{ corrected: string; fixedChars: number } | null>(null);
 
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -113,15 +114,26 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  // Best-effort fee hint for the send form.
-  useEffect(() => {
-    api<{ satPerVb: Record<string, number> }>('/api/bitcoin/fee-estimate')
-      .then((r) => {
-        const fast = r.satPerVb?.['1'] ?? r.satPerVb?.['3'] ?? r.satPerVb?.['6'];
-        if (typeof fast === 'number') setFeeSatVb(fast);
-      })
-      .catch(() => { /* fee hint is optional */ });
+  // Best-effort fee hint for the send form. Re-checked on mount and again
+  // right before a send when it is still missing: the node may simply not
+  // have been ready yet. When it never arrives, the send proceeds on the
+  // BDK default of 1 sat/vB and the form says so instead of doing it
+  // silently.
+  const fetchFeeEstimate = useCallback(async (): Promise<number | null> => {
+    try {
+      const r = await api<{ satPerVb: Record<string, number> }>('/api/bitcoin/fee-estimate');
+      const fast = r.satPerVb?.['1'] ?? r.satPerVb?.['3'] ?? r.satPerVb?.['6'];
+      if (typeof fast === 'number' && fast > 0) {
+        setFeeSatVb(fast);
+        setFeeUnavailable(false);
+        return fast;
+      }
+    } catch { /* fee hint is optional */ }
+    setFeeUnavailable(true);
+    return null;
   }, []);
+
+  useEffect(() => { void fetchFeeEstimate(); }, [fetchFeeEstimate]);
 
   const walletExists = overview?.status?.walletExists ?? false;
 
@@ -260,6 +272,10 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
       setSendError('Enter your 6-digit 2FA code to confirm the send.');
       return;
     }
+    // One fresh estimate right before signing - the mount-time fetch may
+    // predate a node that only became reachable.
+    let rate = feeSatVb;
+    if (typeof rate !== 'number') rate = await fetchFeeEstimate();
 
     // Typo recovery: checksum failure with a within-2-chars fix offers a
     // suggestion instead of sending. Never auto-replaces the input.
@@ -290,8 +306,9 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
           amount_btc: sendAmount.trim(),
           totp_code: sendTotp.trim(),
           // The fetched estimate is the real fee rate (fallback: the BDK
-          // default of 1 sat/vB, which can sit unconfirmed for days).
-          ...(typeof feeSatVb === 'number' ? { fee_rate_sat_vb: feeSatVb } : {}),
+          // default of 1 sat/vB, which can sit unconfirmed for days - the
+          // form shows a warning whenever this path is taken).
+          ...(typeof rate === 'number' ? { fee_rate_sat_vb: rate } : {}),
         }),
       });
       setSentTxid(res.txid);
@@ -715,6 +732,11 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
                   {feeSatVb !== null && (
                     <p className="mt-1 text-xs text-gray-500">Fee rate: ~{feeSatVb} sat/vB (used for this send)</p>
                   )}
+                  {feeUnavailable && (
+                    <p className="mt-1 text-xs text-amber-400" role="note">
+                      Fee estimate unavailable - the wallet default of 1 sat/vB will be used, which can confirm slowly.
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label htmlFor="btc-send-totp" className="block text-xs text-gray-400 mb-1">2FA code</label>
@@ -740,7 +762,11 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
           <div className={card}>
             <h2 className="text-base font-semibold text-gray-100 mb-4">Transactions</h2>
             {!overview.transactions || overview.transactions.length === 0 ? (
-              <p className="text-sm text-gray-500">No transactions yet.</p>
+              overview.status?.syncing ? (
+                <p className="text-sm text-gray-500">Wallet is scanning - history appears as the scan progresses.</p>
+              ) : (
+                <p className="text-sm text-gray-500">No transactions yet.</p>
+              )
             ) : (
               <div className="divide-y divide-gray-800">
                 {overview.transactions.map(tx => {
