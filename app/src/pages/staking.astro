@@ -103,10 +103,14 @@ const delegationsByPool = delegations.reduce<Record<string, DelegationInfo[]>>((
                 <div class="min-w-0">
                   <p class="text-xs text-gray-500 uppercase tracking-wider mb-0.5">Pool ID</p>
                   <span class="inline-flex items-center gap-1 flex-wrap">
-                    <a href={`${explorerBase}/pool/${pool.pool_id}`} target="_blank" rel="noopener"
-                       class="font-mono text-xs text-mint-400 hover:text-mint-300 break-all transition-colors">
-                      {pool.pool_id}
-                    </a>
+                    {explorerBase ? (
+                      <a href={`${explorerBase}/pool/${pool.pool_id}`} target="_blank" rel="noopener"
+                         class="font-mono text-xs text-mint-400 hover:text-mint-300 break-all transition-colors">
+                        {pool.pool_id}
+                      </a>
+                    ) : (
+                      <span class="font-mono text-xs text-gray-400 break-all">{pool.pool_id}</span>
+                    )}
                     <button type="button"
                       class="ml-1.5 inline-flex items-center align-middle text-gray-600 hover:text-mint-400 transition-colors shrink-0"
                       data-copy-value={pool.pool_id} title="Copy pool ID">
