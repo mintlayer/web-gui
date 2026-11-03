@@ -265,6 +265,38 @@ export function recordLoginFailure(ip: string): void {
   }
 }
 
+// ── Bootstrap KDF throttling ─────────────────────────────────────────────────
+// The pre-bootstrap endpoints (login step 1 and first-time /setup) run
+// expensive key derivation for unauthenticated visitors, and step 1 never
+// produces a password *failure* by design (any ≥8-char password is accepted),
+// so the login limiter above cannot see it. A plain per-IP fixed-window
+// counter keeps a fresh install from being turned into a free KDF farm while
+// the owner has not yet completed setup.
+
+const BOOTSTRAP_MAX_ATTEMPTS = 10;
+const BOOTSTRAP_WINDOW_MS = 10 * 60 * 1000;
+
+const bootstrapAttempts = new Map<string, RateEntry>();
+
+export function checkBootstrapRateLimit(ip: string): boolean {
+  const now = Date.now();
+  pruneExpired(bootstrapAttempts, now);
+  const entry = bootstrapAttempts.get(ip);
+  if (!entry || now >= entry.resetAt) return true;
+  return entry.count < BOOTSTRAP_MAX_ATTEMPTS;
+}
+
+export function recordBootstrapAttempt(ip: string): void {
+  const now = Date.now();
+  pruneExpired(bootstrapAttempts, now);
+  const entry = bootstrapAttempts.get(ip);
+  if (!entry || now >= entry.resetAt) {
+    bootstrapAttempts.set(ip, { count: 1, resetAt: now + BOOTSTRAP_WINDOW_MS });
+  } else {
+    entry.count += 1;
+  }
+}
+
 // ── RPC rate limiting ──────────────────────────────────────────────────────────
 // Max 120 requests per 60 seconds per IP
 

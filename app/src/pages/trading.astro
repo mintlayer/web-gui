@@ -8,7 +8,7 @@ import { INDEXER_START_CMD } from '@/lib/indexer';
 
 let ownOrders: OrderInfo[] = [];
 let loadError: string | null = null;
-let balanceTokens: { tokenId: string; ticker: string }[] = [];
+let balanceTokens: { tokenId: string; ticker: string; decimals: number }[] = [];
 let ownedNFTs: { tokenId: string; name: string; ticker: string; iconUri: string | null }[] = [];
 
 try {
@@ -32,10 +32,12 @@ try {
       .filter(({ info }) => info?.type === 'FungibleToken' || info === null)
       .map(({ id, info }) => {
         let ticker = id.slice(0, 8) + '…';
+        let decimals = 18;
         if (info?.type === 'FungibleToken') {
           ticker = hexToText(info.content.token_ticker) || ticker;
+          decimals = info.content.number_of_decimals;
         }
-        return { tokenId: id, ticker };
+        return { tokenId: id, ticker, decimals };
       });
 
     ownedNFTs = infoResults

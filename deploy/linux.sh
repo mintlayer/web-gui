@@ -28,7 +28,7 @@ elif [[ "$_SELF" == /dev/fd/* ]] || [[ "$_SELF" == /proc/*/fd/* ]]; then
   chmod +x "$_tmp"
   if [[ $(wc -l < "$_tmp") -lt 10 ]]; then
     printf '%s\n' "ERROR: could not recover the installer from the input pipe." \
-      "Download it first: curl -sSL <installer-url> -o install.sh && bash install.sh" >&2
+      "Download it first: curl -fsSL <installer-url> -o install.sh && bash install.sh" >&2
     exit 1
   fi
   export ML_TMP_SELF="$_tmp"
@@ -43,14 +43,14 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 # Mintlayer Web GUI - remote installer
 # Served at https://get.mintlayer.org/linux.sh  (also mac.sh)
-# Usage: bash <(curl -sSL https://get.mintlayer.org/linux.sh)
-#        bash <(curl -sSL https://get.mintlayer.org/mac.sh)
+# Usage: bash <(curl -fsSL https://get.mintlayer.org/linux.sh)
+#        bash <(curl -fsSL https://get.mintlayer.org/mac.sh)
 #
 # Non-interactive (for AI agents / automation):
 #   ML_NONINTERACTIVE=1 NETWORK=mainnet \
 #     INSTALL_DIR=~/mintlayer WEB_UI_PASSWORD=... \
 #     ML_USER_ID=$(id -u) ML_GROUP_ID=$(id -g) \
-#     bash <(curl -sSL https://get.mintlayer.org/linux.sh)
+#     bash <(curl -fsSL https://get.mintlayer.org/linux.sh)
 # The web UI password is printed once in the final summary; the TOTP secret is
 # written to <INSTALL_DIR>/mintlayer-totp.txt. See agent-prompt.txt.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -164,7 +164,11 @@ rand_pass() {
   if command -v openssl &>/dev/null; then
     openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 32
   else
-    cat /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 32
+    # Bounded urandom read: an unbounded 'cat /dev/urandom | tr | head'
+    # SIGPIPEs under 'set -o pipefail' (head exits early, the producer
+    # dies mid-write, the script aborts). 512 bytes yield ~120 alnum
+    # chars, far more than needed, and small enough to fit a pipe buffer.
+    head -c 512 /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 32
   fi
 }
 
@@ -174,6 +178,12 @@ bootstrap_remote() {
   printf "${CYAN}◆${RESET} ${BOLD}Install location${RESET}\n"
   if [[ "$NONINTERACTIVE_MODE" == "yes" ]]; then
     INSTALL_DIR="${INSTALL_DIR:-${HOME}/mintlayer}"
+    # No stdin to re-prompt: a whitespace path here must FAIL, not be
+    # silently redirected to the default while the log claims otherwise.
+    if [[ "$INSTALL_DIR" =~ [[:space:]] ]]; then
+      err "INSTALL_DIR must not contain spaces (got: $INSTALL_DIR)"
+      exit 1
+    fi
     printf "${GRAY}│  Non-interactive: installing to %s${RESET}\n" "$INSTALL_DIR"
   else
     printf "${GRAY}│  Where should Mintlayer Web GUI be installed?${RESET}\n"
@@ -181,6 +191,16 @@ bootstrap_remote() {
     read -r input
     INSTALL_DIR="${input:-${HOME}/mintlayer}"
   fi
+  # A path with whitespace completes the install but breaks the
+  # feature-enabler's POSIX-sh compose() helper (unquoted -f args) and
+  # several .env lines - every Settings toggle would fail while the stack
+  # itself works. Same validation style as the domain prompt.
+  while [[ -z "$INSTALL_DIR" ]] || [[ "$INSTALL_DIR" =~ [[:space:]] ]]; do
+    printf "${CYAN}│${RESET}  ${RED}The install path must not contain spaces${RESET}\n"
+    printf "${CYAN}│${RESET}  Directory: ${GRAY}(${HOME}/mintlayer)${RESET} "
+    read -r INSTALL_DIR
+    INSTALL_DIR="${INSTALL_DIR:-${HOME}/mintlayer}"
+  done
 
   mkdir -p "$INSTALL_DIR"
   cd "$INSTALL_DIR"
@@ -215,7 +235,7 @@ services:
     # Images update via Watchtower (opt-in, profile "watchtower") or manual pulls.
     # For strict supply-chain pinning, set ML_*_IMAGE env overrides to a
     # digest-pinned ref, e.g. ML_NODE_DAEMON_IMAGE=mintlayer/node-daemon@sha256:<digest>.
-    image: "${ML_NODE_DAEMON_IMAGE:-mintlayer/node-daemon:latest}"
+    image: "${ML_NODE_DAEMON_IMAGE:-ghcr.io/mintlayer/web-gui/node-daemon:latest}"
     command: "node-daemon ${NETWORK:-mainnet}"
     environment:
       <<: [*common-env, *node-rpc-env]
@@ -231,7 +251,7 @@ services:
   # ─────────────────────────────────────────
   wallet-rpc-daemon:
     <<: *common
-    image: "${ML_WALLET_RPC_DAEMON_IMAGE:-mintlayer/wallet-rpc-daemon:latest}"
+    image: "${ML_WALLET_RPC_DAEMON_IMAGE:-ghcr.io/mintlayer/web-gui/wallet-rpc-daemon:latest}"
     command: "${WALLET_RPC_CMD:-wallet-rpc-daemon mainnet}"
     depends_on:
       - node-daemon
@@ -298,6 +318,14 @@ services:
       BITCOIN_WALLET_PASSWORD: "${BITCOIN_WALLET_HTTP_PASSWORD:-}"
       BITCOIN_EXPLORER_URL: "${BITCOIN_EXPLORER_URL:-}"
       HOST: "0.0.0.0"
+      # caddy terminates TLS in the HTTPS flavors, so the app must trust
+      # its X-Forwarded-Proto/Host or every form POST fails the CSRF
+      # origin check (browser says https, raw socket says http).
+      TRUST_PROXY: "true"
+      # WebAuthn: empty means the app derives rpId/origin from the
+      # proxy-aware request URL (X-Forwarded-* under TRUST_PROXY).
+      PASSKEY_RP_ID: "${PASSKEY_RP_ID:-}"
+      PASSKEY_ORIGIN: "${PASSKEY_ORIGIN:-}"
       PORT: "4321"
     restart: unless-stopped
 
@@ -337,7 +365,7 @@ services:
 
   api-blockchain-scanner-daemon:
     <<: *common
-    image: "${ML_API_SCANNER_IMAGE:-mintlayer/api-blockchain-scanner-daemon:latest}"
+    image: "${ML_API_SCANNER_IMAGE:-ghcr.io/mintlayer/web-gui/api-blockchain-scanner-daemon:latest}"
     # No baked-in CMD in the runtime image - pass the binary explicitly.
     command: "/usr/bin/api-blockchain-scanner-daemon"
     depends_on:
@@ -359,7 +387,7 @@ services:
     restart: unless-stopped
 
   api-web-server:
-    image: "${ML_API_WEB_SERVER_IMAGE:-mintlayer/api-web-server:latest}"
+    image: "${ML_API_WEB_SERVER_IMAGE:-ghcr.io/mintlayer/web-gui/api-web-server:latest}"
     # No baked-in CMD in the runtime image - pass the binary explicitly.
     command: "/usr/bin/api-web-server"
     depends_on:
@@ -428,7 +456,7 @@ services:
       - "./bitcoin-data:/home/bitcoin/.bitcoin"
     command:
       - "-printtoconsole=1"
-      - "-chain=${BITCOIN_CORE_CHAIN:-${BITCOIN_NETWORK:-mainnet}}"
+      - "-chain=${BITCOIN_CORE_CHAIN:-main}"
       - "-rpcbind=0.0.0.0:8332"
       - "-rpcallowip=0.0.0.0/0"
       - "-rpcuser=${BITCOIN_RPC_USERNAME}"
@@ -441,11 +469,14 @@ services:
     restart: unless-stopped
 
   btc-explorer:
-    image: "${BTC_EXPLORER_IMAGE:-mintlayer/web-gui/btc-explorer:latest}"
+    image: "${BTC_EXPLORER_IMAGE:-ghcr.io/mintlayer/web-gui/btc-explorer:latest}"
     depends_on:
       - bitcoind
     environment:
-      BTCEXP_BITCOIND_URI: "bitcoin://${BITCOIN_RPC_USERNAME}:${BITCOIN_RPC_PASSWORD}@bitcoind:8332?timeout=15000"
+      BTCEXP_BITCOIND_USER: "${BITCOIN_RPC_USERNAME}"
+      BTCEXP_BITCOIND_PASSWORD: "${BITCOIN_RPC_PASSWORD}"
+      BTCEXP_BITCOIND_HOST: "bitcoind"
+      BTCEXP_BITCOIND_PORT: "8332"
       BTCEXP_HOST: "0.0.0.0"
       BTCEXP_PORT: "3002"
       BTCEXP_ADDRESS_API: "none"
@@ -456,7 +487,7 @@ services:
     restart: unless-stopped
 
   bdk-wallet:
-    image: "${BDK_WALLET_IMAGE:-mintlayer/web-gui/bdk-wallet:latest}"
+    image: "${BDK_WALLET_IMAGE:-ghcr.io/mintlayer/web-gui/bdk-wallet:latest}"
     user: "${ML_USER_ID:-1000}:${ML_GROUP_ID:-1000}"
     depends_on:
       - bitcoind
@@ -790,11 +821,12 @@ import os, base64
 print(base64.b32encode(os.urandom(20)).decode(), end='')
 ")
 
-  # Generate session signing secret
-  SESSION_SECRET=$(openssl rand -hex 32)
+  # Generate session signing secret (urandom fallback: openssl can be
+  # absent on minimal hosts and this runs after every question was answered)
+  SESSION_SECRET=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
 
   # Construct the otpauth URI
-  TOTP_URI="otpauth://totp/Mintlayer%20GUI-X?secret=${UI_TOTP_SECRET}&issuer=Mintlayer"
+  TOTP_URI="otpauth://totp/Mintlayer%20Nexus?secret=${UI_TOTP_SECRET}&issuer=Mintlayer"
 
   printf "${CYAN}│${RESET}\n"
   ok "TOTP secret generated"
@@ -938,8 +970,9 @@ if [[ "$HTTPS_SETUP" == "yes" ]]; then
       ask "Domain name"
       hint "e.g. wallet.example.com - DNS must already resolve to this server"
       prompt DOMAIN "Domain:"
-      while [[ -z "$DOMAIN" ]]; do
-        printf "${CYAN}│${RESET}  ${RED}Domain cannot be empty${RESET}\n"
+      # Whitespace here breaks the caddy --from argument and the .env line.
+      while [[ -z "$DOMAIN" ]] || ! [[ "$DOMAIN" =~ ^[A-Za-z0-9.-]+$ ]]; do
+        printf "${CYAN}│${RESET}  ${RED}Enter a valid domain (letters, digits, dots, hyphens)${RESET}\n"
         prompt DOMAIN "Domain:"
       done
       ok "Domain: ${DOMAIN}"
@@ -1008,6 +1041,11 @@ if [[ "$ENABLE_INDEXER" == "yes" ]]; then
       prompt_secret POSTGRES_PASSWORD "Password:"
     done
   fi
+else
+  # Inert while the indexer profile is off, but pre-filled so a later manual
+  # `docker compose --profile indexer up -d` works instead of crash-looping
+  # postgres (it refuses an empty superuser password).
+  POSTGRES_PASSWORD=$(rand_pass)
 fi
 
 divider
@@ -1295,13 +1333,20 @@ DOMAIN=${DOMAIN}
 DUCKDNS_SUBDOMAIN=${DUCKDNS_SUBDOMAIN}
 DUCKDNS_TOKEN=${DUCKDNS_TOKEN}
 
+# WebAuthn (passkeys): defaults derived from the deployment shape. The app
+# also honors X-Forwarded-* under TRUST_PROXY, but explicit values remove
+# any dependence on header handling. Empty RP_ID/ORIGIN are fine: the app
+# falls back to the proxy-aware request origin.
+PASSKEY_RP_ID=$([[ "$ENABLE_HTTPS" == "yes" && -n "$DOMAIN" ]] && echo "$DOMAIN" || echo "")
+PASSKEY_ORIGIN=$([[ "$ENABLE_HTTPS" == "yes" && -n "$DOMAIN" ]] && echo "https://$DOMAIN" || echo "")
+
 # ── Optional Bitcoin stack (profile: bitcoin) ────────────────────────────────
 # To enable: set BITCOIN_ENABLED=true, fill in RPC credentials (generate e.g.
 # with `openssl rand -base64 24`), then: docker compose --profile bitcoin up -d
 # mainnet ~700 GB with txindex / testnet ~50 GB / prune keeps ~15-25 GB.
 BITCOIN_ENABLED=false
 BITCOIN_NETWORK=${NETWORK}
-BITCOIN_CORE_CHAIN=
+BITCOIN_CORE_CHAIN=$([ "$NETWORK" = "mainnet" ] && echo main || echo test)
 BITCOIN_RPC_USERNAME=bitcoin_user
 BITCOIN_RPC_PASSWORD=
 BITCOIN_WALLET_HTTP_USERNAME=
@@ -1352,23 +1397,39 @@ fi
 # bind-mount dirs as root, which the containers (running as ML_USER_ID) then
 # cannot write (uploads/ receives file uploads; prefs/ holds the SQLite DB).
 mkdir -p mintlayer-data/prefs mintlayer-data/plugins mintlayer-data/uploads
+# sql_json VALUE -> stdout: VALUE as a JSON string literal, safe inside a
+# single-quoted SQL literal. The app JSON.parse()s every pref value, so the
+# DB must hold '"value"' - quotes included - or login breaks on a fresh
+# install. Order matters: backslashes first, then double quotes (both for
+# JSON), then single quotes (doubled for SQL).
+sql_json() {
+  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e "s/'/''/g"
+}
+
+# pref_sql KEY VALUE -> a complete INSERT statement storing VALUE as a
+# JSON string (quotes included) - getPref() JSON.parses every row.
+pref_sql() {
+  printf "INSERT OR REPLACE INTO prefs VALUES ('%s', '\"%s\"');\n" "$1" "$(sql_json "$2")"
+}
 {
   echo "CREATE TABLE IF NOT EXISTS prefs (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
-  echo "INSERT OR REPLACE INTO prefs VALUES ('auth.password_hash', '\"${UI_PASSWORD_HASH}\"');"
-  echo "INSERT OR REPLACE INTO prefs VALUES ('auth.totp_secret',   '\"${UI_TOTP_SECRET}\"');"
-  [ -n "$IPFS_PROVIDER"      ] && echo "INSERT OR REPLACE INTO prefs VALUES ('ipfs.provider',       '\"${IPFS_PROVIDER}\"');" || true
-  [ -n "$FILEBASE_TOKEN"     ] && echo "INSERT OR REPLACE INTO prefs VALUES ('ipfs.filebase_token', '\"${FILEBASE_TOKEN}\"');" || true
-  [ -n "$PINATA_JWT"         ] && echo "INSERT OR REPLACE INTO prefs VALUES ('ipfs.pinata_jwt',     '\"${PINATA_JWT}\"');" || true
-  [ -n "$TELEGRAM_BOT_TOKEN" ] && echo "INSERT OR REPLACE INTO prefs VALUES ('telegram.bot_token',  '\"${TELEGRAM_BOT_TOKEN}\"');" || true
-  [ -n "$TELEGRAM_CHAT_ID"   ] && echo "INSERT OR REPLACE INTO prefs VALUES ('telegram.chat_id',    '\"${TELEGRAM_CHAT_ID}\"');" || true
+  pref_sql 'auth.password_hash' "${UI_PASSWORD_HASH}"
+  pref_sql 'auth.totp_secret'   "${UI_TOTP_SECRET}"
+  [ -n "$IPFS_PROVIDER"      ] && pref_sql 'ipfs.provider'       "${IPFS_PROVIDER}" || true
+  [ -n "$FILEBASE_TOKEN"     ] && pref_sql 'ipfs.filebase_token' "${FILEBASE_TOKEN}" || true
+  [ -n "$PINATA_JWT"         ] && pref_sql 'ipfs.pinata_jwt'     "${PINATA_JWT}" || true
+  [ -n "$TELEGRAM_BOT_TOKEN" ] && pref_sql 'telegram.bot_token'  "${TELEGRAM_BOT_TOKEN}" || true
+  [ -n "$TELEGRAM_CHAT_ID"   ] && pref_sql 'telegram.chat_id'    "${TELEGRAM_CHAT_ID}" || true
 } | docker run --rm -i \
     -v "$(pwd)/mintlayer-data/prefs:/prefs" \
     alpine \
     sh -c 'apk add -q --no-progress sqlite >/dev/null 2>&1 && sqlite3 /prefs/mintlayer_prefs.sqlite && chmod 600 /prefs/mintlayer_prefs.sqlite && chmod 700 /prefs'
-# The seeding container runs as root; hand the prefs DB back to the invoking
-# user so only the app can read the TOTP secret / password hash.
+# The seeding container runs as root; hand the prefs DB back to the ids the
+# app actually runs as (ML_USER_ID/ML_GROUP_ID after the >=1000 clamp - the
+# raw invoking uid can be below 1000, which the app container can never
+# write, and SQLite needs the -wal/-shm siblings).
 docker run --rm -v "$(pwd)/mintlayer-data/prefs:/prefs" alpine \
-  chown -R "$(id -u):$(id -g)" /prefs 2>/dev/null || true
+  chown -R "${ML_USER_ID:-1000}:${ML_GROUP_ID:-1000}" /prefs 2>/dev/null || true
 ok "Credentials written to mintlayer-data/prefs/mintlayer_prefs.sqlite"
 
 # ── Create data directory ─────────────────────────────────────────────────────
@@ -1402,7 +1463,13 @@ if [[ "$START" == "yes" ]]; then
     fi
   fi
 
-  $COMPOSE pull --quiet
+  # A failed pull must not abort: .env + prefs are already seeded, and
+  # dying here leaves a half-installed system whose rerun regenerates all
+  # secrets (the previously printed password/TOTP would go dead). Warn and
+  # let 'up' surface the real per-service error instead.
+  if ! $COMPOSE pull --quiet; then
+    warn "Image pull failed - check your network and the registry; continuing with 'up'"
+  fi
   $COMPOSE $PROFILES up -d
 
   ok "Services started"

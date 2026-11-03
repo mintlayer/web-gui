@@ -15,6 +15,16 @@ export interface Props {
 
 const { title = 'Home', activeNav } = Astro.props;
 const network = (process.env.NETWORK ?? 'mainnet').toLowerCase();
+// Single source for explorer links (read by lib/explorer-base.ts): the
+// ML_EXPLORER_URL override wins, else the network's public explorer - ''
+// when none exists (regtest/signet), so callers degrade to plain text.
+const explorerBase = (process.env.ML_EXPLORER_URL ?? (
+  network === 'testnet'
+    ? 'https://lovelace.explorer.mintlayer.org'
+    : network === 'mainnet'
+      ? 'https://explorer.mintlayer.org'
+      : ''
+)).replace(/\/+$/, '');
 const indexerEnabled = process.env.INDEXER_ENABLED === 'true';
 const bitcoinEnabled = isBitcoinEnabled() && getBitcoinShowUi();
 // The bridge agents run on Mintlayer mainnet only - hide the section elsewhere.
@@ -81,7 +91,7 @@ const PLUGIN_ICON_DEFAULT = 'M11.42 15.17L17.25 21A2.652 2.652 0 0021 17.25l-5.8
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
   </head>
 
-  <body class="h-full text-gray-100 font-sans" data-network={network}>
+  <body class="h-full text-gray-100 font-sans" data-network={network} data-explorer-base={explorerBase}>
     <ToastContainer client:load />
 
     <!-- ═══════════════════ SIDEBAR ═══════════════════ -->

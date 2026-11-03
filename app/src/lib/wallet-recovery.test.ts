@@ -31,7 +31,10 @@ describe('recoverThenSwapWallet (never destroy the wallet before recovery succee
       `unlink:${OPTS.localPath}.recover`,
       `recover:${OPTS.rpcPath}.recover`,
       'close',
-      `unlink:${OPTS.localPath}`,
+      // No unlink of localPath: rename alone replaces the destination
+      // atomically, so a crash mid-swap never leaves the canonical path
+      // empty (an unlink->rename window reported not_found and invited
+      // creating a different wallet).
       `rename:${OPTS.localPath}.recover->${OPTS.localPath}`,
       `open:${OPTS.rpcPath}`,
     ]);

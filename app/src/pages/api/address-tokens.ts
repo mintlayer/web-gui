@@ -47,8 +47,11 @@ export const GET: APIRoute = async ({ url }) => {
   }
 
   try {
-    // Fan-out to indexer - one request per address, all in parallel
-    const perAddress = await Promise.all(
+    // Fan-out to indexer - one request per address, all in parallel. A single
+    // aborted request or malformed body (proxy 200 with an HTML error page)
+    // must not discard every address's data - allSettled keeps the rest,
+    // mirroring the cycle-2 token-authority fix.
+    const settled = await Promise.allSettled(
       addresses.map(async (addr) => {
         const res = await fetch(
           `${INDEXER_URL}/api/v2/address/${encodeURIComponent(addr)}`,
@@ -58,6 +61,12 @@ export const GET: APIRoute = async ({ url }) => {
         const data = await res.json() as IndexerAddressBalance;
         return { addr, tokens: Array.isArray(data.tokens) ? data.tokens : [] };
       }),
+    );
+    const perAddress = settled.map((s, i) =>
+      s.status === 'fulfilled'
+        ? s.value
+        : // Keep every address key present, ordered as requested.
+          { addr: addresses[i], tokens: [] as IndexerAddressBalance['tokens'] },
     );
 
     // Collect all unique token IDs across all addresses
@@ -70,7 +79,9 @@ export const GET: APIRoute = async ({ url }) => {
     const ENRICH_BATCH = 20;
     for (let i = 0; i < allTokenIds.length; i += ENRICH_BATCH) {
       const batch = allTokenIds.slice(i, i + ENRICH_BATCH);
-      await Promise.all(
+      // Same partial-health rule: one flaky lookup degrades that token to
+      // '???' (the caller's fallback) instead of failing the whole page.
+      await Promise.allSettled(
         batch.map(async (id) => {
         // Try fungible token first
         const tokenRes = await fetch(

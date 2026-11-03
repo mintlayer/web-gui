@@ -10,7 +10,12 @@ vi.mock('@/lib/prefs-db', () => ({
   setPref: vi.fn(),
 }));
 
-import { resolvePasswordChange, applyPasswordChange } from '@/lib/password-change';
+import {
+  resolvePasswordChange,
+  applyPasswordChange,
+  isPasswordChangeThrottled,
+  resetPasswordChangeThrottle,
+} from '@/lib/password-change';
 import { verifyPassword, hashPassword } from '@/lib/auth';
 import { getStringPref, getPref, setPref } from '@/lib/prefs-db';
 
@@ -24,6 +29,7 @@ beforeEach(() => {
   mockHash.mockReset();
   mockGetStringPref.mockReset();
   mockGetPref.mockReset();
+  resetPasswordChangeThrottle();
 });
 
 describe('resolvePasswordChange', () => {
@@ -63,6 +69,47 @@ describe('resolvePasswordChange', () => {
     mockVerify.mockResolvedValue(true);
     const d = await resolvePasswordChange({ ...valid, confirmPassword: 'different' });
     expect(d).toMatchObject({ ok: false, error: 'New passwords do not match', httpStatus: 400 });
+  });
+
+  it('locks out after 5 wrong current passwords for the same key', async () => {
+    mockGetStringPref.mockReturnValue('stored-hash');
+    mockVerify.mockResolvedValue(false);
+    for (let i = 0; i < 5; i++) {
+      await resolvePasswordChange(valid, '1.2.3.4');
+    }
+    const d = await resolvePasswordChange(valid, '1.2.3.4');
+    expect(d).toMatchObject({ ok: false, httpStatus: 429 });
+    expect(isPasswordChangeThrottled('1.2.3.4')).toBe(true);
+    // A correct password no longer bypasses the lockout.
+    mockVerify.mockResolvedValue(true);
+    const ok = await resolvePasswordChange(valid, '1.2.3.4');
+    expect(ok).toMatchObject({ ok: false, httpStatus: 429 });
+  });
+
+  it('does not count failures for other keys', async () => {
+    mockGetStringPref.mockReturnValue('stored-hash');
+    mockVerify.mockResolvedValue(false);
+    await resolvePasswordChange(valid, '1.1.1.1');
+    expect(isPasswordChangeThrottled('2.2.2.2')).toBe(false);
+  });
+
+  it('clears the failure count after a successful change', async () => {
+    mockGetStringPref.mockReturnValue('stored-hash');
+    mockVerify.mockResolvedValue(false);
+    await resolvePasswordChange(valid, '1.2.3.4');
+    mockVerify.mockResolvedValue(true);
+    mockHash.mockResolvedValue('new-hash');
+    await resolvePasswordChange(valid, '1.2.3.4');
+    expect(isPasswordChangeThrottled('1.2.3.4')).toBe(false);
+  });
+
+  it('skips throttling when no key is supplied', async () => {
+    mockGetStringPref.mockReturnValue('stored-hash');
+    mockVerify.mockResolvedValue(false);
+    for (let i = 0; i < 10; i++) {
+      const d = await resolvePasswordChange(valid);
+      expect(d).toMatchObject({ httpStatus: 401 });
+    }
   });
 });
 

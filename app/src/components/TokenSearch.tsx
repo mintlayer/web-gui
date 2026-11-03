@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { TokenInfo } from '@/lib/wallet-rpc';
 import { hexToText } from '@/lib/token-utils';
 import { safeImageUri } from '@/lib/safe-uri';
@@ -158,6 +158,11 @@ export default function TokenSearch({ network }: Props) {
   const [searched, setSearched] = useState(false);
   const [indexerAvailable, setIndexerAvailable] = useState(true);
   const [favourites, setFavourites] = useState<FavouriteEntry[]>([]);
+  // Ref mirror of `favourites` for toggle arithmetic: rapid toggles must
+  // build on the last computed list, not on a render-time snapshot.
+  const favouritesRef = useRef<FavouriteEntry[]>([]);
+  // Monotonic sequence for search responses (stale-response guard).
+  const searchSeqRef = useRef(0);
   const [favInfos, setFavInfos] = useState<Map<string, TokenInfo | null>>(new Map());
   const [favLoading, setFavLoading] = useState(false);
 
@@ -185,6 +190,7 @@ export default function TokenSearch({ network }: Props) {
       .then(r => r.json())
       .then((data: { ok: boolean; value?: FavouriteEntry[] }) => {
         const stored = data.ok ? (data.value ?? []) : [];
+        favouritesRef.current = stored;
         setFavourites(stored);
         if (stored.length > 0) {
           fetchFavInfos(stored.map(f => f.tokenId));
@@ -192,6 +198,18 @@ export default function TokenSearch({ network }: Props) {
       })
       .catch(() => {});
   }, []);
+
+  /** Latest favourites straight from the server (avoids lost updates). */
+  async function fetchCurrentFavourites(): Promise<FavouriteEntry[]> {
+    try {
+      const res = await fetch('/api/prefs');
+      const data = await res.json() as { ok: boolean; value?: FavouriteEntry[] };
+      if (data.ok && Array.isArray(data.value)) return data.value;
+    } catch {
+      // Fall back to the render snapshot below.
+    }
+    return favourites;
+  }
 
   async function fetchFavInfos(ids: string[]) {
     if (ids.length === 0) return;
@@ -207,19 +225,26 @@ export default function TokenSearch({ network }: Props) {
   }
 
   async function toggleFavourite(tokenId: string, ticker: string) {
-    const alreadyPinned = favourites.some(f => f.tokenId === tokenId);
+    // Build on a ref mirror, not the render's snapshot: two rapid toggles
+    // (e.g. double-click on different rows) previously read the same
+    // stale array and the second POST silently dropped the first change.
+    const current = favouritesRef.current;
+    const alreadyPinned = current.some(f => f.tokenId === tokenId);
     let next: FavouriteEntry[];
     if (alreadyPinned) {
-      next = favourites.filter(f => f.tokenId !== tokenId);
+      next = current.filter(f => f.tokenId !== tokenId);
     } else {
-      if (favourites.length >= FAVOURITES_CAP) {
+      if (current.length >= FAVOURITES_CAP) {
         setSaveError(`Your list is at its cap (${FAVOURITES_CAP}) - unpin something first.`);
         return;
       }
-      next = [...favourites, { tokenId, ticker: ticker === '???' ? `${tokenId.slice(0, 8)}…` : ticker }];
+      next = [...current, { tokenId, ticker: ticker === '???' ? `${tokenId.slice(0, 8)}…` : ticker }];
     }
-    // Persist first, then commit - the UI never claims a state the store
-    // doesn't hold, and a later import can't overwrite a failed toggle.
+    // Optimistic commit: a later toggle must build on this result even if
+    // the POST is still in flight.
+    favouritesRef.current = next;
+    setFavourites(next);
+    // Persist - the UI never claims a state the store doesn't hold.
     try {
       const res = await fetch('/api/prefs', {
         method: 'POST',
@@ -229,11 +254,14 @@ export default function TokenSearch({ network }: Props) {
       const data = await res.json() as { ok: boolean; error?: string };
       if (!data.ok) throw new Error(data.error ?? 'Saving failed');
     } catch (err) {
+      // Roll the mirror back so the next toggle doesn't build on a list
+      // the store rejected.
+      favouritesRef.current = current;
+      setFavourites(current);
       setSaveError(`Could not save your list: ${(err as Error).message}`);
       return;
     }
     setSaveError(null);
-    setFavourites(next);
     if (!alreadyPinned) {
       // Fetch fresh info for newly pinned token if not already cached
       setFavInfos(current => {
@@ -255,6 +283,9 @@ export default function TokenSearch({ network }: Props) {
     const q = query.trim();
     if (!q) return;
 
+    // Sequence guard: a slow earlier search must never overwrite a newer
+    // one's results (stale-response race).
+    const seq = ++searchSeqRef.current;
     setLoading(true);
     setError(null);
     setResults([]);
@@ -273,6 +304,7 @@ export default function TokenSearch({ network }: Props) {
         }
         const res = await fetch(`/api/token-search?ticker=${encodeURIComponent(q)}`);
         const data = await res.json() as { ok: boolean; result?: string[]; error?: string };
+        if (seq !== searchSeqRef.current) return;
         if (!data.ok) throw new Error(data.error ?? 'Search failed');
         tokenIds = data.result ?? [];
       }
@@ -289,11 +321,12 @@ export default function TokenSearch({ network }: Props) {
 
       // Batched calls, aligned by each result's own token_id.
       const infoMap = await getTokensInfoByIds(tokenIds);
+      if (seq !== searchSeqRef.current) return;
       setResults(tokenIds.map(id => ({ tokenId: id, info: infoMap.get(id) ?? null })));
     } catch (err) {
-      setError((err as Error).message);
+      if (seq === searchSeqRef.current) setError((err as Error).message);
     } finally {
-      setLoading(false);
+      if (seq === searchSeqRef.current) setLoading(false);
     }
   }
 
@@ -324,16 +357,22 @@ export default function TokenSearch({ network }: Props) {
     setVtImporting(true);
     setVtNote(null);
     try {
-      const existing = new Set(favourites.map(f => f.tokenId));
+      // Re-read the server state before merging: a toggleFavourite POST that
+      // landed while the verified-token dialog was open would otherwise be
+      // clobbered by this full-array write (lost-update race).
+      const base = await fetchCurrentFavourites();
+      const existing = new Set(base.map(f => f.tokenId));
       const additions = picked.filter(r => !existing.has(r.tokenId));
-      const room = Math.max(0, FAVOURITES_CAP - favourites.length);
+      const room = Math.max(0, FAVOURITES_CAP - base.length);
       const accepted = additions.slice(0, room);
       if (accepted.length === 0) {
-        setVtNote('Nothing to import - these tokens are already in your list.');
+        setVtNote(room === 0
+          ? 'The favourites cap was reached - remove a token from your list first.'
+          : 'Nothing to import - these tokens are already in your list.');
         return;
       }
       const next: FavouriteEntry[] = [
-        ...favourites,
+        ...base,
         ...accepted.map(r => ({ tokenId: r.tokenId, ticker: r.ticker })),
       ];
       const res = await fetch('/api/prefs', {
@@ -343,6 +382,7 @@ export default function TokenSearch({ network }: Props) {
       });
       const data = await res.json() as { ok: boolean; error?: string };
       if (!data.ok) throw new Error(data.error ?? 'Saving failed');
+      favouritesRef.current = next;
       setFavourites(next);
       fetchFavInfos(next.map(f => f.tokenId));
       setVtNote(additions.length > accepted.length

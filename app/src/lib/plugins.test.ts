@@ -6,15 +6,23 @@ vi.mock('@/lib/prefs-db', () => ({
   deletePref: vi.fn(),
 }));
 
-vi.mock('node:fs', () => ({
-  existsSync: vi.fn(),
-  mkdirSync: vi.fn(),
-  readFileSync: vi.fn(),
-  readdirSync: vi.fn(),
-  realpathSync: vi.fn(),
-  rmSync: vi.fn(),
-  statSync: vi.fn(),
-  writeFileSync: vi.fn(),
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return {
+    existsSync: vi.fn(),
+    mkdirSync: vi.fn(),
+    mkdtempSync: vi.fn(() => actual.mkdtempSync('/tmp/plugin-test-')),
+    readFileSync: vi.fn(),
+    readdirSync: vi.fn(),
+    realpathSync: vi.fn(),
+    rmSync: vi.fn(),
+    statSync: vi.fn(),
+    writeFileSync: vi.fn(),
+  };
+});
+
+vi.mock('node:url', () => ({
+  pathToFileURL: (p: string) => ({ href: `file://${p}` }),
 }));
 
 vi.mock('node:child_process', () => ({
@@ -130,24 +138,24 @@ describe('togglePlugin', () => {
 // ── uninstallPlugin ───────────────────────────────────────────────────────────
 
 describe('uninstallPlugin', () => {
-  it('throws when plugin is not installed', () => {
+  it('throws when plugin is not installed', async () => {
     mockGetPref.mockReturnValue([]);
-    expect(() => uninstallPlugin('unknown')).toThrow('not installed');
+    await expect(uninstallPlugin('unknown')).rejects.toThrow('not installed');
   });
 
-  it('removes plugin from registry', () => {
+  it('removes plugin from registry', async () => {
     const other = { ...MANIFEST, id: 'other-plugin' };
     mockGetPref.mockReturnValue([MANIFEST, other]);
-    uninstallPlugin('my-plugin');
+    await uninstallPlugin('my-plugin');
     expect(mockSetPref).toHaveBeenCalledWith('plugins.registry', [other]);
     expect(mockDeletePref).toHaveBeenCalledWith('plugins.my-plugin.enabled');
   });
 
-  it('tolerates rmSync failure gracefully', () => {
+  it('tolerates rmSync failure gracefully', async () => {
     mockGetPref.mockReturnValue([MANIFEST]);
     vi.mocked(rmSync).mockImplementationOnce(() => { throw new Error('ENOENT'); });
     // should not throw
-    expect(() => uninstallPlugin('my-plugin')).not.toThrow();
+    await expect(uninstallPlugin('my-plugin')).resolves.toBeUndefined();
     expect(mockSetPref).toHaveBeenCalledWith('plugins.registry', []);
   });
 });

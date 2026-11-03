@@ -6,6 +6,7 @@ import { TokenIdTooltip } from '@/components/TokenIdTooltip';
 import SafeExternalLink from '@/components/SafeExternalLink';
 import { rpc } from '@/lib/client-rpc';
 import { tokenManage, type TokenManageFailure } from '@/lib/token-manage-client';
+import { isValidAmount } from '@/lib/validation';
 import { toHexField } from '@/lib/token-utils';
 import { TotpField } from '@/components/ui/TotpField';
 import { ModalOverlay } from '@/components/ui/ModalOverlay';
@@ -114,7 +115,7 @@ function useTotpAction() {
 
 // ── Mint section ───────────────────────────────────────────────────────────────
 
-function MintSection({ tokenId, onRefresh }: { tokenId: string; onRefresh: () => void }) {
+function MintSection({ tokenId, decimals, onRefresh }: { tokenId: string; decimals: number; onRefresh: () => void }) {
   const [amount, setAmount] = useState('');
   const [address, setAddress] = useState('');
   const { state, msg, run } = useAction();
@@ -157,6 +158,12 @@ function MintSection({ tokenId, onRefresh }: { tokenId: string; onRefresh: () =>
         <button
           disabled={state === 'busy' || !amount || !address || totp.length !== 6}
           onClick={() => run(async () => {
+            // Validate against the TOKEN's decimals before the TOTP burn: a
+            // daemon rejection here is knowable client-side and would waste
+            // the code the way the API's fixed 18-decimal check cannot.
+            if (!isValidAmount(amount, decimals)) {
+              throw new Error(`Amount must be positive with at most ${decimals} decimals.`);
+            }
             const r = await tokenManage('token_mint', { account: 0, token_id: tokenId, address, amount: { decimal: amount }, options: {} }, totp);
             if (!r.ok) throw fail(r);
             setTotp('');
@@ -174,7 +181,7 @@ function MintSection({ tokenId, onRefresh }: { tokenId: string; onRefresh: () =>
 
 // ── Unmint section ─────────────────────────────────────────────────────────────
 
-function UnmintSection({ tokenId, onRefresh }: { tokenId: string; onRefresh: () => void }) {
+function UnmintSection({ tokenId, decimals, onRefresh }: { tokenId: string; decimals: number; onRefresh: () => void }) {
   const [amount, setAmount] = useState('');
   const { state, msg, run } = useAction();
   const { totp, setTotp, totpRef, fail } = useTotpAction();
@@ -197,6 +204,9 @@ function UnmintSection({ tokenId, onRefresh }: { tokenId: string; onRefresh: () 
         <button
           disabled={state === 'busy' || !amount || totp.length !== 6}
           onClick={() => run(async () => {
+            if (!isValidAmount(amount, decimals)) {
+              throw new Error(`Amount must be positive with at most ${decimals} decimals.`);
+            }
             const r = await tokenManage('token_unmint', { account: 0, token_id: tokenId, amount: { decimal: amount }, options: {} }, totp);
             if (!r.ok) throw fail(r);
             setTotp('');
@@ -542,8 +552,8 @@ export default function TokenManagePanel({ tokenId, onClose, onRefresh }: Props)
                 </div>
               )}
 
-              {canMint       && <MintSection tokenId={tokenId} onRefresh={handleRefresh} />}
-              {canUnmint     && <UnmintSection tokenId={tokenId} onRefresh={handleRefresh} />}
+              {canMint       && <MintSection tokenId={tokenId} decimals={decimals} onRefresh={handleRefresh} />}
+              {canUnmint     && <UnmintSection tokenId={tokenId} decimals={decimals} onRefresh={handleRefresh} />}
               {canLock       && <LockSupplySection tokenId={tokenId} onRefresh={handleRefresh} />}
               {isUnfreezable && <UnfreezeSection tokenId={tokenId} onRefresh={handleRefresh} />}
 

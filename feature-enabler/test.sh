@@ -54,8 +54,20 @@ envhas BITCOIN_TXINDEX 0 || fail "BITCOIN_TXINDEX not pruned-default (case 1)"
 grep -q 'up -d' "$DOCKER_LOG" || fail "compose up not called (case 1)"
 grep -q -- '--profile bitcoin' "$DOCKER_LOG" || fail "profile flag missing (case 1)"
 grep -q -- 'up -d bitcoind btc-explorer bdk-wallet' "$DOCKER_LOG" || fail "explicit bitcoin service list missing (case 1)"
+grep -q 'mkdir -p /pd/bitcoin-data /pd/bitcoin-wallet-data' "$DOCKER_LOG" || fail "bind-mount dirs not pre-created (case 1)"
+grep -q 'chown -R "1000:1000"' "$DOCKER_LOG" || fail "bitcoin dirs not owned by ML_USER_ID (case 1)"
 grep -q '"ok":true' "$REQ/bitcoin.result" || fail "ok result missing (case 1)"
 [ ! -e "$REQ/bitcoin.req" ] && [ ! -e "$REQ/bitcoin.req.lock" ] || fail "request not consumed (case 1)"
+# 1b. pretty-printed / hostile pruned values must not silently default true
+# (a drift-induced pruned=true irreversibly deletes chain data on restart)
+req bitcoin.req '{"action":"enable","service":"bitcoin","network":"mainnet","pruned":false}'
+run_enabler >/dev/null || fail "enabler exited non-zero (case 1b)"
+envhas BITCOIN_PRUNE 0 || fail "explicit pruned=false not honored (case 1b)"
+req bitcoin.req '{"action":"enable","service":"bitcoin","network":"mainnet","pruned":" True"}'
+run_enabler >/dev/null || fail "enabler exited non-zero (case 1b hostile)"
+grep -q '"ok":false' "$REQ/bitcoin.result" || fail "hostile pruned value not rejected (case 1b)"
+grep -q '^BITCOIN_PRUNE=0$' "$PROJ/.env" || fail "hostile pruned value changed flags (case 1b)"
+
 grep -q 'SESSION_SECRET=secret-do-not-touch' "$PROJ/.env" || fail ".env secrets damaged (case 1)"
 pass "enable bitcoin pruned default"
 
@@ -91,12 +103,28 @@ pass "compose failure reported"
 
 # 5. disable bitcoin stops services and recreates web-gui
 : > "$DOCKER_LOG"
+# Installer .env files carry COMPOSE_PROFILES; a UI-disable must drop the
+# service from it or the next host-side `docker compose up -d` resurrects
+# what the user just switched off. pf_add seeds the key when missing (a
+# fresh .env has no profile line), so normalize instead of appending - a
+# blind append would leave TWO COMPOSE_PROFILES lines and get_env_key
+# reads only the first.
+sed -i 's/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=indexer,bitcoin,watchtower/' "$PROJ/.env"
+grep -q '^COMPOSE_PROFILES=' "$PROJ/.env" || printf 'COMPOSE_PROFILES=indexer,bitcoin,watchtower\n' >> "$PROJ/.env"
 req bitcoin.req '{"action":"disable","service":"bitcoin"}'
 run_enabler || fail "enabler exited non-zero (case 5)"
 grep -q 'stop bitcoind btc-explorer bdk-wallet' "$DOCKER_LOG" || fail "stop services missing (case 5)"
 grep -q 'up -d web-gui' "$DOCKER_LOG" || fail "web-gui recreate missing (case 5)"
 envhas BITCOIN_ENABLED false || fail "BITCOIN_ENABLED not disabled (case 5)"
+envhas COMPOSE_PROFILES indexer,watchtower || fail "COMPOSE_PROFILES still names bitcoin (case 5)"
 pass "disable bitcoin"
+
+# 5b. enable bitcoin adds the profile back
+: > "$DOCKER_LOG"
+req bitcoin.req '{"action":"enable","service":"bitcoin","network":"mainnet","pruned":false}'
+run_enabler || fail "enabler exited non-zero (case 5b)"
+envhas COMPOSE_PROFILES indexer,watchtower,bitcoin || fail "COMPOSE_PROFILES missing bitcoin (case 5b)"
+pass "enable bitcoin keeps COMPOSE_PROFILES in sync"
 
 # 6. indexer enable/disable
 : > "$DOCKER_LOG"
@@ -197,9 +225,15 @@ pass "upgrade pulls first, pins moved, core bumped"
 touch "$WORK/fail"
 export DOCKER_FAIL="$WORK/fail"
 req web-gui.req '{"action":"upgrade","service":"web-gui","tag":"v1.0.0-rc4"}'
+# The whole .env must be byte-identical: the buggy code used to write
+# PREVIOUS_ anchors and flip the active pin on a failed pull (a bare
+# ':v1.0.0-rc3' grep passed vacuously off its own anchor line). Anchors
+# from earlier successful cases are expected to persist, hence the diff.
+cp "$PROJ/.env" "$WORK/env-before-case14"
 run_enabler || fail "enabler exited non-zero (case 14)"
 grep -q '"ok":false' "$REQ/web-gui.result" || fail "failed pull not reported (case 14)"
-grep -q ':v1.0.0-rc3' "$PROJ/.env" || fail "env changed despite failed pull (case 14)"
+cp "$PROJ/.env" "$WORK/env-after-case14"
+diff -u "$WORK/env-before-case14" "$WORK/env-after-case14" >/dev/null || fail "env changed despite failed pull (case 14)"
 unset DOCKER_FAIL
 pass "failed pull aborts before env write"
 
@@ -211,6 +245,7 @@ req web-gui.req '{"action":"upgrade","service":"web-gui","tag":"v1.0.0-rc4","bit
 run_enabler || fail "enabler exited non-zero (case 15)"
 grep -q '^BITCOIND_IMAGE=bitcoin/bitcoin:27$' "$PROJ/.env" || fail "user core pin overwritten (case 15)"
 grep -q '^MANAGED_BITCOIND_IMAGE=bitcoin/bitcoin:26$' "$PROJ/.env" || fail "managed mirror clobbered (case 15)"
+grep -q '^PREVIOUS_BITCOIN_IMAGE=' "$PROJ/.env" && fail "stale core anchor kept past a no-bump upgrade (case 15)"
 pass "user-pinned core respected"
 
 # 15. rollback restores the previous pins and clears the anchors
@@ -301,5 +336,43 @@ grep -q 'digest-pinned' "$REQ/web-gui.result" || fail "digest pin reason (case 2
 [ -s "$DOCKER_LOG" ] && fail "docker called on digest-pinned install (case 21)"
 grep -q 'SESSION_SECRET=secret-do-not-touch' "$PROJ/.env" || fail ".env secrets damaged (case 21)"
 pass "digest-pinned image aborts upgrade"
+
+# 23. pf_add seeds COMPOSE_PROFILES when missing/empty; indexer enable on a
+# fresh install generates a POSTGRES_PASSWORD (empty one crash-loops postgres).
+W="$WORK/case23"; mkdir -p "$W/bin" "$W/proj" "$W/req"
+printf '#!/bin/sh\nexit 0\n' > "$W/bin/docker"; chmod +x "$W/bin/docker"
+touch "$W/proj/docker-compose.yml"
+printf 'SESSION_SECRET=x\nCOMPOSE_PROFILES=\n' > "$W/proj/.env"
+printf '{"action":"enable","service":"bitcoin","network":"mainnet"}' > "$W/req/bitcoin.req"
+PATH="$W/bin:$PATH" PROJECT_DIR="$W/proj" ENV_FILE="$W/proj/.env" COMPOSE_FILES=docker-compose.yml REQUESTS_DIR="$W/req" sh "$HERE/enabler.sh" --once >/dev/null || fail "enabler exited non-zero (case 23)"
+grep -q '^COMPOSE_PROFILES=bitcoin$' "$W/proj/.env" || fail "pf_add did not seed the empty key (case 23)"
+printf '{"action":"disable","service":"bitcoin"}' > "$W/req/bitcoin.req"
+PATH="$W/bin:$PATH" PROJECT_DIR="$W/proj" ENV_FILE="$W/proj/.env" COMPOSE_FILES=docker-compose.yml REQUESTS_DIR="$W/req" sh "$HERE/enabler.sh" --once >/dev/null
+printf '{"action":"enable","service":"indexer"}' > "$W/req/indexer.req"
+PATH="$W/bin:$PATH" PROJECT_DIR="$W/proj" ENV_FILE="$W/proj/.env" COMPOSE_FILES=docker-compose.yml REQUESTS_DIR="$W/req" sh "$HERE/enabler.sh" --once >/dev/null || fail "re-enable exited non-zero (case 23)"
+grep -q '^COMPOSE_PROFILES=indexer$' "$W/proj/.env" || fail "re-enable after key deletion did not re-seed (case 23)"
+grep -qE '^POSTGRES_PASSWORD=[A-Za-z0-9]{32}$' "$W/proj/.env" || fail "indexer enable did not generate a POSTGRES_PASSWORD (case 23)"
+rm -rf "$W"
+pass "pf_add seeds missing profiles key; indexer enable generates POSTGRES_PASSWORD"
+
+# 24. upgrade + rollback on an install with NO image pins: the rollback
+# anchor must carry the RESOLVED compose default (an empty anchor made
+# rollback a silent no-op while the stack already ran the new tags).
+W="$WORK/case24"; mkdir -p "$W/bin" "$W/proj" "$W/req"
+printf '#!/bin/sh\nexit 0\n' > "$W/bin/docker"; chmod +x "$W/bin/docker"
+touch "$W/proj/docker-compose.yml"
+printf 'NETWORK=mainnet\nSESSION_SECRET=x\n' > "$W/proj/.env"
+req24() { printf '%s\n' "$2" > "$W/req/$1"; }
+run24() { PATH="$W/bin:$PATH" PROJECT_DIR="$W/proj" ENV_FILE="$W/proj/.env" COMPOSE_FILES=docker-compose.yml REQUESTS_DIR="$W/req" sh "$HERE/enabler.sh" --once >/dev/null; }
+req24 web-gui.req '{"action":"upgrade","service":"web-gui","tag":"v1.0.0-rc6"}'
+run24 || fail "enabler exited non-zero (case 24 upgrade)"
+grep -q '^PREVIOUS_WEB_GUI_IMAGE=ghcr.io/mintlayer/web-gui/web-gui:latest$' "$W/proj/.env" || fail "anchor missing resolved compose default (case 24)"
+grep -q '^WEB_GUI_IMAGE=ghcr.io/mintlayer/web-gui/web-gui:v1.0.0-rc6$' "$W/proj/.env" || fail "upgrade pin missing (case 24)"
+req24 web-gui.req '{"action":"rollback","service":"web-gui"}'
+run24 || fail "enabler exited non-zero (case 24 rollback)"
+grep -q '^WEB_GUI_IMAGE=ghcr.io/mintlayer/web-gui/web-gui:latest$' "$W/proj/.env" || fail "rollback did not restore the compose default (case 24)"
+grep -q '^PREVIOUS_WEB_GUI_IMAGE=' "$W/proj/.env" && fail "anchor not consumed (case 24)"
+rm -rf "$W"
+pass "no-pin install upgrades and rolls back through the compose default"
 
 printf 'ALL ENABLER TESTS PASSED\n'

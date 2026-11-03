@@ -10,6 +10,7 @@ import { execFileSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   readdirSync,
   realpathSync,
@@ -18,9 +19,12 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { pathToFileURL } from 'node:url';
 import { getPref, setPref, deletePref } from './prefs-db';
 import { rpcCall } from './wallet-rpc';
 import { ALLOWED_RPC_METHODS } from './rpc-allowlist';
+import { indexerBaseUrl } from './indexer';
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -107,8 +111,32 @@ export function togglePlugin(id: string, enabled: boolean): void {
 // ── Install / Uninstall ───────────────────────────────────────────────────────
 
 export async function installPlugin(buffer: Buffer): Promise<PluginManifest> {
-  const tmpTgz = `/tmp/plugin-upload-${Date.now()}.tgz`;
-  const tmpDir = `/tmp/plugin-extract-${Date.now()}`;
+  // Serialize installs: the read-modify-write on the registry pref and the
+  // duplicate-id check must not interleave with another install's, or a
+  // concurrent install silently vanishes from the registry (files stay on
+  // disk, admin has to re-upload + burn another TOTP code).
+  const done = installQueue.then(() => installPluginInner(buffer));
+  // Swallow here so the queue never rejects; the caller still sees the error.
+  installQueue = done.catch(() => {});
+  return done;
+}
+
+let installQueue: Promise<unknown> = Promise.resolve();
+
+async function installPluginInner(buffer: Buffer): Promise<PluginManifest> {
+  // mkdtemp gives a unique directory per install - two same-millisecond
+  // uploads must not share an extraction target.
+  const tmpDir = mkdtempSync(join(tmpdir(), 'plugin-install-'));
+  // The escape check canonicalizes every extracted entry; the base must be
+  // canonical too or a symlinked TMPDIR (e.g. macOS /tmp -> /private/tmp)
+  // rejects every path and fails 100% of installs.
+  const realTmp = realpathSync(tmpDir);
+  // The archive itself lives OUTSIDE the extraction dir: a plugin.tgz next
+  // to the extracted entries would break the single-directory (npm pack)
+  // layout detection below and, for flat layouts, leak the 50 MB raw
+  // archive into the served plugin directory.
+  const dlDir = mkdtempSync(join(tmpdir(), 'plugin-dl-'));
+  const tmpTgz = join(dlDir, 'plugin.tgz');
 
   try {
     writeFileSync(tmpTgz, buffer);
@@ -137,7 +165,7 @@ export async function installPlugin(buffer: Buffer): Promise<PluginManifest> {
       } catch {
         throw new Error(`Archive contains path escaping extraction directory: ${p}`);
       }
-      if (!real.startsWith(tmpDir + '/') && real !== tmpDir) {
+      if (!real.startsWith(realTmp + '/') && real !== realTmp) {
         throw new Error(`Archive contains path escaping extraction directory: ${p}`);
       }
     }
@@ -177,6 +205,10 @@ export async function installPlugin(buffer: Buffer): Promise<PluginManifest> {
 
     const destDir = join(PLUGINS_DIR, manifest.id);
     mkdirSync(PLUGINS_DIR, { recursive: true });
+    // A crashed prior install can leave the directory without a registry
+    // entry; POSIX cp -r into an existing dir would nest the tree one
+    // level down and the plugin could never load. Clear first.
+    rmSync(destDir, { recursive: true, force: true });
     execFileSync('cp', ['-r', pluginRoot, destDir], { timeout: 10_000 });
 
     existing.push(manifest);
@@ -188,10 +220,21 @@ export async function installPlugin(buffer: Buffer): Promise<PluginManifest> {
   } finally {
     try { rmSync(tmpTgz); } catch { /* ignore */ }
     try { rmSync(tmpDir, { recursive: true }); } catch { /* ignore */ }
+    try { rmSync(dlDir, { recursive: true }); } catch { /* ignore */ }
   }
 }
 
-export function uninstallPlugin(id: string): void {
+export async function uninstallPlugin(id: string): Promise<void> {
+  // Serialize against installs too: an uninstall interleaving with a queued
+  // install's registry write could drop the fresh install from the registry
+  // (files on disk, id gone) or resurrect the uninstalled id (files gone,
+  // id still listed). Same queue, same reasoning as installPlugin.
+  const done = installQueue.then(() => uninstallInner(id));
+  installQueue = done.catch(() => {});
+  return done;
+}
+
+async function uninstallInner(id: string): Promise<void> {
   const plugins = getInstalledPlugins();
   const idx = plugins.findIndex((p) => p.id === id);
   if (idx === -1) throw new Error(`Plugin "${id}" is not installed`);
@@ -228,8 +271,9 @@ export async function loadPluginHandler(id: string): Promise<PluginModule> {
   }
 
   const entryPath = join(PLUGINS_DIR, id, manifest.entry);
-  // Query parameter busts Node's ESM cache after reinstall
-  const url = `file://${entryPath}?gen=${gen}`;
+  // pathToFileURL percent-encodes reserved characters ('#', '?') so the
+  // cache-busting query can't swallow part of the path.
+  const url = `${pathToFileURL(entryPath).href}?gen=${gen}`;
   const module = await import(/* @vite-ignore */ url) as PluginModule;
 
   if (typeof module.handler !== 'function') {
@@ -254,7 +298,8 @@ export function makePluginContext(pluginId: string, request: Request): PluginCon
     setPref: (key, value) => setPref(`plugins.${pluginId}.data.${key}`, value),
     indexerBaseUrl:
       process.env.INDEXER_ENABLED === 'true'
-        ? (process.env.INDEXER_URL ?? null)
+        ? // Same normalization as the built-in clients (trailing-slash 404s).
+          indexerBaseUrl()
         : null,
     request,
   };

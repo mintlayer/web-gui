@@ -42,6 +42,13 @@ MAX_ERR_CHARS=400
 
 log() { printf '[feature-enabler] %s\n' "$*"; }
 
+# rand_pass - 32 alnum chars from a bounded urandom read. Bounded input
+# matters: unbounded 'cat /dev/urandom | tr | head' SIGPIPEs under
+# 'set -o pipefail' (head exits early, the producer dies mid-write).
+rand_pass() {
+    head -c 512 /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 32
+}
+
 compose() {
     # shellcheck disable=SC2086
     # --env-file pins interpolation to the same file the toggles rewrite, so
@@ -74,7 +81,15 @@ set_env_key() { # FILE KEY VALUE - replace "KEY=..." in place, appending when mi
     if awk -v k="$_k" -v v="$_v" \
         '$0 ~ "^"k"=" { if (!done) { print k"="v; done=1 }; next } { print } END { if (!done) print k"="v }' \
         "$_f" > "$_tmp" 2>/dev/null; then
-        cat "$_tmp" > "$_f"
+        # Single-file bind mounts forbid rename-style replaces, so the copy
+        # is in-place. Refuse to write an empty rewrite: a disk-full or
+        # failed awk must never truncate the real .env (it holds the RPC
+        # passwords and SESSION_SECRET).
+        if [ -s "$_tmp" ]; then
+            cat "$_tmp" > "$_f"
+        else
+            printf 'set_env_key: rewrite of %s came back empty; keeping the original\n' "$_f" >&2
+        fi
     fi
     rm -f "$_tmp"
     umask "$_umask"
@@ -86,8 +101,9 @@ write_result() {
     err_json=""
     if [ -n "$error" ]; then
         # ASCII-only tail: keeps the JSON valid even when cut mid-UTF-8-sequence;
-        # remaining C0 controls are dropped (illegal inside JSON strings).
-        error=$(printf '%s' "$error" | tail -c "$MAX_ERR_CHARS" | tr '\200-\377' '-' | tr '\n' ' ' | tr '\t' ' ' | tr -d '\000-\010\013\014\016-\037')
+        # remaining C0 controls are dropped (illegal inside JSON strings) -
+        # including CR, which tr's earlier mappings do not cover.
+        error=$(printf '%s' "$error" | tail -c "$MAX_ERR_CHARS" | tr '\200-\377' '-' | tr '\n' ' ' | tr '\t' ' ' | tr -d '\000-\037')
         # crude but sufficient escaping for the fixed vocabulary of errors
         error=$(printf '%s' "$error" | sed 's/\\/\\\\/g; s/"/\\"/g')
         err_json=",\"error\":\"$error\""
@@ -109,7 +125,12 @@ delete_env_key() { # FILE KEY - drop "KEY=" (used to clear consumed PREVIOUS_* p
     _umask=$(umask); umask 077
     _tmp="${TMPDIR:-/tmp}/env-key.$$"
     if awk -v k="$_k" '$0 ~ "^"k"=" { next } { print }' "$_f" > "$_tmp" 2>/dev/null; then
-        cat "$_tmp" > "$_f"
+        # Same empty-rewrite guard as set_env_key: never truncate .env.
+        if [ -s "$_tmp" ]; then
+            cat "$_tmp" > "$_f"
+        else
+            printf 'delete_env_key: rewrite of %s came back empty; keeping the original\n' "$_f" >&2
+        fi
     fi
     rm -f "$_tmp"
     umask "$_umask"
@@ -121,6 +142,41 @@ get_env_key() { # KEY -> stdout: current value or empty when unset
 
 # image_base VALUE - strip the tag (everything from the last colon).
 image_base() { printf '%s' "$1" | sed 's/:[^:]*$//' ; }
+
+# pf_add NAME / pf_remove NAME - keep COMPOSE_PROFILES in sync with the
+# toggles. Installer-written .env files carry the key; without it compose
+# only starts default-profile services anyway. Locals are pf_-prefixed:
+# POSIX sh functions share globals and a clobbered name here would
+# corrupt the caller's state (see set_env_key's _-prefixed internals).
+pf_add() {
+    _pf_name="$1"
+    _pf_cur=$(get_env_key COMPOSE_PROFILES)
+    # Missing OR empty key: installers legitimately write an empty
+    # COMPOSE_PROFILES= (no optionals chosen) and pf_remove deletes the key
+    # when the last profile is toggled off - both must seed the first
+    # profile instead of no-oping, or the next enable silently starts
+    # nothing on later host-side 'up's.
+    [ -n "$_pf_cur" ] || { set_env_key "$ENV_FILE" COMPOSE_PROFILES "$_pf_name"; return 0; }
+    case ",$_pf_cur," in *",$_pf_name,"*) return 0 ;; esac
+    set_env_key "$ENV_FILE" COMPOSE_PROFILES "$_pf_cur,$_pf_name"
+}
+pf_remove() {
+    _pf_name="$1"
+    _pf_cur=$(get_env_key COMPOSE_PROFILES)
+    [ -n "$_pf_cur" ] || return 0
+    _pf_out=""
+    _pf_IFS=$IFS; IFS=,
+    for _pf_p in $_pf_cur; do
+        [ "$_pf_p" = "$_pf_name" ] && continue
+        if [ -z "$_pf_out" ]; then _pf_out="$_pf_p"; else _pf_out="$_pf_out,$_pf_p"; fi
+    done
+    IFS=$_pf_IFS
+    if [ -n "$_pf_out" ]; then
+        set_env_key "$ENV_FILE" COMPOSE_PROFILES "$_pf_out"
+    else
+        delete_env_key "$ENV_FILE" COMPOSE_PROFILES
+    fi
+}
 
 # active_up_targets - services this install actually runs, per the .env flags.
 # Naming a profiled service in `compose up` silently activates its profile,
@@ -157,7 +213,7 @@ apply_upgrade() {
         base=$(image_base "$cur")
         # Already at the target: a re-run must not clobber the rollback anchor.
         [ "$cur" = "$base:$tag" ] && continue
-        printf '%s %s %s\n' "$key" "$svc" "$base:$tag" >> "$targets"
+        printf '%s %s %s %s\n' "$key" "$svc" "$base:$tag" "$cur" >> "$targets"
     done
 
     # Bitcoin Core: only when the release declares a version AND we manage the
@@ -188,20 +244,38 @@ apply_upgrade() {
 
     # Pull everything BEFORE touching .env: a failed pull changes nothing.
     pull_failed=""
-    while read -r key svc ref; do
+    while read -r key svc ref _; do
         log "pulling $ref"
         docker pull "$ref" >/dev/null 2>&1 < /dev/null || pull_failed="$pull_failed $svc"
     done < "$targets"
+    if [ -n "$pull_failed" ]; then
+        rm -f "$targets"
+        log "pull failed:$pull_failed; env pins left untouched"
+        return 1
+    fi
     # Save the rollback anchors (only for keys that actually move), then flip.
-    while read -r key svc ref; do
-        set_env_key "$ENV_FILE" "PREVIOUS_$key" "$(get_env_key "$key")"
+    # The anchor is the RESOLVED current reference (compose default included):
+    # an empty anchor would make rollback a silent no-op, which for a bad
+    # release means staying on the broken image with no way back.
+    while read -r key svc ref cur; do
+        set_env_key "$ENV_FILE" "PREVIOUS_$key" "$cur"
         set_env_key "$ENV_FILE" "$key" "$ref"
     done < "$targets"
     rm -f "$targets"
     if [ -n "$bump_bitcoind" ]; then
-        set_env_key "$ENV_FILE" PREVIOUS_BITCOIN_IMAGE "$(get_env_key BITCOIND_IMAGE)"
+        # Anchor the compose default explicitly (bitcoin/bitcoin:25) when no
+        # pin exists, so rollback can actually restore the pre-upgrade core.
+        prev_core=$(get_env_key BITCOIND_IMAGE)
+        [ -n "$prev_core" ] || prev_core="bitcoin/bitcoin:25"
+        set_env_key "$ENV_FILE" PREVIOUS_BITCOIN_IMAGE "$prev_core"
         set_env_key "$ENV_FILE" BITCOIND_IMAGE "$bump_bitcoind"
         set_env_key "$ENV_FILE" MANAGED_BITCOIND_IMAGE "$bump_bitcoind"
+    else
+        # No core change in this upgrade: a PREVIOUS_BITCOIN_IMAGE anchor left
+        # by an older bump describes an image that no longer runs (the pin was
+        # replaced out-of-band), and a later rollback would clobber the
+        # user's current pin with it. Stale anchors are dropped, not restored.
+        delete_env_key "$ENV_FILE" PREVIOUS_BITCOIN_IMAGE
     fi
 
     log "starting upgraded services (tag $tag)"
@@ -258,6 +332,18 @@ apply_request() {
             set_env_key "$ENV_FILE" BITCOIN_CORE_CHAIN "$core_chain"
             set_env_key "$ENV_FILE" BITCOIN_PRUNE "$prune_flag"
             set_env_key "$ENV_FILE" BITCOIN_TXINDEX "$txindex_flag"
+            pf_add bitcoin
+            # Pre-create the bind mounts with the right owner: docker
+            # auto-creates missing bind sources as root, and both bitcoind
+            # and the bdk sidecar run as non-root users - without this they
+            # crash-loop on a datadir they cannot write. This sidecar's
+            # project mount is read-only, so the dirs are made through a
+            # throwaway container on the docker socket we already hold.
+            ml_uid=$(get_env_key ML_USER_ID); [ -n "$ml_uid" ] || ml_uid=1000
+            ml_gid=$(get_env_key ML_GROUP_ID); [ -n "$ml_gid" ] || ml_gid="$ml_uid"
+            docker run --rm -v "$PROJECT_DIR:/pd" alpine:3.20 sh -c \
+                "mkdir -p /pd/bitcoin-data /pd/bitcoin-wallet-data && chown -R \"$ml_uid:$ml_gid\" /pd/bitcoin-data /pd/bitcoin-wallet-data" \
+                || { log "mkdir helper failed"; return 1; }
             log "enabled bitcoin network=$network pruned=$pruned, starting containers"
             # Explicit service lists: a profile-wide `up -d` would also
             # recreate any other service whose config-hash changed - including
@@ -269,11 +355,21 @@ apply_request() {
             log "stopping bitcoin services"
             compose stop $bitcoin_services
             set_env_key "$ENV_FILE" BITCOIN_ENABLED false
+            pf_remove bitcoin
             compose up -d web-gui
             ;;
         enable:indexer)
             [ -f "$ENV_FILE" ] || { log "env file missing: $ENV_FILE"; return 1; }
+            # A first-time indexer enable needs a postgres password: the
+            # installers only generate one when the indexer was chosen at
+            # install time, and an empty POSTGRES_PASSWORD makes postgres
+            # initdb refuse to start (crash-loop, opaque from here).
+            if [ -z "$(get_env_key POSTGRES_PASSWORD)" ]; then
+                set_env_key "$ENV_FILE" POSTGRES_PASSWORD "$(rand_pass)"
+                log "generated a POSTGRES_PASSWORD in $ENV_FILE"
+            fi
             set_env_key "$ENV_FILE" INDEXER_ENABLED true
+            pf_add indexer
             log "enabling indexer, starting containers"
             # Explicit service list - see the bitcoin branch above.
             compose --profile indexer up -d postgres api-blockchain-scanner-daemon api-web-server
@@ -283,6 +379,7 @@ apply_request() {
             log "stopping indexer services"
             compose stop $indexer_services
             set_env_key "$ENV_FILE" INDEXER_ENABLED false
+            pf_remove indexer
             compose up -d web-gui
             ;;
         upgrade:web-gui)
@@ -328,31 +425,51 @@ process_file() {
         return 0
     fi
 
-    payload=$(cat "$path") || { log "unreadable request: $name"; rm -f "$path"; return 0; }
+    # Claim first (atomic rename), then read the claimed file: reading the
+    # live path would process stale content if the web container rewrote
+    # the request between read and claim, silently dropping the new one.
+    mv "$path" "$path.lock" || return 0
+
+    # Size cap before reading: the volume is written by the web container,
+    # and a planted multi-GB file would OOM the sidecar that holds the
+    # docker socket (real requests are well under 1 KiB).
+    if [ "$(wc -c < "$path.lock" 2>/dev/null || echo 99999999)" -gt 65536 ]; then
+        log "oversized request ignored: $name"
+        write_result "$service" false "request too large"
+        rm -f "$path.lock"
+        return 0
+    fi
+
+    payload=$(cat "$path.lock") || { log "unreadable request: $name"; rm -f "$path.lock"; write_result "$service" false "unreadable request"; return 0; }
     action=$(printf '%s' "$payload" | grep -o '"action":"[a-z]*"' | head -1 | cut -d'"' -f4)
     network=$(printf '%s' "$payload" | grep -o '"network":"[a-z]*"' | head -1 | cut -d'"' -f4)
-    pruned=$(printf '%s' "$payload" | grep -o '"pruned":[^,}]*' | head -1 | cut -d: -f2 | tr -d '"')
+    pruned=$(printf '%s' "$payload" | grep -o '"pruned":[^,}]*' | head -1 | cut -d: -f2 | tr -d '"' | tr -d ' \t')
     tag=$(printf '%s' "$payload" | grep -o '"tag":"[A-Za-z0-9._-]*"' | head -1 | cut -d'"' -f4)
     bitcoind=$(printf '%s' "$payload" | grep -o '"bitcoind":"[A-Za-z0-9._-]*"' | head -1 | cut -d'"' -f4)
 
     case "$action:$service" in
         enable:bitcoin|disable:bitcoin|enable:indexer|disable:indexer|upgrade:web-gui|rollback:web-gui) ;;
-        *) write_result "$service" false "invalid action"; rm -f "$path"; return 0 ;;
+        *) write_result "$service" false "invalid action"; rm -f "$path.lock"; return 0 ;;
     esac
     if [ "$action" = "upgrade" ]; then
         # v-prefixed release tag, shell-safe charset - re-checked here even
         # though the web side validated it: the volume is a trust boundary.
         case "$tag" in v[0-9]*) [ ${#tag} -le 40 ] || tag="" ;; *) tag="" ;; esac
-        [ -n "$tag" ] || { write_result "$service" false "invalid release tag"; rm -f "$path"; return 0; }
-        case "$bitcoind" in '') ;; [0-9]*) [ ${#bitcoind} -le 32 ] || { write_result "$service" false "invalid bitcoind version"; rm -f "$path"; return 0; } ;; *) write_result "$service" false "invalid bitcoind version"; rm -f "$path"; return 0 ;; esac
+        [ -n "$tag" ] || { write_result "$service" false "invalid release tag"; rm -f "$path.lock"; return 0; }
+        case "$bitcoind" in '') ;; [0-9]*) [ ${#bitcoind} -le 32 ] || { write_result "$service" false "invalid bitcoind version"; rm -f "$path.lock"; return 0; } ;; *) write_result "$service" false "invalid bitcoind version"; rm -f "$path.lock"; return 0 ;; esac
     fi
     # network/pruned only accompany enable requests
     if [ "$action" = "enable" ] && [ "$service" = "bitcoin" ]; then
-        case "$network" in mainnet|testnet|regtest) ;; *) write_result "$service" false "invalid network"; rm -f "$path"; return 0 ;; esac
-        [ "$pruned" = "true" ] || [ "$pruned" = "false" ] || pruned="true"
+        case "$network" in mainnet|testnet|regtest) ;; *) write_result "$service" false "invalid network"; rm -f "$path.lock"; return 0 ;; esac
+        # Missing field keeps the documented default (true, matches setup).
+        # An UNRECOGNIZED value must reject, not default: defaulting would
+        # flip a full-node install to pruned (BITCOIN_PRUNE=550 + TXINDEX=0),
+        # which irreversibly deletes chain data on restart. Whitespace from
+        # pretty-printed JSON was already stripped at extraction.
+        [ -n "$pruned" ] || pruned=true
+        case "$pruned" in true|false) ;; *) write_result "$service" false "invalid pruned flag"; rm -f "$path.lock"; return 0 ;; esac
     fi
 
-    mv "$path" "$path.lock" || return 0
     log "applying $action $service"
     if err=$(apply_request "$action" "$service" "$network" "$pruned" "$tag" "$bitcoind" 2>&1); then
         write_result "$service" true

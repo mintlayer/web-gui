@@ -1,6 +1,6 @@
 import type { APIRoute } from 'astro';
 import { verifyRegistrationResponse } from '@simplewebauthn/server';
-import type { RegistrationResponseJSON } from '@simplewebauthn/server';
+import type { RegistrationResponseJSON, AuthenticatorTransport } from '@simplewebauthn/server';
 import {
   getCredentials,
   saveCredentials,
@@ -13,8 +13,8 @@ import {
 import { json } from '@/lib/api-utils';
 
 export const POST: APIRoute = async ({ request }) => {
-  const rpId = getRpId(request.url);
-  const origin = getOrigin(request.url);
+  const rpId = getRpId(request);
+  const origin = getOrigin(request);
 
   if (!isValidRpId(rpId)) {
     return json({ error: 'Passkeys require a DNS hostname.' }, 400);
@@ -42,8 +42,14 @@ export const POST: APIRoute = async ({ request }) => {
   } catch {
     return json({ error: 'Invalid request body.' }, 400);
   }
+  // request.json() parses JSON literals like `null` fine; the reads below
+  // need a real object.
+  if (body == null || typeof body !== 'object') {
+    return json({ error: 'Invalid request body.' }, 400);
+  }
 
-  const credentialName = (body.name ?? 'Passkey').slice(0, 64).trim() || 'Passkey';
+  const credentialName =
+    (typeof body.name === 'string' ? body.name : 'Passkey').slice(0, 64).trim() || 'Passkey';
 
   let verification;
   try {
@@ -74,6 +80,15 @@ export const POST: APIRoute = async ({ request }) => {
     counter: credential.counter,
     name: credentialName,
     createdAt: Date.now(),
+    // Remember how this key connects (usb/nfc/ble/internal/hybrid/cable)
+    // so auth-options can advertise it; hardcoding a subset here used to
+    // make enrolled USB/NFC keys unlistable at sign-in. Unknown future
+    // transport names are filtered out so the stored value stays a plain
+    // AuthenticatorTransport[].
+    transports: credential.transports?.filter(
+      (t): t is AuthenticatorTransport =>
+        ['usb', 'nfc', 'ble', 'internal', 'hybrid'].includes(t),
+    ),
   });
   saveCredentials(creds);
 

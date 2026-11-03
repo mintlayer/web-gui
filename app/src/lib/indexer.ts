@@ -8,8 +8,12 @@
  * Defaults to http://api-web-server:3000 (internal Docker network name).
  */
 
-const INDEXER_URL =
-  process.env.INDEXER_URL ?? 'http://api-web-server:3000';
+/** Resolved indexer base URL (trailing slashes stripped), read lazily so env changes at runtime are honored - shared with the plugin context so the two cannot drift. */
+export function indexerBaseUrl(): string {
+  return (process.env.INDEXER_URL ?? 'http://api-web-server:3000').replace(/\/+$/, '');
+}
+
+const INDEXER_URL = (process.env.INDEXER_URL ?? 'http://api-web-server:3000').replace(/\/+$/, '');
 
 export const INDEXER_START_CMD = 'docker compose --profile indexer up -d';
 

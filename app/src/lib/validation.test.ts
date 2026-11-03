@@ -43,6 +43,12 @@ describe('isValidAmount', () => {
     expect(isValidAmount('1.234', 2)).toBe(false);
   });
 
+  it('accepts integer amounts for zero-decimal tokens (no quantifier SyntaxError)', () => {
+    expect(isValidAmount('100', 0)).toBe(true);
+    expect(isValidAmount('1.0', 0)).toBe(false);
+    expect(isValidAmount('0.5', 0)).toBe(false);
+  });
+
   it('rejects malformed decimal shapes', () => {
     for (const bad of ['', '.', '1.', '.5', '1..2', '1.2.3']) {
       expect(isValidAmount(bad, 8)).toBe(false);

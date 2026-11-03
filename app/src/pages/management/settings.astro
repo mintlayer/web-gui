@@ -41,11 +41,14 @@ if (Astro.request.method === 'POST') {
   } else if (section === 'password') {
     // Shared logic with /api/settings/password (single source of truth).
     const str = (v: FormDataEntryValue | null) => (typeof v === 'string' ? v : '');
-    const decision = await resolvePasswordChange({
-      currentPassword: str(form.get('current_password')),
-      newPassword:     str(form.get('new_password')),
-      confirmPassword: str(form.get('confirm_password')),
-    });
+    const decision = await resolvePasswordChange(
+      {
+        currentPassword: str(form.get('current_password')),
+        newPassword:     str(form.get('new_password')),
+        confirmPassword: str(form.get('confirm_password')),
+      },
+      getClientAddress(Astro.request, Astro.clientAddress as string | undefined),
+    );
 
     if (!decision.ok) {
       result = { action: 'error', section, message: decision.error + '.' };
@@ -78,28 +81,44 @@ if (Astro.request.method === 'POST') {
       }
     }
   } else if (section === 'remove_passkey') {
-    const credentialId = str(form.get('credential_id'));
-    if (!credentialId) {
-      result = { action: 'error', section, message: 'No credential ID provided.' };
+    // Destroying a fallback auth factor is as sensitive as enrolling one:
+    // a hijacked session must not be able to strip the passkeys silently.
+    const totpCode = str(form.get('totp_code'));
+    const currentSecret = getStringPref('auth.totp_secret');
+    const burn = currentSecret
+      ? verifyAndBurnTotpCode(totpCode, currentSecret, getClientAddress(Astro.request, Astro.clientAddress))
+      : { ok: false as const, error: '2FA is not configured.' };
+    if (!burn.ok) {
+      result = { action: 'error', section, message: burn.error };
     } else {
-      const creds = getCredentials();
-      const filtered = creds.filter((c) => c.id !== credentialId);
-      if (filtered.length === creds.length) {
-        result = { action: 'error', section, message: 'Passkey not found.' };
+      const credentialId = str(form.get('credential_id'));
+      if (!credentialId) {
+        result = { action: 'error', section, message: 'No credential ID provided.' };
       } else {
-        saveCredentials(filtered);
-        result = { action: 'success', section, message: 'Passkey removed.' };
+        const creds = getCredentials();
+        const filtered = creds.filter((c) => c.id !== credentialId);
+        if (filtered.length === creds.length) {
+          result = { action: 'error', section, message: 'Passkey not found.' };
+        } else {
+          saveCredentials(filtered);
+          result = { action: 'success', section, message: 'Passkey removed.' };
+        }
       }
     }
 
   } else if (section === 'ipfs') {
-    const provider      = (form.get('provider')       as string | null) ?? '';
+    const provider      = str(form.get('provider'));
     const filebaseToken = str(form.get('filebase_token'));
-    const pinataJwt     = (form.get('pinata_jwt')     as string | null) ?? '';
+    const pinataJwt     = str(form.get('pinata_jwt'));
     const totpCode      = str(form.get('totp_code'));
 
     if (!['filebase', 'pinata', ''].includes(provider)) {
       result = { action: 'error', section, message: `Invalid provider: ${provider}` };
+    } else if (!getStringPref('auth.totp_secret')) {
+      // Verify against a configured secret only: burning against an empty
+      // one reports 'Invalid authenticator code.' and burns throttle slots
+      // while the real problem is that setup was never finished.
+      result = { action: 'error', section, message: '2FA is not configured. Complete first-time setup at /setup to enable it.' };
     } else {
       // Pinata/Filebase keys are third-party account credentials: whoever sets
       // them can pivot into the owner's pinning account. Same sensitivity class
@@ -108,13 +127,23 @@ if (Astro.request.method === 'POST') {
       if (!burn.ok) {
         result = { action: 'error', section, message: burn.error };
       } else {
+        // Secrets are write-only (same as the Telegram token): empty input
+        // keeps the stored key, so the page never has to render them.
+        const storedFilebase = getStringPref('ipfs.filebase_token') ?? '';
+        const storedPinata   = getStringPref('ipfs.pinata_jwt') ?? '';
+        if (provider === 'filebase' && !filebaseToken && !storedFilebase) {
+          result = { action: 'error', section, message: 'Paste your Filebase access key - pinning cannot work without it.' };
+        } else if (provider === 'pinata' && !pinataJwt && !storedPinata) {
+          result = { action: 'error', section, message: 'Paste your Pinata JWT - pinning cannot work without it.' };
+        } else {
         setPref('ipfs.provider',       provider);
         // Disabling IPFS also clears any stored provider keys - keeping them
         // on disk while "Disabled" protects nothing and leaves third-party
         // credentials behind.
-        setPref('ipfs.filebase_token', provider === '' ? '' : filebaseToken);
-        setPref('ipfs.pinata_jwt',     provider === '' ? '' : pinataJwt);
+        setPref('ipfs.filebase_token', provider === '' ? '' : (filebaseToken || storedFilebase));
+        setPref('ipfs.pinata_jwt',     provider === '' ? '' : (pinataJwt || storedPinata));
         result = { action: 'success', section, message: 'IPFS settings saved.' };
+        }
       }
     }
 
@@ -123,8 +152,19 @@ if (Astro.request.method === 'POST') {
     for (const key of notifKeys) {
       setPref(`telegram.notify.${key}`, form.get(`notify_${key}`) === '1');
     }
-    const threshold = (form.get('large_send_threshold') as string | null) ?? '100';
-    setPref('telegram.notify.large_send_threshold', threshold || '100');
+    // Reject junk before storing: a negative or non-numeric threshold
+    // would fire a Telegram alert on every send. str() coerces File parts
+    // (crafted multipart POSTs) to '' so they fail cleanly instead of
+    // throwing on .trim().
+    const rawThreshold = str(form.get('large_send_threshold'));
+    const thresholdNum = Number(rawThreshold);
+    // >= 1: 0 would alert on every send (the behavior the comment below
+    // warns about); the form's min="1" already promises this to UI users.
+    const threshold =
+      rawThreshold.trim() !== '' && Number.isFinite(thresholdNum) && thresholdNum >= 1
+        ? String(Math.floor(thresholdNum))
+        : '100';
+    setPref('telegram.notify.large_send_threshold', threshold);
     setPref('telegram.staking.status',   form.get('staking_status')   === '1');
     setPref('telegram.staking.controls', form.get('staking_controls') === '1');
     result = { action: 'success', section, message: 'Notification preferences saved.' };
@@ -289,6 +329,8 @@ if (localCaPem) {
   const { createHash } = await import('node:crypto');
   localCaFingerprint = createHash('sha256').update(localCaPem).digest('hex').toUpperCase().replace(/(.{2})(?=.)/g, '$1:');
 }
+// Session-bound management data and secrets-adjacent settings - never cache.
+Astro.response.headers.set('Cache-Control', 'no-store');
 ---
 
 <ManagementLayout title="Settings" activeTab="settings">
@@ -475,9 +517,14 @@ if (localCaPem) {
                           {new Date(pk.createdAt).toLocaleDateString()}
                         </span>
                       </div>
-                      <form method="post" action="/management/settings#passkeys">
+                      <form method="post" action="/management/settings#passkeys" class="flex items-center gap-2">
                         <input type="hidden" name="section" value="remove_passkey" />
                         <input type="hidden" name="credential_id" value={pk.id} />
+                        <input
+                          type="text" name="totp_code" inputmode="numeric" autocomplete="one-time-code"
+                          placeholder="2FA" aria-label={`2FA code to remove ${pk.name}`}
+                          class="w-20 rounded-md border border-gray-700 bg-gray-900 px-2 py-1 text-xs text-gray-100 focus:border-mint-600 focus:outline-none"
+                        />
                         <button
                           type="submit"
                           class="text-xs text-red-400 hover:text-red-300 transition-colors px-2 py-1 rounded hover:bg-red-950/40"
@@ -610,8 +657,7 @@ if (localCaPem) {
           <label class="block text-xs text-gray-400 mb-1" for="filebase_token">Filebase API Token</label>
           <input
             id="filebase_token" name="filebase_token" type="password"
-            value={filebaseToken}
-            placeholder="Bucket-specific key from console.filebase.com"
+            placeholder={filebaseToken ? `Stored: ••••${filebaseToken.slice(-4)} - leave blank to keep` : 'Bucket-specific key from console.filebase.com'}
             class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 text-sm
                    placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-mint-600 focus:border-transparent transition"
           />
@@ -621,8 +667,7 @@ if (localCaPem) {
           <label class="block text-xs text-gray-400 mb-1" for="pinata_jwt">Pinata JWT</label>
           <input
             id="pinata_jwt" name="pinata_jwt" type="password"
-            value={pinataJwt}
-            placeholder="JWT from app.pinata.cloud/developers/api-keys"
+            placeholder={pinataJwt ? `Stored: ••••${pinataJwt.slice(-4)} - leave blank to keep` : 'JWT from app.pinata.cloud/developers/api-keys'}
             class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 text-sm
                    placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-mint-600 focus:border-transparent transition"
           />
@@ -677,6 +722,11 @@ if (localCaPem) {
       </p>
 
       <div class="space-y-4 max-w-2xl">
+        {webGuiServiceResult && !webGuiServiceResult.ok && webGuiServiceResult.error && (
+          <p class="text-xs text-red-400" data-testid="webgui-last-error">
+            Last upgrade request failed: {webGuiServiceResult.error}
+          </p>
+        )}
         <div class="rounded-lg border border-gray-800 bg-gray-800/40 p-4">
           <div class="flex items-start justify-between gap-4 mb-2">
             <div>
@@ -816,35 +866,47 @@ if (localCaPem) {
             }
           }
 
-          function watchWebGui(startedAt: number, onDone: () => void) {
+          function watchWebGui(startedAt: number, onDone: (ok: boolean) => void) {
             let failures = 0;
             const timer = window.setInterval(async () => {
               if (Date.now() - startedAt > 12 * 60 * 1000) {
+                // Timeout is not success: say so, or the page keeps showing
+                // the "Queued" note forever while a huge pull grinds on.
                 window.clearInterval(timer);
-                onDone();
+                setNote(noteEl, 'Still applying after 12 minutes - reload this page to check the result.', 'info');
+                onDone(false);
                 return;
               }
               try {
                 const res = await fetch('/api/features/status');
                 const data = await res.json();
+                // A successful poll resets the counter: 3 CUMULATIVE blips
+                // across a 12-minute watch are normal LAN noise, only 3
+                // consecutive ones mean the watcher is really gone.
+                failures = 0;
                 const state = data.services?.['web-gui'];
                 if (!state) return;
                 if (state.pending) return;
                 const fresh = state.lastResult && state.lastResult.at !== null && state.lastResult.at >= startedAt - 60_000;
                 if (!fresh) return;
                 window.clearInterval(timer);
-                onDone();
                 if (!state.lastResult.ok) {
+                  // A failed attempt must be visible: keep the page (a
+                  // reload would wipe the note) and say what went wrong.
                   setNote(rollbackNote, state.lastResult.error ?? 'The last request failed.', 'error');
                   setNote(noteEl, state.lastResult.error ?? 'The last request failed.', 'error');
+                  onDone(false);
+                  return;
                 }
+                onDone(true);
               } catch {
                 failures += 1;
                 if (failures >= 3) {
-                  // The enabler replaced this very container - a reload lands
-                  // on the new version.
                   window.clearInterval(timer);
                   setNote(noteEl, 'Applying - the interface restarts. Reload in a minute.', 'info');
+                  // Re-arm the buttons: without onDone the Upgrade/Roll back
+                  // controls stay disabled until a manual reload.
+                  onDone(false);
                 }
               }
             }, 4000);
@@ -875,7 +937,13 @@ if (localCaPem) {
               return;
             }
             setNote(noteEl, 'Queued - pulling images, then restarting. The interface goes down briefly at the end.', 'info');
-            watchWebGui(Date.now(), () => window.location.reload());
+            watchWebGui(Date.now(), (ok) => {
+              // Success: the containers just changed under us - reload
+              // lands on the new version. Failure: the note already says
+              // what went wrong - re-arm the button (a reload retries).
+              if (ok) window.location.reload();
+              else upgradeToggle!.disabled = false;
+            });
           });
 
           rollbackForm?.addEventListener('submit', async (ev) => {
@@ -891,7 +959,10 @@ if (localCaPem) {
               return;
             }
             setNote(rollbackNote, 'Queued - restoring previous images, then restarting.', 'info');
-            watchWebGui(Date.now(), () => window.location.reload());
+            watchWebGui(Date.now(), (ok) => {
+              if (ok) window.location.reload();
+              else rollbackToggle!.disabled = false;
+            });
           });
 
           autoForm?.addEventListener('submit', async (ev) => {
@@ -930,6 +1001,11 @@ if (localCaPem) {
               const res = await fetch('/api/update-check');
               const data = await res.json();
               const u = data.update ?? {};
+              // The degrade path reports the failure as a TOP-LEVEL error
+              // field (UpdateStatus itself has none), so read it there -
+              // u.error was always undefined and a dead feed rendered as
+              // "Up to date".
+              const checkFailed = typeof data.error === 'string' && data.error.length > 0;
               applyAutoState(data.autoInstall === true, data.includePrereleases === true);
               if (u.available === true && u.latest) {
                 latestTag = u.latest.tag;
@@ -952,7 +1028,7 @@ if (localCaPem) {
                 }
                 upgradeToggle!.disabled = false;
               } else if (u.current) {
-                stateEl!.textContent = u.error
+                stateEl!.textContent = checkFailed
                   ? `Running v${u.current} - could not reach the release feed.`
                   : `Up to date (v${u.current}).`;
               } else {

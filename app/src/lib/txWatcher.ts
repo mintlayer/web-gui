@@ -12,7 +12,10 @@ type TxState =
 
 type Callback = (state: TxState) => void;
 
-const watchers = new Map<string, Callback>();
+// A Set per tx id: two islands (or a retried submit) may watch the SAME tx.
+// A single-callback map would let the first promise's timeout delete the
+// second (live) watcher, so both callers miss the confirmation.
+const watchers = new Map<string, Set<Callback>>();
 let es: EventSource | null = null;
 
 function ensureStream() {
@@ -29,19 +32,28 @@ function ensureStream() {
         | { type: 'error' };
 
       if (msg.type === 'TxUpdated') {
-        watchers.get(msg.tx_id)?.(msg.state);
+        watchers.get(msg.tx_id)?.forEach((cb) => cb(msg.state));
       } else if (msg.type === 'TxDropped') {
-        watchers.get(msg.tx_id)?.({ type: 'Inactive' });
+        // A drop is definitive - the tx left the mempool. Map to Conflicted
+        // (which watchTx rejects immediately) instead of Inactive, whose
+        // keep-waiting semantics would burn the full timeout and then
+        // surface a neutral 'not tracked' hint for a tx that can never
+        // confirm.
+        watchers.get(msg.tx_id)?.forEach((cb) => cb({ type: 'Conflicted', content: { with_block: '' } }));
       }
     } catch { /* ignore malformed */ }
   };
 
   const source = es;
   source.onerror = () => {
-    // Close the errored EventSource before dropping the reference - without
-    // this a second watchTx could open a duplicate stream (Minor hardening).
-    source.close();
-    es = null;
+    // EventSource reconnects transient drops on its own (readyState
+    // CONNECTING) - closing here would kill auto-recovery and leave every
+    // in-flight watchTx to burn the full 5-minute timeout on a tx that may
+    // have confirmed during the blip. Close ONLY when the browser gave up
+    // (CLOSED); the next watchTx then opens a fresh stream.
+    if (source.readyState === EventSource.CLOSED) {
+      es = null;
+    }
   };
 }
 
@@ -55,22 +67,30 @@ export function watchTx(txId: string): Promise<{ block_height: number }> {
   return new Promise((resolve, reject) => {
     const TIMEOUT = 5 * 60 * 1000;
 
-    const timer = setTimeout(() => {
-      watchers.delete(txId);
-      reject(new Error('Transaction confirmation timed out'));
-    }, TIMEOUT);
+    const settle = (fail: Error | null) => {
+      clearTimeout(timer);
+      const set = watchers.get(txId);
+      set?.delete(callback);
+      // Only drop the map entry while this watcher's own callback is still
+      // registered - a stale promise must never remove a NEWER watcher.
+      if (set && set.size === 0) watchers.delete(txId);
+      if (fail) reject(fail);
+      else resolve(resolved);
+    };
+    const resolved = { block_height: 0 };
+    const timer = setTimeout(() => settle(new Error('Transaction confirmation timed out')), TIMEOUT);
 
-    watchers.set(txId, (state) => {
+    const callback = (state: TxState) => {
       if (state.type === 'Confirmed') {
-        clearTimeout(timer);
-        watchers.delete(txId);
-        resolve({ block_height: state.content.block_height });
+        resolved.block_height = state.content.block_height;
+        settle(null);
       } else if (state.type === 'Conflicted' || state.type === 'Abandoned') {
-        clearTimeout(timer);
-        watchers.delete(txId);
-        reject(new Error(`Transaction ${state.type.toLowerCase()}`));
+        settle(new Error(`Transaction ${state.type.toLowerCase()}`));
       }
       // InMempool / Inactive - keep waiting
-    });
+    };
+    const set = watchers.get(txId) ?? new Set<Callback>();
+    set.add(callback);
+    watchers.set(txId, set);
   });
 }

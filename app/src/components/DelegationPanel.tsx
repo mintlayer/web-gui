@@ -6,6 +6,7 @@ import { submitWithToast } from "@/lib/toastStore";
 import { CopyButton } from "@/components/CopyButton";
 import { rpc } from '@/lib/client-rpc';
 import { stakeTrade, type StakeTradeFailure } from '@/lib/stake-trade-client';
+import { explorerBase } from '@/lib/explorer-base';
 import { TotpField } from '@/components/ui/TotpField';
 
 interface Delegation {
@@ -66,18 +67,25 @@ function DelegationRow({
     setMsg("");
     try {
       await submitWithToast(fn, watchTx);
-      setState("success");
-      setMsg("");
-      // Refresh delegation balance
-      const list = await rpc<Delegation[]>("delegation_list_ids", { account: 0 });
-      const updated = list.find(d => d.delegation_id === delegation.delegation_id) ?? null;
-      onUpdated(updated);
-      setAddAmount("");
-      setWithdrawAmount("");
     } catch (err) {
       setMsg((err as Error).message);
       setState("error");
+      return;
     }
+    // The on-chain action is done - a failed post-submit list refresh must
+    // not flip success to "error" (that invited a resubmit: a second burned
+    // code and a double stake).
+    setState("success");
+    setMsg("");
+    try {
+      const list = await rpc<Delegation[]>("delegation_list_ids", { account: 0 });
+      const updated = list.find(d => d.delegation_id === delegation.delegation_id) ?? null;
+      onUpdated(updated);
+    } catch {
+      // Stale balance display is cosmetic; the toast tracks the tx itself.
+    }
+    setAddAmount("");
+    setWithdrawAmount("");
   };
 
   const handleAdd = () =>
@@ -140,14 +148,19 @@ function DelegationRow({
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <span className="inline-flex items-center gap-1 flex-wrap">
-            <a
-              href={`${network === 'testnet' ? 'https://lovelace.explorer.mintlayer.org' : 'https://explorer.mintlayer.org'}/delegation/${delegation.delegation_id}`}
-              target="_blank"
-              rel="noopener"
-              className="font-mono text-xs text-mint-400 hover:text-mint-300 break-all transition-colors"
-            >
-              {delegation.delegation_id}
-            </a>
+            {/* regtest/signet have no public explorer - degrade to text. */}
+            {explorerBase() ? (
+              <a
+                href={`${explorerBase()}/delegation/${delegation.delegation_id}`}
+                target="_blank"
+                rel="noopener"
+                className="font-mono text-xs text-mint-400 hover:text-mint-300 break-all transition-colors"
+              >
+                {delegation.delegation_id}
+              </a>
+            ) : (
+              <span className="font-mono text-xs break-all">{delegation.delegation_id}</span>
+            )}
             <CopyButton value={delegation.delegation_id} title="Copy delegation ID" />
           </span>
           <p className="font-mono text-sm text-gray-200 mt-0.5">
@@ -263,13 +276,18 @@ export default function DelegationPanel({ poolId, initialDelegations, network }:
       setNewState("success");
       setNewMsg("Delegation created. It appears below once confirmed; use a fresh 2FA code to add funds to it.");
       setNewTotp("");
-
-      // Refresh list - the new delegation row appears with its own Add input.
-      const list = await rpc<Delegation[]>("delegation_list_ids", { account: 0 });
-      setDelegations(list.filter(d => d.pool_id === poolId));
     } catch (err) {
       setNewMsg((err as Error).message);
       setNewState("error");
+      return;
+    }
+    // Success must survive a failed post-submit refresh - the create itself
+    // went through, and showing "error" invited duplicate creates.
+    try {
+      const list = await rpc<Delegation[]>("delegation_list_ids", { account: 0 });
+      setDelegations(list.filter(d => d.pool_id === poolId));
+    } catch {
+      // Row appears on the next page load.
     }
   };
 

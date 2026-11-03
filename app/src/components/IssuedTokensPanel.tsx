@@ -4,6 +4,8 @@ import { CopyButton } from '@/components/CopyButton';
 import TokenManagePanel from '@/components/TokenManagePanel';
 import { TokenIdTooltip } from '@/components/TokenIdTooltip';
 import { rpc } from '@/lib/client-rpc';
+import { getTokensInfoByIds } from '@/lib/token-info-client';
+import { explorerBase as explorerBaseFn } from '@/lib/explorer-base';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -43,7 +45,24 @@ const LS_KEY = 'ml_issued_tokens';
 
 function loadStored(): StoredToken[] {
   try {
-    return JSON.parse(localStorage.getItem(LS_KEY) ?? '[]') as StoredToken[];
+    // Array.isArray guards against legacy shapes: JSON.parse('null') and
+    // JSON.parse('5') do not throw but are not token lists either. The
+    // element filter keeps junk entries from crashing the render below
+    // (each card dereferences tokenId) - drop, don't trust.
+    const parsed: unknown = JSON.parse(localStorage.getItem(LS_KEY) ?? '[]');
+    if (!Array.isArray(parsed)) return [];
+    // Token ids are bech32 token addresses from the wallet daemon (mmltk1…,
+    // the RPC post-process dehexifies them), not 64-hex - the old hex-only
+    // guard dropped every legitimate entry on load. Accept the bech32 shape
+    // too; the charset/length cap is junk protection, not validation (the
+    // augment rescan re-resolves real ids against the chain).
+    return parsed.filter(
+      (t): t is StoredToken =>
+        typeof t === 'object' && t !== null &&
+        typeof (t as StoredToken).tokenId === 'string' &&
+        (/^[0-9a-f]{64}$/i.test((t as StoredToken).tokenId) ||
+          /^[a-z0-9]{20,120}$/i.test((t as StoredToken).tokenId)),
+    );
   } catch {
     return [];
   }
@@ -77,25 +96,36 @@ function supplyBadge(info: FungibleContent) {
 
 export default function IssuedTokensPanel({ network }: Props) {
   const [stored, setStored] = useState<StoredToken[]>([]);
+  const [scanError, setScanError] = useState<string | null>(null);
   const [liveInfos, setLiveInfos] = useState<Map<string, TokenLiveInfo>>(new Map());
   const [loading, setLoading] = useState(true);
   const [manageTokenId, setManageTokenId] = useState<string | null>(null);
   const [failedTokenIds, setFailedTokenIds] = useState<Set<string>>(new Set());
 
-  const explorerBase = network === 'testnet'
-    ? 'https://lovelace.explorer.mintlayer.org'
-    : 'https://explorer.mintlayer.org';
+  const explorerBase = explorerBaseFn();
 
   async function fetchLiveInfos(ids: string[]): Promise<Map<string, TokenLiveInfo>> {
     if (ids.length === 0) return new Map();
-    const results = await rpc<TokenLiveInfo[]>('node_get_tokens_info', { token_ids: ids });
+    // getTokensInfoByIds chunks the RPC and aligns answers by their own
+    // content.token_id - node_get_tokens_info does NOT preserve input
+    // order, so zipping by index attributed metadata to the wrong tokens.
+    const infoMap = await getTokensInfoByIds(ids);
     const map = new Map<string, TokenLiveInfo>();
-    ids.forEach((id, i) => map.set(id, results[i] ?? null));
+    infoMap.forEach((info, id) => {
+      map.set(id, info !== null && info.type === 'FungibleToken' ? info : null);
+    });
     return map;
   }
 
   async function checkFailedTxs(tokens: StoredToken[], map: Map<string, TokenLiveInfo>) {
-    const pendingWithTx = tokens.filter(t => map.get(t.tokenId) === null && t.txId);
+    // Grace window: a tx that confirmed between the info fetch and the
+    // pending-list check is absent from both (confirmation removes it from
+    // pending before the token index catches up), which used to flash a
+    // false "tx failed" badge. Fresh issuances are never marked failed.
+    const FAILURE_GRACE_MS = 10 * 60 * 1000;
+    const pendingWithTx = tokens.filter(
+      t => map.get(t.tokenId) === null && t.txId && Date.now() - t.issuedAt > FAILURE_GRACE_MS,
+    );
     if (pendingWithTx.length === 0) return;
     try {
       const pendingTxIds = await rpc<string[]>('transaction_list_pending', { account: 0 });
@@ -116,6 +146,17 @@ export default function IssuedTokensPanel({ network }: Props) {
     try {
       const map = await fetchLiveInfos(tokens.map(t => t.tokenId));
       setLiveInfos(map);
+      // A token that now resolves live was a false "tx failed" marking
+      // (node/index lag): clear the badge instead of showing a red failure
+      // on a row with live supply and a Manage button forever.
+      setFailedTokenIds(prev => {
+        const next = new Set(prev);
+        let changed = false;
+        for (const [id, info] of map) {
+          if (info !== null && next.delete(id)) changed = true;
+        }
+        return changed ? next : prev;
+      });
       // NOTE: deliberately no auto-sweep of "unknown" tokens here. A null
       // lookup means the node hasn't indexed the issuance yet (or is lagging),
       // not that the token is gone - deleting the row destroyed the user's
@@ -172,9 +213,15 @@ export default function IssuedTokensPanel({ network }: Props) {
         return { tokenId: id, ticker, decimals, issuedAt: Date.now() };
       });
 
-      const merged = [...current, ...newEntries];
-      saveStored(merged);
-      setStored(merged);
+      // Merge functionally off the latest state (mirrors augmentFromWallet):
+      // a wallet scan that resolved while the indexer fetch was in flight
+      // must not be dropped by a stale-snapshot overwrite.
+      setStored(prev => {
+        const prevIds = new Set(prev.map(t => t.tokenId));
+        const merged = [...prev, ...newEntries.filter(e => !prevIds.has(e.tokenId))];
+        saveStored(merged);
+        return merged;
+      });
       setLiveInfos(prev => {
         const next = new Map(prev);
         infoMap.forEach((v, k) => next.set(k, v));
@@ -194,9 +241,17 @@ export default function IssuedTokensPanel({ network }: Props) {
       const res = await fetch('/api/scan-issued-tokens');
       const data = await res.json() as {
         ok: boolean;
+        error?: string;
         fungible?: Array<{ tokenId: string; ticker: string; decimals: number }>;
       };
-      if (!data.ok || !data.fungible || data.fungible.length === 0) return;
+      if (!data.ok) {
+        // The scan failing is not the same as having no tokens - without
+        // this state a broken wallet renders as an empty ("clean") list.
+        setScanError(data.error ?? 'The wallet scan failed.');
+        return;
+      }
+      setScanError(null);
+      if (!data.fungible || data.fungible.length === 0) return;
 
       // Use current to filter what's already known at call time
       const knownIds = new Set(current.map(t => t.tokenId));
@@ -266,6 +321,17 @@ export default function IssuedTokensPanel({ network }: Props) {
   }
 
   if (stored.length === 0) {
+    if (scanError) {
+      return (
+        <div className="rounded-lg border border-amber-800 bg-amber-900/20 px-4 py-3 text-sm text-amber-300">
+          <p>Could not scan the wallet for your tokens: {scanError}</p>
+          <button onClick={() => { setScanError(null); augmentFromWallet(loadStored()); }}
+            className="mt-2 rounded-lg bg-gray-700 hover:bg-gray-600 border border-gray-600 px-3 py-1 text-xs font-medium text-gray-200">
+            Retry
+          </button>
+        </div>
+      );
+    }
     return (
       <p className="text-sm text-gray-500">
         No authoritable tokens found. Use <strong className="text-gray-400">Mint Token</strong> above to create one.
@@ -327,10 +393,14 @@ export default function IssuedTokensPanel({ network }: Props) {
                   </td>
                   <td className="px-4 py-3">
                     <span className="inline-flex items-center gap-1">
-                      <a href={`${explorerBase}/token/${token.tokenId}`} target="_blank" rel="noopener"
-                         className="font-mono text-xs text-mint-400 hover:text-mint-300 transition-colors">
-                        {token.tokenId.slice(0, 16)}…
-                      </a>
+                      {explorerBase ? (
+                        <a href={`${explorerBase}/token/${token.tokenId}`} target="_blank" rel="noopener"
+                           className="font-mono text-xs text-mint-400 hover:text-mint-300 transition-colors">
+                          {token.tokenId.slice(0, 16)}…
+                        </a>
+                      ) : (
+                        <span className="font-mono text-xs">{token.tokenId.slice(0, 16)}…</span>
+                      )}
                       <CopyButton value={token.tokenId} title="Copy token ID" />
                     </span>
                   </td>

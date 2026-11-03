@@ -84,8 +84,17 @@ function requestPath(service: FeatureService): string {
 
 /** A request is pending while the sidecar has not picked it up yet. */
 export async function isRequestPending(service: FeatureService): Promise<boolean> {
+  // Two states count: the queue file (not yet claimed) and the claim file
+  // (renamed to <service>.req.lock while the sidecar applies it - a deploy
+  // can take minutes). Checking only the queue file made auto-install
+  // re-queue the same upgrade mid-deploy, and 409 copies lie during that
+  // window.
   try {
     await stat(requestPath(service));
+    return true;
+  } catch { /* fall through to the claim check */ }
+  try {
+    await stat(`${requestPath(service)}.lock`);
     return true;
   } catch {
     return false;

@@ -95,7 +95,10 @@ function validateParams(action: string, p: Params): string | null {
       if (typeof m.media_hash !== 'string' || m.media_hash.length > 64) return 'media_hash is invalid';
       if (typeof m.name !== 'string' || m.name.length > 200) return 'name is invalid';
       if (m.description !== null && typeof m.description !== 'string') return 'description is invalid';
-      if (m.ticker !== null && typeof m.ticker !== 'string') return 'ticker is invalid';
+      // The daemon's TokenTicker constraint is 1-5 alphanumerics (the
+      // fungible path enforces the same) - reject here pre-burn instead of
+      // after a wasted code.
+      if (m.ticker !== null && !isStr(m.ticker, TICKER_RE)) return 'ticker must be 1-5 letters/digits';
       if (m.creator !== null) return 'creator must be null';
       if (!isHexField(m.icon_uri) || !isHexField(m.media_uri) || !isHexField(m.additional_metadata_uri)) {
         return 'metadata URIs are invalid';
@@ -188,7 +191,9 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
       // their message - never forward those to the browser (mirror of the
       // rpc.ts proxy redaction). Daemon user-actionable messages still pass
       // through.
-      const transport = err.code === -32000 || err.code === -32001 || err.code >= 500;
+      // Positive codes are daemon HTTP statuses (401/404 on bad credentials
+      // carry the daemon URL in the message) - redact them too, not just 5xx.
+      const transport = err.code === -32000 || err.code === -32001 || err.code >= 400;
       if (transport) console.error('[token-manage]', action, err.message);
       return json({
         ok: false,

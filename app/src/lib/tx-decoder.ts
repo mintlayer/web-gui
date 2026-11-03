@@ -44,11 +44,25 @@ export interface DecodedTransaction {
 
 // ── Network detection ──────────────────────────────────────────────────────────
 
+let loggedNetworkFallback = false;
 function detectNetwork(): number {
+  // Explicit env first - the repo-wide convention (NETWORK=mainnet|testnet|
+  // regtest) also covers daemons configured via config file, which the old
+  // CLI-substring probe silently mislabeled as mainnet.
+  const env = (process.env.NETWORK ?? '').toLowerCase();
+  if (env === 'mainnet') return Network.Mainnet;
+  if (env === 'testnet') return Network.Testnet;
+  if (env === 'regtest') return Network.Regtest;
+  if (env === 'signet') return Network.Signet;
+
   const cmd = process.env.WALLET_RPC_CMD ?? '';
   if (cmd.includes('testnet')) return Network.Testnet;
   if (cmd.includes('regtest')) return Network.Regtest;
   if (cmd.includes('signet')) return Network.Signet;
+  if (!loggedNetworkFallback) {
+    loggedNetworkFallback = true;
+    console.error('[tx-decoder] NETWORK is not set and WALLET_RPC_CMD declares no network - decoding as mainnet');
+  }
   return Network.Mainnet;
 }
 
@@ -94,11 +108,25 @@ export function isTransferOutput(output: DecodedOutput): boolean {
   return TRANSFER_VARIANTS.has(outputVariant(output));
 }
 
+/** The TokenV1 id(s) an output moves, for batched decimals resolution. */
+export function tokenIdsOfOutput(output: DecodedOutput): string[] {
+  const variant = outputVariant(output);
+  if (!TRANSFER_VARIANTS.has(variant)) return [];
+  const args = output[variant] as unknown[];
+  if (!Array.isArray(args) || args.length === 0) return [];
+  const value = args[0] as { Coin?: unknown; TokenV1?: [string, unknown] };
+  return value?.TokenV1 ? [value.TokenV1[0]] : [];
+}
+
 /**
  * Extract the value from a Transfer or LockThenTransfer output.
  * Returns a human-readable string like "1.5 ML" or "100.0 (token ttkn1…)".
+ * Token amounts use the token's on-chain `number_of_decimals` when the
+ * caller supplies one (batched via getTokensInfo); without it the raw
+ * value is rendered with an explicit `atoms` hint - silently dividing by
+ * a guessed precision would show a wrong amount.
  */
-export function outputValueLabel(output: DecodedOutput): string | null {
+export function outputValueLabel(output: DecodedOutput, tokenDecimals?: Map<string, number>): string | null {
   const variant = outputVariant(output);
   if (!TRANSFER_VARIANTS.has(variant)) return null;
 
@@ -110,7 +138,12 @@ export function outputValueLabel(output: DecodedOutput): string | null {
   if (value?.Coin) return `${atomsToDecimal(value.Coin.atoms, 11)} ML`;
   if (value?.TokenV1) {
     const [tokenId, amount] = value.TokenV1;
-    return `${atomsToDecimal(amount.atoms, 0)} (token ${tokenId.slice(0, 12)}…)`;
+    const decimals = tokenDecimals?.get(tokenId);
+    const pretty =
+      typeof decimals === 'number' && Number.isInteger(decimals) && decimals >= 0
+        ? atomsToDecimal(amount.atoms, decimals)
+        : `${amount.atoms} atoms`;
+    return `${pretty} (token ${tokenId.slice(0, 12)}…)`;
   }
   return null;
 }

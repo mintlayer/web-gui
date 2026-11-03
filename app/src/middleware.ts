@@ -46,8 +46,6 @@ const SECURITY_HEADERS: Record<string, string> = {
  */
 const CSP_POLICY = buildCsp();
 
-const CSP_ENABLED = process.env.CSP_ENABLED === 'true';
-
 export const onRequest = defineMiddleware(async (context, next) => {
   const { pathname } = new URL(context.request.url);
 
@@ -91,10 +89,16 @@ export const onRequest = defineMiddleware(async (context, next) => {
 
   const sessionVersion = getPref<number>('auth.session_version') ?? 0;
   if (!verifySessionToken(token, sessionVersion)) {
-    const nextParam =
-      pathname !== '/' && !pathname.startsWith('/api/')
-        ? `?next=${encodeURIComponent(pathname)}`
-        : '';
+    if (pathname.startsWith('/api/')) {
+      // fetch() follows 302s silently, so API consumers would read login
+      // HTML as a 200 and report "Wallet service error (HTTP 200)" instead
+      // of an expired session. Browsers navigating pages keep the redirect.
+      return new Response(JSON.stringify({ error: 'session_expired' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    const nextParam = pathname !== '/' ? `?next=${encodeURIComponent(pathname)}` : '';
     return new Response(null, {
       status: 302,
       headers: { Location: `/login${nextParam}` },
@@ -137,12 +141,11 @@ function applySecurityHeaders(response: Response): void {
       response.headers.set(key, value);
     }
   }
-  // CSP: report-only by default; opt into enforcement with CSP_ENABLED=true.
-  if (CSP_ENABLED) {
-    if (!response.headers.has('Content-Security-Policy')) {
-      response.headers.set('Content-Security-Policy', CSP_POLICY);
-    }
-  } else if (!response.headers.has('Content-Security-Policy-Report-Only')) {
+  // CSP: report-only by default, and CSP_ENABLED=true keeps it that way
+  // for scripts: the policy still carries 'unsafe-inline' in script-src
+  // (no nonce plumbing yet), so enforcing it today would change connect
+  // behavior without containing any injected script.
+  if (!response.headers.has('Content-Security-Policy-Report-Only')) {
     response.headers.set('Content-Security-Policy-Report-Only', CSP_POLICY);
   }
 }

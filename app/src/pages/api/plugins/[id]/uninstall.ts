@@ -34,7 +34,7 @@ export const POST: APIRoute = async ({ params, request, clientAddress }) => {
   }
 
   try {
-    uninstallPlugin(id);
+    await uninstallPlugin(id);
     return json({ ok: true });
   } catch (err) {
     return json({ ok: false, error: (err as Error).message }, 422);

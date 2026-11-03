@@ -1,14 +1,17 @@
 ---
 import ManagementLayout from '@/layouts/ManagementLayout.astro';
-import { listTransactions, listPendingTransactions, getTransactionSignedRaw, isWalletNotOpenError, WalletRpcError, type TransactionInfo } from '@/lib/wallet-rpc';
-import { decodeSignedTransaction, outputVariant, isTransferOutput, outputValueLabel, type DecodedTransaction } from '@/lib/tx-decoder';
+import { listTransactions, listPendingTransactions, getTransactionSignedRaw, isWalletNotOpenError, getTokensInfo, WalletRpcError, type TransactionInfo } from '@/lib/wallet-rpc';
+import { decodeSignedTransaction, outputVariant, isTransferOutput, outputValueLabel, tokenIdsOfOutput, type DecodedTransaction } from '@/lib/tx-decoder';
 
 const network = (process.env.NETWORK ?? 'mainnet').toLowerCase();
+// Three-way map: regtest/signet have no public explorer, links degrade to text.
 const EXPLORER_BASE = (process.env.ML_EXPLORER_URL ?? (
-  network === 'testnet'
-    ? 'https://lovelace.explorer.mintlayer.org'
-    : 'https://explorer.mintlayer.org'
-)).replace(/\/$/, '');
+  network === 'mainnet'
+    ? 'https://explorer.mintlayer.org'
+    : network === 'testnet'
+      ? 'https://lovelace.explorer.mintlayer.org'
+      : ''
+)).replace(/\/+$/, '');
 
 let transactions: TransactionInfo[] = [];
 let pending: string[] = [];
@@ -35,6 +38,21 @@ try {
   error = err instanceof WalletRpcError ? err.message : (err as Error).message;
 }
 
+// Resolve token precisions once (batched) so transfer amounts render as
+// "1.5 (token …)" instead of raw atoms; unresolved ids fall back to an
+// explicit atoms label inside outputValueLabel.
+const tokenDecimals = new Map<string, number>();
+try {
+  const ids = [...new Set(
+    [...details.values()].flatMap(d => d?.outputs ?? []).flatMap(tokenIdsOfOutput),
+  )];
+  if (ids.length > 0) {
+    for (const info of await getTokensInfo(ids)) {
+      if (info?.type === 'FungibleToken') tokenDecimals.set(info.content.token_id, info.content.number_of_decimals);
+    }
+  }
+} catch { /* no decimals - atoms labels */ }
+
 function formatDate(timestamp: number) {
   return new Date(timestamp * 1000).toLocaleString();
 }
@@ -53,7 +71,7 @@ function outputSummary(detail: DecodedTransaction | null | undefined): string {
   }
 
   // All outputs are Transfer / LockThenTransfer - show value from first output
-  const label = outputValueLabel(detail.outputs[0]);
+  const label = outputValueLabel(detail.outputs[0], tokenDecimals);
   return label ?? 'Transfer';
 }
 ---
@@ -162,6 +180,7 @@ function outputSummary(detail: DecodedTransaction | null | undefined): string {
 
                     <!-- TXID -->
                     <td class="px-4 py-3 font-mono text-xs text-gray-300 whitespace-nowrap">
+                      {EXPLORER_BASE ? (
                       <a
                         href={`${EXPLORER_BASE}/tx/${tx.id}`}
                         target="_blank"
@@ -171,6 +190,9 @@ function outputSummary(detail: DecodedTransaction | null | undefined): string {
                       >
                         {truncateTxId(tx.id)}
                       </a>
+                      ) : (
+                      <span title={tx.id}>{truncateTxId(tx.id)}</span>
+                      )}
                       <button
                         type="button"
                         class="ml-1.5 inline-flex items-center align-middle text-gray-600 hover:text-mint-400 transition-colors"
@@ -210,14 +232,46 @@ function outputSummary(detail: DecodedTransaction | null | undefined): string {
     </div>
   )}
 <script>
+  // Abandoning un-reserves a pending tx's inputs, so it needs a fresh
+  // 2FA code (POST /api/transaction-abandon) - same rule as sending.
+  function askTotp(): string | null {
+    const code = window.prompt('Enter your 6-digit 2FA code to abandon this transaction:') ?? '';
+    if (!/^[0-9]{6}$/.test(code.trim())) {
+      showError('A valid 6-digit 2FA code is required to abandon a transaction.');
+      return null;
+    }
+    return code.trim();
+  }
+
   async function abandonTx(txId: string): Promise<void> {
-    const res = await fetch('/api/rpc', {
+    const totp = askTotp();
+    if (totp === null) return;
+    const res = await fetch('/api/transaction-abandon', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ method: 'transaction_abandon', params: { account: 0, transaction_id: txId } }),
+      body: JSON.stringify({ totp_code: totp, transaction_id: txId }),
     });
-    const data = await res.json() as { ok: boolean; error?: { message: string } };
-    if (!data.ok) throw new Error(data.error?.message ?? 'Abandon failed');
+    // A session-expiry 302 is followed transparently and lands on login
+    // HTML: res.json() would throw a parser error that masks the real
+    // problem, so detect the redirect first.
+    if (res.redirected) {
+      throw new Error('Your session expired - redirecting to login…');
+    }
+    let data: unknown;
+    try {
+      data = await res.json();
+    } catch {
+      throw new Error('Abandon failed - unexpected server response.');
+    }
+    if (!(data as { ok?: boolean }).ok) {
+      // The endpoint returns error as a string (validation, step-up) while
+      // some paths use an object shape - surface whichever arrived so a
+      // wrong 2FA code does not show as a generic failure and burn retries
+      // against the step-up throttle.
+      const err = (data as { error?: unknown }).error;
+      const msg = typeof err === 'string' ? err : (err as { message?: string } | undefined)?.message;
+      throw new Error(msg ?? 'Abandon failed');
+    }
   }
 
   function setAllBusy(busy: boolean) {

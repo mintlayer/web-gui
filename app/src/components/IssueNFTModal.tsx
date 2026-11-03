@@ -92,8 +92,10 @@ export default function IssueNFTModal({ ipfsEnabled, onClose, onIssued }: Props)
       if (ipfsEnabled && !url) {
         throw new Error('IPFS upload succeeded but returned no URL - cannot proceed without media URI');
       }
-      // Chain max is 32 bytes; SHA-256 hex is 64 chars → truncate to 32
-      setMediaHash(hash.slice(0, 32));
+      // SHA-256 hex is 64 chars = the full 32-byte digest, and the API cap
+      // is 64 chars. Slicing the HEX to 32 kept only half the digest - no
+      // off-chain verifier comparing sha256(media) could ever match it.
+      setMediaHash(hash);
       if (url) setMediaUri(url);
     } catch (err) {
       setError(`Media upload failed: ${(err as Error).message}`);
@@ -251,13 +253,14 @@ export default function IssueNFTModal({ ipfsEnabled, onClose, onIssued }: Props)
             <input
               id="ticker"
               value={ticker}
-              onChange={e => setTicker(e.target.value.toUpperCase())}
+              onChange={e => setTicker(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
               maxLength={5}
+              pattern="[A-Z0-9]{1,5}"
               placeholder="MYNFT"
               required
               className={inp}
             />
-            <p className="text-xs text-gray-500 mt-1">Short identifier, up to 5 characters</p>
+            <p className="text-xs text-gray-500 mt-1">Short identifier, up to 5 letters/digits</p>
           </div>
 
           {/* Media file - always shown, but label differs by mode */}

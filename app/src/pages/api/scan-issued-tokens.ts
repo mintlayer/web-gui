@@ -27,13 +27,11 @@ const TOKEN_ID_HRP: Record<string, string> = {
   mainnet: 'mmltk',
   testnet: 'tmltk',
   regtest: 'rmltk',
-  signet:  'smltk',
 };
-const hrp = TOKEN_ID_HRP[NETWORK] ?? 'mmltk';
 
 // ── Token ID computation ──────────────────────────────────────────────────────
 
-function computeTokenId(prevTxIdHex: string, prevOutputIndex: number): string | null {
+function computeTokenId(hrp: string, prevTxIdHex: string, prevOutputIndex: number): string | null {
   try {
     const txIdBytes = Buffer.from(prevTxIdHex, 'hex');
     if (txIdBytes.length !== 32) return null;
@@ -47,7 +45,6 @@ function computeTokenId(prevTxIdHex: string, prevOutputIndex: number): string | 
     return null;
   }
 }
-
 // ── UTXO types ────────────────────────────────────────────────────────────────
 
 interface UtxoEntry {
@@ -97,6 +94,13 @@ interface TxGetResult {
 // ── Endpoint ──────────────────────────────────────────────────────────────────
 
 export const GET: APIRoute = async () => {
+  // Fail fast on an unknown NETWORK instead of silently bech32-encoding
+  // token ids with the wrong HRP (would produce ids that mismatch every
+  // real authoritative token - same rule as chain-tip's network guard).
+  const hrp = TOKEN_ID_HRP[NETWORK];
+  if (!hrp) {
+    return json({ ok: false, error: `Unsupported NETWORK '${NETWORK}'` }, 400);
+  }
   try {
     const utxos = await rpcCall<UtxoEntry[]>('account_utxos', { account: 0 });
 
@@ -144,15 +148,18 @@ export const GET: APIRoute = async () => {
       const prevOutputIndex = firstUtxoInput.Utxo.index;
       if (!prevTxIdHex || prevOutputIndex === undefined) continue;
 
-      const tokenId = computeTokenId(prevTxIdHex, prevOutputIndex);
+      const tokenId = computeTokenId(hrp, prevTxIdHex, prevOutputIndex);
       if (!tokenId) continue;
 
       fungibleResult.push({ tokenId, ticker, decimals });
     }
 
     return json({ ok: true, fungible: fungibleResult, nfts: nftResult }, 200);
-  } catch {
-    // Best-effort - never crash the page
-    return json({ ok: true, fungible: [], nfts: [] }, 200);
+  } catch (err) {
+    // A broken backend must not masquerade as "no issuances": transport
+    // failures return ok:false so the UI can show an error state instead
+    // of an empty wallet. The original is logged for diagnosis.
+    console.error('[scan-issued-tokens]', err);
+    return json({ ok: false, error: 'The wallet service is unavailable.', fungible: [], nfts: [] }, 502);
   }
 };

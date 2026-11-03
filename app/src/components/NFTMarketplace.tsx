@@ -8,6 +8,7 @@ import { safeImageUri } from "@/lib/safe-uri";
 import type { TokenCurrency, OrderInfo } from "@/lib/wallet-rpc";
 import { rpc } from '@/lib/client-rpc';
 import { stakeTrade } from '@/lib/stake-trade-client';
+import { mulDecimal } from '@/lib/decimal';
 import { TotpField } from '@/components/ui/TotpField';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -27,6 +28,14 @@ interface ActiveOrderRaw {
   ask_balance: { atoms: string; decimal: string };
   give_balance: { atoms: string; decimal: string };
   is_own: boolean;
+  is_marked_as_concluded_in_wallet: boolean;
+  is_marked_as_frozen_in_wallet: boolean;
+  existing_order_data: {
+    ask_balance: { atoms: string; decimal: string };
+    give_balance: { atoms: string; decimal: string };
+    creation_timestamp: { timestamp: number };
+    is_frozen: boolean;
+  } | null;
 }
 
 interface NFTListing {
@@ -37,6 +46,7 @@ interface NFTListing {
   iconUri: string | null; // already resolved to HTTP URL
   priceML: string;        // decimal string
   isOwn: boolean;
+  frozen: boolean;        // frozen orders cannot be cancelled daemon-side
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -93,7 +103,10 @@ function SellNFTModal({
   const resolvedIcon = resolveUri(nft.iconUri);
   const [iconErrored, setIconErrored] = useState(false);
 
-  const canSubmit = !loading && !!listPrice && parseFloat(listPrice) > 0 && totp.length === 6;
+  // Exact-decimal validity, not parseFloat: a scientific-notation input
+  // ('1e5') would sail past this check and hit the daemon raw.
+  const listPriceValid = mulDecimal(listPrice, '1') !== null && Number(listPrice) > 0;
+  const canSubmit = !loading && listPriceValid && totp.length === 6;
 
   async function handleList(e: React.FormEvent) {
     e.preventDefault();
@@ -382,8 +395,13 @@ function NFTCard({
         <p className="text-xs text-gray-500 font-mono truncate">{listing.nftId.slice(0, 16)}…</p>
       </div>
       <div className="text-sm font-semibold text-mint-400">{listing.priceML} ML</div>
+      {listing.frozen && (
+        <span className="rounded border border-amber-800 bg-amber-900/20 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-amber-300 self-start">
+          Frozen - cancel unavailable
+        </span>
+      )}
       {showBuy && <BuyButton listing={listing} onDone={onAction} totp={totp} onTotpConsumed={onTotpConsumed} />}
-      {showCancel && <CancelButton orderId={listing.orderId} onDone={onAction} totp={totp} onTotpConsumed={onTotpConsumed} />}
+      {showCancel && !listing.frozen && <CancelButton orderId={listing.orderId} onDone={onAction} totp={totp} onTotpConsumed={onTotpConsumed} />}
     </div>
   );
 }
@@ -410,6 +428,7 @@ export default function NFTMarketplace({
   // My listings state
   const [myListings, setMyListings] = useState<NFTListing[]>([]);
   const [myListingsLoading, setMyListingsLoading] = useState(false);
+  const [myListingsError, setMyListingsError] = useState<string | null>(null);
 
   // Shared 2FA code for buying (browse tab) and cancelling (sell tab) - both
   // move funds and burn a code server-side via /api/stake-trade.
@@ -466,8 +485,13 @@ export default function NFTMarketplace({
         ),
       ];
 
-      // Resolve metadata one-at-a-time to avoid ordering issues
+      // Resolve metadata one-at-a-time to avoid ordering issues. Ids that
+      // positively resolve as FUNGIBLE are dropped below: the atoms==1
+      // heuristic alone also catches whole units of 0-decimal tokens, and
+      // rendering those as NFT cards misrepresents the order. Only ids with
+      // NO info at all keep the unknown-collection fallback.
       const metaMap = new Map<string, { name: string; ticker: string; iconUri: string | null }>();
+      const fungibleIds = new Set<string>();
       await Promise.all(
         uniqueIds.map(async id => {
           try {
@@ -475,6 +499,10 @@ export default function NFTMarketplace({
               "node_get_tokens_info",
               { token_ids: [id] },
             );
+            if (info?.type === "FungibleToken") {
+              fungibleIds.add(id);
+              return;
+            }
             if (info?.type === "NonFungibleToken") {
               const meta = info.content.metadata!;
               metaMap.set(id, {
@@ -492,11 +520,14 @@ export default function NFTMarketplace({
       const enriched: NFTListing[] = nftCandidates
         .filter(o => {
           const id = (o.initially_given as { type: "Token"; content: { id: string } }).content.id;
-          return metaMap.has(id);
+          return !fungibleIds.has(id);
         })
         .map(o => {
           const id = (o.initially_given as { type: "Token"; content: { id: string } }).content.id;
-          const meta = metaMap.get(id)!;
+          // Listings with unresolvable metadata stay visible to buyers
+          // (same fallback as the own-listings side) - filtering them out
+          // hid live offers behind an RPC glitch.
+          const meta = metaMap.get(id) ?? { name: "unknown collection", ticker: "", iconUri: null };
           return {
             orderId: o.order_id,
             nftId: id,
@@ -505,6 +536,7 @@ export default function NFTMarketplace({
             iconUri: meta.iconUri,
             priceML: o.ask_balance.decimal,
             isOwn: o.is_own,
+            frozen: !!(o.existing_order_data?.is_frozen || o.is_marked_as_frozen_in_wallet),
           };
         });
 
@@ -560,13 +592,11 @@ export default function NFTMarketplace({
       );
 
       const enriched: NFTListing[] = nftSells
-        .filter(o => {
-          const id = (o.initially_given as { type: "Token"; content: { id: string } }).content.id;
-          return metaMap.has(id);
-        })
         .map(o => {
           const id = (o.initially_given as { type: "Token"; content: { id: string } }).content.id;
-          const meta = metaMap.get(id)!;
+          // Own listings must survive unresolvable metadata (RPC glitch, unknown
+          // collection) - dropping them hides the only Cancel affordance.
+          const meta = metaMap.get(id) ?? { name: id.slice(0, 8) + "…", ticker: "", iconUri: null };
           const data = o.existing_order_data!;
           return {
             orderId: o.order_id,
@@ -576,12 +606,15 @@ export default function NFTMarketplace({
             iconUri: meta.iconUri,
             priceML: data.ask_balance.decimal,
             isOwn: true,
+            frozen: !!(data.is_frozen || o.is_marked_as_frozen_in_wallet),
           };
         });
 
       setMyListings(enriched);
-    } catch {
-      // non-critical, silently ignore
+    } catch (err) {
+      // The cancel affordance lives here - a silent empty list would hide
+      // the user's own open orders behind an unrelated RPC hiccup.
+      setMyListingsError(friendlyError(err));
     } finally {
       setMyListingsLoading(false);
     }
@@ -730,7 +763,13 @@ export default function NFTMarketplace({
               <div className="py-8 text-center text-gray-600 text-sm">Loading…</div>
             )}
 
-            {!myListingsLoading && myListings.length === 0 && (
+            {myListingsError && (
+              <div className="rounded-lg border border-amber-700/50 bg-amber-900/20 px-4 py-3 text-sm text-amber-300">
+                Could not load your listings: {myListingsError}
+              </div>
+            )}
+
+            {!myListingsLoading && !myListingsError && myListings.length === 0 && (
               <div className="py-8 text-center text-gray-600 text-sm">
                 No active NFT listings.
               </div>

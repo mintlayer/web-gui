@@ -7,6 +7,7 @@ import { tokenManage } from '@/lib/token-manage-client';
 import { toHexField } from '@/lib/token-utils';
 import { TotpField } from '@/components/ui/TotpField';
 import { ModalOverlay } from '@/components/ui/ModalOverlay';
+import { isValidAmount } from '@/lib/validation';
 
 type SupplyType = 'Fixed' | 'Lockable' | 'Unlimited';
 type Mode = 'easy' | 'expert';
@@ -105,6 +106,14 @@ export default function IssueTokenModal({ ipfsEnabled, onClose, onIssued }: Prop
 
       let newTokenId = '';
       const newTxId = await submitWithToast(async () => {
+        // A fixed supply is denominated in the token's own decimals: 0.555
+        // with Decimals = 2 is rejected by the daemon pre-sign - knowable
+        // here, so fail before the TOTP code is consumed.
+        if (supplyType === 'Fixed' && !isValidAmount(fixedAmount, decimals)) {
+          throw new Error(
+            `Fixed supply "${fixedAmount}" has more decimal places than the token's ${decimals} decimal places`,
+          );
+        }
         const r = await tokenManage('token_issue_new', {
           account: 0,
           destination_address: destAddress,

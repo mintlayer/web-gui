@@ -10,6 +10,11 @@ export interface RequestOptions {
   /** JSON-serializable request body. */
   body?: unknown;
   headers?: Record<string, string>;
+  /** Abort budget in ms. Defaults to 10s; endpoints that make the SERVER
+   *  perform an on-chain action (e.g. broadcastBridgeRequest) need more -
+   *  aborting a slow-but-successful broadcast desyncs client belief from
+   *  chain state and invites a double deposit on retry. */
+  timeoutMs?: number;
 }
 
 /** Error thrown by bridge-sdk requests; carries the HTTP status when known. */
@@ -45,7 +50,7 @@ export async function apiRequest<T>(
   options: RequestOptions = {},
   fetchImpl: FetchLike = fetch,
 ): Promise<T> {
-  const { method = 'GET', body, headers = {} } = options;
+  const { method = 'GET', body, headers = {}, timeoutMs = 10_000 } = options;
 
   const init: RequestInit = {
     method,
@@ -53,6 +58,10 @@ export async function apiRequest<T>(
       ? { 'Content-Type': 'application/json', ...headers }
       : headers,
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    // Bounded so a hung bridge host cannot pin a poll forever: uncounted
+    // pending fetches never trip the panel's failure backoff and pile up
+    // until the browser's per-host connection pool starves.
+    signal: AbortSignal.timeout(timeoutMs),
   };
 
   let response: Response;

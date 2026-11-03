@@ -8,6 +8,26 @@
  * else degrades to plain text.
  */
 
+/**
+ * Sanitize a user-supplied relative redirect target (the login `next=`
+ * parameter). Returns the path only when it is a same-origin relative URL;
+ * anything else degrades to '/'.
+ *
+ * Protocol-relative '//host' is rejected, and so is any backslash form:
+ * WHATWG URL parsing treats '\' as '/' for special schemes, so '/\\evil.com'
+ * and '/\\/evil.com' resolve cross-origin even though they start with '/'
+ * (new URL('/\\evil.com', 'http://x.test').href === 'http://evil.com/').
+ */
+export function safeRelativePath(raw: string): string {
+  // Anything outside printable ASCII (control chars AND higher code points
+  // like U+2028) crashes the login redirect: undici rejects it as a header
+  // value, and the throw happens after the session was minted (or after
+  // setup credentials were promoted) - an avoidable 500 on a crafted
+  // ?next=. Degrade like every other unsafe value.
+  if (/[^\x21-\x7e]/.test(raw)) return '/';
+  return raw.startsWith('/') && !raw.startsWith('//') && !raw.startsWith('/\\') ? raw : '/';
+}
+
 export const DEFAULT_IPFS_GATEWAY = 'https://ipfs.io/ipfs/';
 
 export function getIpfsGateway(): string {

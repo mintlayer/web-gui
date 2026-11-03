@@ -136,6 +136,10 @@ services:
       # X-Forwarded-For with the real client IP. Direct/LAN exposure must keep
       # it unset - X-Forwarded-* is attacker-controllable then.
       TRUST_PROXY: "${TRUST_PROXY:-}"
+      # WebAuthn: init.sh writes these into .env; without the passthrough
+      # compose never injects them and passkeys silently fail on TLS setups.
+      PASSKEY_RP_ID: "${PASSKEY_RP_ID:-}"
+      PASSKEY_ORIGIN: "${PASSKEY_ORIGIN:-}"
       PORT: "4321"
     restart: unless-stopped
 
@@ -154,8 +158,9 @@ services:
     command:
       - "-printtoconsole=1"
       # Bitcoin Core's -chain wants "main", not "mainnet" - override with
-      # BITCOIN_CORE_CHAIN in .env (init.sh derives it).
-      - "-chain=${BITCOIN_CORE_CHAIN:-${BITCOIN_NETWORK:-mainnet}}"
+      # BITCOIN_CORE_CHAIN in .env (init.sh derives it: mainnet -> "main";
+      # "mainnet" is not a valid Core -chain value).
+      - "-chain=${BITCOIN_CORE_CHAIN:-main}"
       - "-rpcbind=0.0.0.0:8332"
       - "-rpcallowip=0.0.0.0/0"
       - "-rpcuser=${BITCOIN_RPC_USERNAME}"
@@ -192,7 +197,10 @@ services:
     depends_on:
       - bitcoind
     environment:
-      BTCEXP_BITCOIND_URI: "bitcoin://${BITCOIN_RPC_USERNAME}:${BITCOIN_RPC_PASSWORD}@bitcoind:8332?timeout=15000"
+      BTCEXP_BITCOIND_USER: "${BITCOIN_RPC_USERNAME}"
+      BTCEXP_BITCOIND_PASSWORD: "${BITCOIN_RPC_PASSWORD}"
+      BTCEXP_BITCOIND_HOST: "bitcoind"
+      BTCEXP_BITCOIND_PORT: "8332"
       BTCEXP_HOST: "0.0.0.0"
       BTCEXP_PORT: "3002"
       BTCEXP_ADDRESS_API: "none"
@@ -404,7 +412,12 @@ services:
       - -c
       - |
         caddy run --config /etc/caddy/Caddyfile --adapter caddyfile &
-        while :; do
+        CADDY_PID=$$!
+        # Watch the caddy child: sh is PID 1, so a dead caddy would leave the
+        # container Up forever (restart policy never fires, TLS silently
+        # dead). Exiting makes the container - and restart: unless-stopped -
+        # take care of recovery.
+        while kill -0 "$$CADDY_PID" 2>/dev/null; do
           if [ -f /data/caddy/pki/authorities/local/root.crt ]; then
             if ! cmp -s /data/caddy/pki/authorities/local/root.crt /ca-public/root.crt 2>/dev/null; then
               cp -f /data/caddy/pki/authorities/local/root.crt /ca-public/root.crt
@@ -414,6 +427,10 @@ services:
           fi
           sleep 5
         done
+        # caddy died: exit non-zero so the restart policy acts instead of
+        # serving a broken TLS endpoint behind a healthy-looking container.
+        echo "caddy exited unexpectedly" >&2
+        exit 1
     profiles:
       - web
     restart: unless-stopped

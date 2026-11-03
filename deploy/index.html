@@ -649,7 +649,7 @@
     </div>
     <div class="install-box" id="panel-terminal" role="tabpanel">
       <span class="terminal-prompt" id="terminal-prompt">$</span>
-      <code id="install-cmd">bash &lt;(curl -sSL https://get.mintlayer.org/linux.sh)</code>
+      <code id="install-cmd">bash &lt;(curl -fsSL https://get.mintlayer.org/linux.sh)</code>
       <button class="copy-btn" id="copy-btn" onclick="copyCmd()" aria-label="Copy install command">
         <svg id="copy-icon" width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
           <rect x="4.5" y="4.5" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.4"/>
@@ -806,7 +806,7 @@
     </div>
     <div class="modal-footer">
       <span id="modal-line-count" class="modal-line-count"></span>
-      <span id="modal-footer-cmd">bash &lt;(curl -sSL https://get.mintlayer.org/<span id="modal-footer-file">linux.sh</span>)</span>
+      <span id="modal-footer-cmd">bash &lt;(curl -fsSL https://get.mintlayer.org/<span id="modal-footer-file">linux.sh</span>)</span>
     </div>
   </div>
 </div>
@@ -823,7 +823,7 @@
   const SCRIPT_FILE = { windows: 'windows.ps1', macos: 'mac.sh', linux: 'linux.sh' }[OS];
   const INSTALL_CMD = OS === 'windows'
     ? 'powershell -c "irm https://get.mintlayer.org/windows.ps1 | iex"'
-    : `bash <(curl -sSL https://get.mintlayer.org/${SCRIPT_FILE})`;
+    : `bash <(curl -fsSL https://get.mintlayer.org/${SCRIPT_FILE})`;
   const PROMPT_CHAR = OS === 'windows' ? 'PS>' : '$';
 
   // ── Patch hero on load ───────────────────────────────────────────────────

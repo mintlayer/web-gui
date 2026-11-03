@@ -20,7 +20,12 @@ export function getWalletRpcWsUrl(): string {
  * wallet_recover). Override via WALLET_RPC_TIMEOUT_MS.
  */
 export function getWalletRpcTimeoutMs(): number {
-  const raw = Number(process.env.WALLET_RPC_TIMEOUT_MS);
+  // Empty/whitespace values (a common .env/compose accident) must fall back
+  // to the default rather than parse as 0 = "timeout disabled" for every
+  // call. An explicit "0" stays the intentional disable.
+  const text = (process.env.WALLET_RPC_TIMEOUT_MS ?? '').trim();
+  if (text === '') return 30_000;
+  const raw = Number(text);
   return Number.isFinite(raw) && raw >= 0 ? raw : 30_000;
 }
 
@@ -165,7 +170,9 @@ export type WalletOpenResult =
   | { status: 'ok' }
   | { status: 'needs_password' }
   | { status: 'not_found' }
-  | { status: 'error'; message: string };
+  // `error` preserves the thrown value (usually a WalletRpcError) so API
+  // routes can apply code-based redaction instead of guessing from text.
+  | { status: 'error'; message: string; error?: unknown };
 
 /**
  * Returns true if the error indicates no wallet is currently open.
@@ -217,7 +224,7 @@ export async function ensureWalletOpen(walletPath = '/home/mintlayer/mintlayer.w
       return { status: 'not_found' };
     }
     console.error(`[wallet] auto-open failed for ${walletPath}: ${msg}`);
-    return { status: 'error', message: msg };
+    return { status: 'error', message: msg, error: err };
   }
 }
 

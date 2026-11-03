@@ -13,6 +13,7 @@ import {
   getSubscribeUrl,
   isEthTxHash,
   isTxHashLike,
+  validateMintlayerAddress,
   type BridgeConfig,
   type BridgeFees,
   type BridgeRequestDetail,
@@ -22,10 +23,12 @@ import {
 import {
   connectMetaMask,
   depositToBridge,
+  formatUnits,
   getConnectedAccount,
-  getTokenBalance,
+  getTokenBalanceBase,
   hasEthereumProvider,
   normalizeEvmRejection,
+  parseUnits,
   switchChain,
 } from '@/lib/evm';
 import { suggestAddressCorrection, hrpForNetwork } from '@/lib/bech32-correct';
@@ -43,8 +46,14 @@ import BridgeHistorySection from '@/components/BridgeHistorySection';
 import { appendHistory, updateHistoryStatus } from '@/lib/bridge-sdk/bridge-history';
 import { ethExplorerBase, mlExplorerBase } from '@/lib/bridge-sdk/explorers';
 import AddressSuggestion from '@/components/AddressSuggestion';
-
 const sdk = createBridgeSdk();
+
+/** Phases owned by an in-flight submission - a stale tracked-bridge poll
+ *  must never overwrite them (see pollTracked). */
+const SUBMIT_PHASES: ReadonlySet<string> = new Set(['approve', 'deposit', 'signing', 'submitting']);
+
+/** Consecutive poll failures before the status card gives up. */
+const POLL_FAILURE_LIMIT = 5;
 
 type Direction = 'e2m' | 'm2e';
 type Phase =
@@ -164,6 +173,14 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
   // setPhase the async submits leave `busy` false, so the button alone can't
   // stop a double click from creating two deposits.
   const submittingRef = useRef(false);
+  // Mirror of `phase` for stable-identity callbacks (pollTracked): lets
+  // them read the current submit phase without re-subscribing effects.
+  const submitPhaseRef = useRef<Phase>('idle');
+  const pollFailuresRef = useRef(0);
+  const [pollUnavailable, setPollUnavailable] = useState(false);
+  useEffect(() => {
+    submitPhaseRef.current = phase;
+  }, [phase]);
 
   const metamaskInstalled = hasEthereumProvider();
 
@@ -293,6 +310,12 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
   const [ethBalances, setEthBalances] = useState<Record<string, string | null>>(
     () => Object.create(null),
   );
+  // Exact base units + decimals per asset, parallel to ethBalances: the
+  // fraction buttons must truncate in integer land (float math at 18 dp
+  // can round ABOVE the balance and guarantee a deposit revert).
+  const [ethBalanceBase, setEthBalanceBase] = useState<
+    Record<string, { raw: bigint; decimals: number } | null>
+  >(() => Object.create(null));
 
   useEffect(() => {
     let cancelled = false;
@@ -339,20 +362,28 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
   useEffect(() => {
     if (!ethAccount) {
       setEthBalances(Object.create(null));
+      setEthBalanceBase(Object.create(null));
       return;
     }
     let cancelled = false;
     void Promise.all(
       assets.map(async (a) => {
-        if (!a.ethAddress) return [a.ticker, null] as const;
-        const b = await getTokenBalance(a.ethAddress, ethAccount).catch(() => null);
-        return [a.ticker, b] as const;
+        if (!a.ethAddress) return [a.ticker, null, null] as const;
+        const base = await getTokenBalanceBase(a.ethAddress, ethAccount).catch(() => null);
+        const formatted = base ? formatUnits(base.raw, base.decimals) : null;
+        return [a.ticker, formatted, base] as const;
       }),
     ).then((entries) => {
       if (cancelled) return;
       const next: Record<string, string | null> = Object.create(null);
-      for (const [ticker, balance] of entries) next[ticker] = balance;
+      const nextBase: Record<string, { raw: bigint; decimals: number } | null> =
+        Object.create(null);
+      for (const [ticker, balance, base] of entries) {
+        next[ticker] = balance;
+        nextBase[ticker] = base;
+      }
       setEthBalances(next);
+      setEthBalanceBase(nextBase);
     });
     return () => {
       cancelled = true;
@@ -398,19 +429,31 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
   // 25% / 50% / Max of the wallet balance, capped by the per-request max.
   const applyFraction = useCallback(
     (fraction: number) => {
-      const balance = parseFloat(ethBalance ?? '');
-      if (!Number.isFinite(balance) || balance <= 0) return;
-      let target = balance * fraction;
+      const base = ethBalanceBase[assetTicker];
+      if (!base || base.raw <= 0n) return;
+      // Integer math on base units throughout: floats lose integer precision
+      // past 2^53 (at 18 decimals that is ~0.009 tokens), so the old
+      // truncation could land ABOVE the true balance and make the deposit
+      // revert in transferFrom. 25%/50%/Max map to exact bigint factors.
+      const pct = BigInt(Math.round(fraction * 100));
+      let target = (base.raw * pct) / 100n;
       const max = asset?.maxAmountPerRequest;
       if (max !== undefined && /^\d+(\.\d+)?$/.test(max)) {
-        target = Math.min(target, parseFloat(max));
+        try {
+          const maxBase = parseUnits(max, base.decimals);
+          if (target > maxBase) target = maxBase;
+        } catch {
+          /* malformed cap value - leave the uncapped target */
+        }
       }
-      // Truncate toward zero at 8 dp - rounding could exceed the real
-      // balance by dust and guarantee a MetaMask revert on Max.
-      const scaled = Math.floor(target * 1e8) / 1e8;
-      setAmount(scaled.toFixed(8).replace(/\.?0+$/, ''));
+      // Trim formatUnits' cosmetic padding ("100.0" -> "100") but ONLY
+      // when a decimal point exists: for 0-decimals tokens formatUnits
+      // emits no fraction at all (1000n -> "1000") and a bare trailing-zero
+      // strip would corrupt the amount 10^n-fold ("1000" -> "1").
+      const s = formatUnits(target, base.decimals);
+      setAmount(s.includes('.') ? s.replace(/0+$/, '').replace(/\.$/, '') : s);
     },
-    [ethBalance, asset?.maxAmountPerRequest],
+    [ethBalanceBase, assetTicker, asset?.maxAmountPerRequest],
   );
 
   /** Persist a freshly broadcast bridge so the card survives refreshes. */
@@ -434,6 +477,14 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
       startedAt: new Date().toISOString(),
     });
     setHistoryToken((t) => t + 1);
+    // Reset the previous bridge's tracking state: a terminal progress card
+    // and a tripped poll backoff would both early-return the poll and WS
+    // effects, so the new bridge would render the old bridge's completed
+    // steps and never get refreshed.
+    setTrackedProgress(null);
+    setTrackedRequest(null);
+    setPollUnavailable(false);
+    pollFailuresRef.current = 0;
     setPhase('polling');
   }
 
@@ -446,6 +497,7 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
     if (!current) return;
     try {
       const detail: BridgeRequestDetail = await sdk.getBridgeRequest(current.uuid);
+      pollFailuresRef.current = 0;
       const next = deriveProgress(detail);
       // Fresh re-read doubles as both the takeover guard (a newer bridge's
       // progress must not be published under the old request) and the save
@@ -455,7 +507,22 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
       setTrackedRequest(detail);
       setTrackedProgress(next);
       if (next.kind !== 'in-progress') {
-        setPhase(next.kind === 'completed' ? 'done' : next.kind === 'manual' ? 'manual' : 'failed');
+        // Never let a stale request's terminal state stomp an active
+        // submission of a NEW bridge: while the wallet prompt is up the
+        // phase belongs to the new flow (and `busy` must not drop).
+        // submitPhaseRef mirrors the `phase` state: this callback's deps
+        // are empty by design (stable identity for the poll interval),
+        // so a plain `phase` read would always see the initial value and
+        // the guard would be dead code.
+        if (!submittingRef.current && !SUBMIT_PHASES.has(submitPhaseRef.current)) {
+          setPhase(
+            next.kind === 'completed' ? 'done' : next.kind === 'manual' ? 'manual' : 'failed',
+          );
+        }
+        // Flip the collapsed history row's chip too: the section only
+        // re-reads on a token bump, and the card saying 'Completed' above
+        // a row still reading 'In progress' reads as a contradiction.
+        setHistoryToken((t) => t + 1);
       }
       const advanced = next.step > latest.lastStep;
       // First sight of the deposit hash (ML→ETH submits without one) -
@@ -470,7 +537,22 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
       }
       updateHistoryStatus(current.uuid, next.rawStatus);
     } catch {
-      /* transient - the next poll retries; unknown state keeps polling */
+      // A request the server no longer knows (pruned, or the network is
+      // gone) must not be polled forever: after several consecutive
+      // failures stop the interval/WS and say so on the card. The history
+      // section can still retry from scratch.
+      pollFailuresRef.current += 1;
+      if (pollFailuresRef.current >= POLL_FAILURE_LIMIT) {
+        setPollUnavailable(true);
+        // Release the form: with the phase stuck at 'polling' the submit
+        // button stayed disabled forever, and when no poll ever succeeded
+        // the notice lives on the progress card, which never renders
+        // (trackedProgress stays null). Same guard as the terminal branch:
+        // never stomp a new submission's phase.
+        if (!submittingRef.current && !SUBMIT_PHASES.has(submitPhaseRef.current)) {
+          setPhase('idle');
+        }
+      }
     }
   }, []);
 
@@ -483,15 +565,17 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
   useEffect(() => {
     if (!tracked) return;
     if (trackedProgress && trackedProgress.kind !== 'in-progress') return;
+    if (pollUnavailable) return;
     void pollTracked();
     const id = setInterval(() => void pollTracked(), PROGRESS_POLL_MS);
     return () => clearInterval(id);
-  }, [tracked, trackedProgress?.kind, pollTracked]);
+  }, [tracked, trackedProgress?.kind, pollUnavailable, pollTracked]);
 
   useEffect(() => {
     const uuid = tracked?.uuid;
     if (!uuid) return;
     if (trackedProgress && trackedProgress.kind !== 'in-progress') return;
+    if (pollUnavailable) return;
     let socket: WebSocket | null = null;
     let closed = false;
     try {
@@ -518,13 +602,15 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
       closed = true;
       socket?.close();
     };
-  }, [tracked?.uuid, trackedProgress?.kind, pollTracked]);
+  }, [tracked?.uuid, trackedProgress?.kind, pollUnavailable, pollTracked]);
 
   function dismissTracked() {
     clearInFlight();
     setTracked(null);
     setTrackedProgress(null);
     setTrackedRequest(null);
+    setPollUnavailable(false);
+    pollFailuresRef.current = 0;
     setPhase('idle');
   }
 
@@ -595,6 +681,18 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
           setError('Invalid Mintlayer address.');
           return;
         }
+        // The deposit broadcasts on-chain before the bridge backend ever
+        // sees the receiver, so the payload itself must be valid too (a
+        // checksum-valid short-payload address would strand the funds).
+        if (
+          !validateMintlayerAddress(
+            receiver.trim(),
+            networkType === 'mainnet' ? 'mainnet' : 'testnet',
+          ).valid
+        ) {
+          setError('Invalid Mintlayer address.');
+          return;
+        }
       }
     }
 
@@ -648,17 +746,42 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
           18,
           receiver.trim(),
           setPhase,
+          // switchChainIfNeeded already verified this resolves before we
+          // got here; default to mainnet for the type-level null only.
+          Number.parseInt(chainForFlavor(flavor)?.id ?? '0x1', 16),
         );
         setPhase('submitting');
-        const res = await sdk.broadcastBridgeRequest({
-          source_chain: sourceChain,
-          destination_chain: destinationChain,
-          asset: asset.ticker,
-          amount: amount.trim(),
-          receiver_address: receiver.trim(),
-          deposit_transactions: [{ transaction_hash: txHash }],
-        });
-        trackRequest(res.bridge_request_uuid, txHash);
+        try {
+          const res = await sdk.broadcastBridgeRequest({
+            source_chain: sourceChain,
+            destination_chain: destinationChain,
+            asset: asset.ticker,
+            amount: amount.trim(),
+            receiver_address: receiver.trim(),
+            deposit_transactions: [{ transaction_hash: txHash }],
+          });
+          trackRequest(res.bridge_request_uuid, txHash);
+        } catch (broadcastErr) {
+          // The deposit is already on Ethereum at this point - swallowing
+          // the failure would orphan real funds. Record a provisional
+          // history entry so the deposit stays visible, then surface the
+          // broadcast error with the tx hash for support/contact.
+          appendHistory({
+            // The bridge backend never saw this deposit, so no request with
+            // this id can ever resolve: prefix the id so the history rows
+            // render without polling a guaranteed 404 and never offer the
+            // dead Retry button.
+            uuid: `orphan-${txHash}`,
+            direction,
+            asset: assetTicker,
+            amount: amount.trim(),
+            receiver: receiver.trim(),
+            startedAt: new Date().toISOString(),
+            status: 'Deposit broadcast; bridge request failed to submit',
+          });
+          setHistoryToken((t) => t + 1);
+          throw broadcastErr;
+        }
       } else {
         // ── Mintlayer → Ethereum ──
         if (!ethAccount) throw new Error('Connect MetaMask first (it is the receiver).');
@@ -701,17 +824,40 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
           throw new Error((signed.error ?? 'Failed to create the bridge transaction.') + consumedHint);
         }
         setPhase('submitting');
-        const res = await sdk.broadcastBridgeRequest({
-          source_chain: sourceChain,
-          destination_chain: destinationChain,
-          asset: asset.ticker,
-          amount: amount.trim(),
-          receiver_address: receiver.trim(),
-          deposit_transactions: [
-            { raw_transaction: signed.raw_transaction, intent: signed.intent },
-          ],
-        });
-        trackRequest(res.bridge_request_uuid, '');
+        try {
+          const res = await sdk.broadcastBridgeRequest({
+            source_chain: sourceChain,
+            destination_chain: destinationChain,
+            asset: asset.ticker,
+            amount: amount.trim(),
+            receiver_address: receiver.trim(),
+            deposit_transactions: [
+              { raw_transaction: signed.raw_transaction, intent: signed.intent },
+            ],
+          });
+          trackRequest(res.bridge_request_uuid, '');
+        } catch (broadcastErr) {
+          // The signed transaction was handed to the bridge backend, which
+          // broadcasts it itself: a dropped response here can mean the
+          // deposit ALREADY went through (the e2m analogue records its
+          // orphan from the on-chain hash; nothing observable is left
+          // client-side here). Record a provisional row so a retrying user
+          // sees that attempt one may have landed, then say so in the error.
+          appendHistory({
+            uuid: `unknown-${Date.now()}`,
+            direction,
+            asset: assetTicker,
+            amount: amount.trim(),
+            receiver: receiver.trim(),
+            startedAt: new Date().toISOString(),
+            status: 'Submitted; result unknown - check before retrying',
+          });
+          setHistoryToken((t) => t + 1);
+          const detail = broadcastErr instanceof Error ? broadcastErr.message : String(broadcastErr);
+          throw new Error(
+            `${detail} - after signing, the bridge did not answer: the deposit MAY have gone through. Check the history list below before retrying.`,
+          );
+        }
       }
     } catch (err) {
       // Wallet rejections are user choices, not failures - an EvmError with
@@ -721,6 +867,9 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
         setInfo(e.message);
         setPhase('idle');
       } else {
+        // Note: an e2m failure AFTER the deposit broadcast also leaves a
+        // provisional history entry (see the e2m branch) - the money is
+        // not lost, it is sitting in the deposit waiting for a retry.
         setError(e.message);
         setPhase('idle');
       }
@@ -855,6 +1004,7 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
             setDirection(next);
             setError(null);
             setInfo(null);
+            setReceiverSuggestion(null);
           }
         }}
       >
@@ -870,7 +1020,7 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
             role="radio"
             aria-checked={direction === key}
             tabIndex={direction === key ? 0 : -1}
-            onClick={() => { setDirection(key); setError(null); setInfo(null); }}
+            onClick={() => { setDirection(key); setError(null); setInfo(null); setReceiverSuggestion(null); }}
             className={`rounded-xl border px-4 py-3 text-left transition-colors ${
               direction === key
                 ? 'border-mint-600 bg-mint-900/20'
@@ -1146,19 +1296,47 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
                   )}
                 {trackedProgress.mlTxHash && isTxHashLike(trackedProgress.mlTxHash) && (
                   <a
-                    href={`${mlExplorerBase(networkType)}/transaction/${trackedProgress.mlTxHash}`}
+                    href={
+                      isEthTxHash(trackedProgress.mlTxHash)
+                        ? `${ethExplorerBase(flavor)}/tx/${trackedProgress.mlTxHash}`
+                        : `${mlExplorerBase(networkType)}/transaction/${trackedProgress.mlTxHash}`
+                    }
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-mint-300 underline hover:opacity-80"
                   >
-                    Payout on the Mintlayer explorer ↗
+                    {/* mlTxHash is the payout leg: Ethereum-side when the
+                        destination is ETH, Mintlayer-side when it is ML -
+                        route by hash shape, not the live form toggle. */}
+                    {isEthTxHash(trackedProgress.mlTxHash)
+                      ? 'Payout on Etherscan'
+                      : 'Payout on the Mintlayer explorer'}{' '}
+                    ↗
                   </a>
                 )}
+                {tracked.depositTxHash &&
+                  !isEthTxHash(tracked.depositTxHash) &&
+                  isTxHashLike(tracked.depositTxHash) && (
+                    <a
+                      href={`${mlExplorerBase(networkType)}/transaction/${tracked.depositTxHash}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-mint-300 underline hover:opacity-80"
+                    >
+                      Deposit on the Mintlayer explorer ↗
+                    </a>
+                  )}
               </p>
             )}
             <p className="text-xs text-gray-500 font-mono break-all">
               request {tracked.uuid}
             </p>
+            {pollUnavailable && (
+              <p className="text-xs text-amber-400 mt-1">
+                Live status unavailable - the bridge service did not answer recent checks. The
+                bridge request itself keeps running; retry from the history list below.
+              </p>
+            )}
             {trackedProgress.kind !== 'in-progress' ? (
               <div className="flex gap-3 mt-2">
                 <button
@@ -1181,6 +1359,23 @@ export default function BridgePanel({ indexerEnabled = false }: { indexerEnabled
                 Stop tracking (the bridge keeps processing)
               </button>
             )}
+          </div>
+        )}
+
+        {tracked && pollUnavailable && !trackedProgress && (
+          <div role="alert" className="rounded-lg border border-amber-800 bg-amber-900/20 px-3 py-3 text-sm text-amber-200">
+            <p className="mb-2">
+              Live status unavailable - the bridge service did not answer recent checks. The
+              bridge request itself keeps running; its outcome appears in the history list below
+              once the service recovers.
+            </p>
+            <button
+              type="button"
+              onClick={dismissTracked}
+              className="text-xs text-gray-400 underline hover:opacity-80"
+            >
+              Stop tracking (the bridge keeps processing)
+            </button>
           </div>
         )}
 

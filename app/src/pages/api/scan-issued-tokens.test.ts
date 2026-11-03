@@ -55,12 +55,12 @@ describe('GET /api/scan-issued-tokens', () => {
     expect(body).toEqual({ ok: true, fungible: [], nfts: [] });
   });
 
-  it('returns empty arrays when account_utxos throws', async () => {
+  it('returns ok:false when account_utxos throws (broken backend is not an empty wallet)', async () => {
     mockRpcCall.mockRejectedValueOnce(new Error('wallet not open'));
     const res = await GET({} as Parameters<typeof GET>[0]);
     const body = await res.json() as Record<string, unknown>;
-    expect(res.status).toBe(200);
-    expect(body).toEqual({ ok: true, fungible: [], nfts: [] });
+    expect(res.status).toBe(502);
+    expect(body).toMatchObject({ ok: false, fungible: [], nfts: [] });
   });
 
   it('skips unrecognized output types', async () => {

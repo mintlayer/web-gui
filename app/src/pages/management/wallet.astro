@@ -17,6 +17,7 @@ import {
 } from '@/lib/wallet-rpc';
 import { recoverThenSwapWallet } from '@/lib/wallet-recovery';
 import { verifyAndBurnTotpCode } from '@/lib/step-up';
+import { isPasswordChangeThrottled, recordThrottledFailure } from '@/lib/password-change';
 import { getClientAddress } from '@/lib/auth';
 import { getStringPref, getPref, setPref } from '@/lib/prefs-db';
 import { createRequire } from 'node:module';
@@ -118,20 +119,49 @@ if (Astro.request.method === 'POST') {
         }
       }
     } else if (action === 'lock') {
+    // Mirror the UI guard server-side: locking while staking is running
+    // silently stalls block signing.
+    if ((await getStakingStatus(0).catch(() => 'NotStaking')) === 'Staking') {
+      actionError = 'Cannot lock while staking is running. Stop staking first.';
+    } else {
       await walletLockPrivateKeys();
       isLocked = true;
       actionSuccess = 'Private keys locked.';
-    } else if (action === 'unlock') {
-      const password = form.get('password') as string;
-      await walletUnlockPrivateKeys(password);
-      isLocked = false;
-      actionSuccess = 'Private keys unlocked.';
+    }
+  } else if (action === 'unlock') {
+      // The unlock password guards sends: guessing it online at RPC speed
+      // must be as expensive as guessing the web password. Own key
+      // namespace so unlock failures do not lock out password changes.
+      const unlockKey = `wallet-unlock:${getClientAddress(Astro.request, Astro.clientAddress)}`;
+      if (isPasswordChangeThrottled(unlockKey)) {
+        actionError = 'Too many failed attempts. Try again in 15 minutes.';
+      } else {
+        try {
+          const password = form.get('password');
+          await walletUnlockPrivateKeys(typeof password === 'string' ? password : '');
+          isLocked = false;
+          actionSuccess = 'Private keys unlocked.';
+        } catch (err) {
+          // Count only wrong-password failures (daemon-down / transport
+          // errors would lock the form for everyone sharing the IP).
+          if (/password|passphrase/i.test((err as Error).message)) {
+            recordThrottledFailure(unlockKey);
+          }
+          throw err;
+        }
+      }
     } else if (action === 'set_lookahead') {
-      const size = parseInt(form.get('lookahead_size') as string, 10);
-      await walletSetLookaheadSize(size);
-      lookaheadSize = size;
-      setPref('wallet.lookahead_size', size);
-      actionSuccess = `Lookahead size set to ${size}.`;
+      // Client-side min/max are not enforcement - validate here before the
+      // RPC call and the pref write.
+      const parsed = Number(form.get('lookahead_size'));
+      if (!Number.isInteger(parsed) || parsed < 1 || parsed > 1000) {
+        actionError = 'Lookahead size must be a whole number between 1 and 1000.';
+      } else {
+        await walletSetLookaheadSize(parsed);
+        lookaheadSize = parsed;
+        setPref('wallet.lookahead_size', parsed);
+        actionSuccess = `Lookahead size set to ${parsed}.`;
+      }
     } else if (action === 'close_wallet') {
       await walletClose();
       info = null;
@@ -144,7 +174,11 @@ if (Astro.request.method === 'POST') {
       actionSuccess = 'Wallet reopened.';
     } else if (action === 'import_seed') {
       const confirm = (form.get('confirm') as string | null) ?? '';
-      const mnemonic = ((form.get('mnemonic') as string | null) ?? '').trim();
+      // A browser File part also satisfies the non-null check - guard the
+      // cast so the error is our message, not "(intermediate value).trim is
+      // not a function".
+      const mnemonicRaw = form.get('mnemonic');
+      const mnemonic = (typeof mnemonicRaw === 'string' ? mnemonicRaw : '').trim();
       const totpCode = (form.get('totp_code') as string | null) ?? '';
       const totpSecret = getStringPref('auth.totp_secret');
       if (confirm !== 'I CONFIRM') {
@@ -172,6 +206,17 @@ if (Astro.request.method === 'POST') {
           { rpcPath: WALLET_RPC_PATH, localPath: WALLET_LOCAL_PATH, mnemonic },
         );
         info = await walletInfo().catch(() => null);
+        // Recompute the session state from the re-probe: a successful
+        // import on a previously closed wallet would otherwise keep
+        // rendering 'Wallet file is closed.' with a Reopen button while the
+        // info card above shows the freshly opened wallet.
+        sessionState = info ? 'open' : 'unknown';
+        // Refresh staking too: recovery closed the old wallet (staking
+        // stops with it), so a pre-import 'staking' snapshot would show a
+        // ghost 'Cannot lock while staking is running' on the new wallet.
+        isStaking = await getStakingStatus(0)
+          .then((s) => s === 'Staking')
+          .catch(() => false);
         actionSuccess = 'Wallet recovered from seed phrase and blockchain scan complete.';
         }
       }
@@ -181,13 +226,17 @@ if (Astro.request.method === 'POST') {
   }
 }
 
-// Probe lock state on initial GET (or if action didn't resolve it)
-if (isLocked === null) {
+// Probe lock state on initial GET (or if an action didn't resolve it).
+// Never probe with a seed-revealing RPC on every page view: staking_status
+// needs the private keys loaded, so a "locked" failure marks the keys as
+// locked without touching seed material. Any other error stays 'unknown'
+// (same as before) and the unlock form is shown either way.
+if (isLocked === null && sessionState === 'open') {
   try {
-    await walletShowSeedPhrase(); // succeeds only when keys are unlocked
+    await getStakingStatus(0);
     isLocked = false;
-  } catch {
-    isLocked = true;
+  } catch (err) {
+    isLocked = /lock/i.test((err as Error).message) ? true : null;
   }
 }
 // The show_seed action renders seed-phrase material - never cache this page.
@@ -451,11 +500,13 @@ Astro.response.headers.set('Cache-Control', 'no-store');
       <p class="text-xs text-gray-500 mb-4">
         {sessionState === 'closed'
           ? 'The wallet file is closed. Reopen it to manage keys.'
-          : isLocked
-            ? 'Keys are locked. Enter your password to unlock.'
-            : 'Keys are unlocked. Enter your password to lock.'}
+          : isLocked === null
+            ? 'Key lock state unknown - check that the wallet daemon is reachable.'
+            : isLocked
+              ? 'Keys are locked. Enter your password to unlock.'
+              : 'Keys are unlocked. Lock them to require the password for signing.'}
       </p>
-      {sessionState === 'closed' ? null : isLocked ? (
+      {sessionState === 'closed' || isLocked === null ? null : isLocked ? (
         <form method="POST" class="flex items-center gap-2">
           <input type="hidden" name="action" value="unlock" />
           <input
@@ -479,12 +530,6 @@ Astro.response.headers.set('Cache-Control', 'no-store');
       ) : (
         <form method="POST" class="flex items-center gap-2">
           <input type="hidden" name="action" value="lock" />
-          <input
-            type="password"
-            name="password"
-            placeholder="Password"
-            class="rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-gray-200 placeholder:text-gray-600 focus:outline-none focus:border-mint-600 w-36"
-          />
           <button
             type="submit"
             class="rounded-lg bg-gray-700 hover:bg-gray-600 px-4 py-2 text-sm text-white font-medium transition-colors"
@@ -647,9 +692,12 @@ Astro.response.headers.set('Cache-Control', 'no-store');
   const importBtn = document.getElementById('import-seed-btn') as HTMLButtonElement | null;
 
   function cleanSeed(val: string): string {
-    // "1. alpha 2. bravo" or "1 alpha 2 bravo 3charlie" → "alpha bravo charlie"
+    // Strip pasted list markers: "1. alpha 2. bravo" or "1 alpha 2 bravo
+    // 3charlie" → "alpha bravo charlie". The separator after the digits is
+    // optional - BIP39 words contain no digits, so every digit run here is
+    // marker noise (a glued "3charlie" must clean like "3 charlie").
     return val
-      .replace(/\b\d+[.\s]\s*/g, ' ')
+      .replace(/\b\d+[.\s]*/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
   }

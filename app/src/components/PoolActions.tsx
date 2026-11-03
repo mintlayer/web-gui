@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { watchTx } from "@/lib/txWatcher";
 import { submitWithToast } from "@/lib/toastStore";
 import { rpc } from '@/lib/client-rpc';
 import { stakeTrade, type StakeTradeFailure } from '@/lib/stake-trade-client';
+import { mulDecimal } from '@/lib/decimal';
 import { TotpField } from '@/components/ui/TotpField';
 
 async function freshAddress(): Promise<string> {
@@ -35,16 +36,42 @@ export function CreatePoolForm({ initialDecommissionAddress, onSuccess }: Create
   const [totp,         setTotp]         = useState("");
   const totpRef                         = useRef<HTMLInputElement>(null);
 
+  // The page pre-fills only an existing unused address. When the wallet has
+  // none left, fetch one lazily when the form actually opens instead of
+  // minting a fresh address on every page render.
+  useEffect(() => {
+    if (initialDecommissionAddress) return;
+    let alive = true;
+    freshAddress()
+      .then(addr => { if (alive) setDecommAddr(addr); })
+      .catch(() => { /* submit-time validation reports the empty field */ });
+    return () => { alive = false; };
+  }, [initialDecommissionAddress]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
     try {
-      const marginRatio = (parseFloat(marginPct) / 100).toFixed(4);
+      // The field is a percent; the daemon wants per-mille: 5% -> 50.
+      // (Dividing by 100 sent a value 1000x too small - the pool would
+      // charge a 0.05% commission when the user typed 5%.) Exact math
+      // keeps '5.5' -> '55' instead of float artifacts.
+      if (mulDecimal(marginPct, '1') === null) {
+        throw new Error('Margin ratio must be a plain number (e.g. 5 or 0.5).');
+      }
+      const pctNum = Number(marginPct);
+      if (!(pctNum > 0) || !(pctNum <= 100)) {
+        throw new Error('Margin ratio must be a percentage between 0 (exclusive) and 100.');
+      }
+      const marginRatio = mulDecimal(marginPct, '10');
       await submitWithToast(
         async () => {
           // Pool creation burns a large network fee (~1000 ML) and is
           // TOTP-gated server-side via /api/stake-trade.
+          if (!decommAddr) {
+            throw new Error('No receive address available yet - reopen the form to fetch one.');
+          }
           const r = await stakeTrade({
             action: "staking_create_pool",
             params: {
@@ -72,9 +99,15 @@ export function CreatePoolForm({ initialDecommissionAddress, onSuccess }: Create
       setSuccess(true);
       setAmount(""); setMarginPct(""); setCostPerBlock("0"); setTotp("");
       onSuccess?.();
-      // Refresh decommission address for next pool
-      const addr = await freshAddress();
-      setDecommAddr(addr);
+      // Refresh decommission address for the next pool. Best-effort: the
+      // create already succeeded and the modal is closed - a stale error here
+      // would resurface as "failed" the next time the form is opened.
+      try {
+        const addr = await freshAddress();
+        setDecommAddr(addr);
+      } catch {
+        // Next open falls back to the initial address.
+      }
     } catch (err) {
       setError((err as Error).message);
     } finally {

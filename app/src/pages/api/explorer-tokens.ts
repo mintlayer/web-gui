@@ -123,17 +123,33 @@ async function fetchList(base: string, filter: string): Promise<ExplorerTokenRow
     clearTimeout(timer);
     return null;
   }
-  clearTimeout(timer);
 
-  if (res.status !== 200) return null;
+  if (res.status !== 200) {
+    clearTimeout(timer);
+    return null;
+  }
   const contentType = (res.headers.get('content-type') ?? '').split(';')[0].trim();
-  if (contentType !== 'application/json') return null;
+  if (contentType !== 'application/json') {
+    clearTimeout(timer);
+    return null;
+  }
   const declared = Number(res.headers.get('content-length') ?? '0');
-  if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) return null;
+  if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) {
+    clearTimeout(timer);
+    return null;
+  }
 
   // Streamed read with a hard cap - chunked responses without a
-  // content-length header can't blow the heap.
-  const text = await readCapped(res, MAX_RESPONSE_BYTES);
+  // content-length header can't blow the heap. The abort timer stays armed
+  // until the body is fully read: a server that sends headers promptly
+  // then stalls the body must not hold the route open for minutes past
+  // the deadline (the in-flight guard would block every caller).
+  let text: string | null;
+  try {
+    text = await readCapped(res, MAX_RESPONSE_BYTES);
+  } finally {
+    clearTimeout(timer);
+  }
   if (text === null) return null;
 
   let parsed: unknown;

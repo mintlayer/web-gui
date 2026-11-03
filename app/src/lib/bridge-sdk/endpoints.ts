@@ -73,7 +73,11 @@ export const createBridgeSdk = (
     },
 
     broadcastBridgeRequest: (input) =>
-      apiRequest(`${bridgeUrl}bridge-request`, { method: 'POST', body: input }, fetchImpl),
+      // 60s: the backend broadcasts the signed deposit ON-CHAIN inside this
+      // call, so it must not be abandoned mid-flight (a client timeout there
+      // turns a slow success into an invisible success and a retry would
+      // double-deposit).
+      apiRequest(`${bridgeUrl}bridge-request`, { method: 'POST', body: input, timeoutMs: 60_000 }, fetchImpl),
 
     getBridgeRequest: (id) =>
       apiRequest(`${bridgeUrl}bridge-request/${encodeURIComponent(id)}`, {}, fetchImpl),

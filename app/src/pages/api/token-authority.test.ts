@@ -95,11 +95,18 @@ describe('POST /api/token-authority', () => {
     expect(body.result).toEqual([]);
   });
 
-  it('returns 502 on fetch exception', async () => {
-    mockFetch.mockRejectedValueOnce(new Error('network error'));
+  it('keeps other addresses\' results when one fetch rejects', async () => {
+    // allSettled: a single address failure (network error, malformed body)
+    // degrades to [] instead of nuking the whole batch.
+    mockFetch
+      .mockRejectedValueOnce(new Error('network error'))
+      .mockResolvedValueOnce(new Response(JSON.stringify(['0xabc']), { status: 200 }));
     const { POST } = await import('@/pages/api/token-authority');
-    const res = await POST(makeCtx(['addr1']));
-    expect(res.status).toBe(502);
+    const res = await POST(makeCtx(['addr1', 'addr2']));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.result).toEqual(['0xabc']);
   });
 
   it('trims whitespace from addresses', async () => {

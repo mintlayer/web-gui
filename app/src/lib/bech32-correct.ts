@@ -45,21 +45,32 @@ function isValidChainPayload(_hrp: string, data: number[], encoding: Bech32Encod
   const version = data[0];
   if (version === undefined || version > 16) return false;
   if (chain === "btc") {
+    // Lengths are counted in 5-bit symbols (the checksum is 6 symbols),
+    // so a 20-byte P2WPKH program is 32 symbols and a 32-byte P2WSH is
+    // 52 - comparing against byte counts rejected valid P2WSH addresses.
     const programLen = data.length - 7;
+    // BIP-173: the final converted group's padding bits must be zero.
+    // Only bites the 52-symbol (32-byte) P2WSH case: 52*5 = 260 bits for
+    // 256 bytes of payload leaves 4 padding bits; the 32-symbol P2WPKH
+    // case has none. A nonzero-pad string has a valid checksum but Core's
+    // segwit decoder rejects it, so the validator must too.
+    const bits = programLen * 5;
+    const padBits = bits - Math.floor(bits / 8) * 8;
+    if (padBits > 0 && (data[programLen] & ((1 << padBits) - 1)) !== 0) return false;
     if (version === 0) {
       if (encoding !== "bech32") return false;
-      if (programLen !== 20 && programLen !== 32) return false;
+      if (programLen !== 32 && programLen !== 52) return false;
     } else {
       if (encoding !== "bech32m") return false;
       // program length in symbols: 2..40 bytes -> ceil(bytes*8/5) symbols
       if (programLen < Math.ceil((2 * 8) / 5) || programLen > Math.ceil((40 * 8) / 5)) return false;
-      // BIP-173: the final converted group's padding bits must be zero
-      const bits = programLen * 5;
-      const padBits = bits - Math.floor(bits / 8) * 8;
-      if (padBits > 0 && (data[programLen] & ((1 << padBits) - 1)) !== 0) return false;
     }
   }
-  // ML: final payload validation is the wallet daemon's job on submit.
+  // ML addresses are bech32m (BIP-350 style): a string that only carries
+  // the legacy bech32 checksum must not be reported valid, and a typo in a
+  // real bech32m address must not be excused because it accidentally
+  // satisfies the legacy constant.
+  if (chain === "ml" && encoding !== "bech32m") return false;
   return true;
 }
 
@@ -84,6 +95,13 @@ export function suggestAddressCorrection(
   const lower = address.toLowerCase();
   if (!/^[\x21-\x7e]+$/.test(lower)) {
     return { status: "invalid", reason: "invalid characters" };
+  }
+
+  // Bech32 addresses are at most 90 chars and decode() rejects anything
+  // over 1023; without this cap a long paste runs a quadratic syndrome
+  // build on every keystroke and freezes the tab.
+  if (lower.length > 1023) {
+    return { status: "invalid", reason: "too long" };
   }
 
   // separator = the LAST '1'; the hrp region must equal the expected hrp

@@ -31,11 +31,11 @@ as Administrator). Do not continue until docker info succeeds.
 Download and read the installer source (a single file) before running it:
 
   Linux/macOS:
-    curl -sSL https://get.mintlayer.org/linux.sh -o /tmp/mintlayer-install.sh
+    curl -fsSL https://get.mintlayer.org/linux.sh -o /tmp/mintlayer-install.sh
     less /tmp/mintlayer-install.sh          # on macOS use mac.sh instead
 
   Windows (PowerShell):
-    curl.exe -sSL https://get.mintlayer.org/windows.ps1 -o $env:TEMP\mintlayer-install.ps1
+    curl.exe -fsSL https://get.mintlayer.org/windows.ps1 -o $env:TEMP\mintlayer-install.ps1
     Get-Content $env:TEMP\mintlayer-install.ps1 | more
 
 Confirm to the operator: it writes only to INSTALL_DIR (default ~/mintlayer,
@@ -80,9 +80,11 @@ Notes:
                                             %USERPROFILE%\mintlayer)
   docker compose ps                         # node-daemon, wallet-rpc-daemon
                                             # and web-gui listed as running
-  curl -sI http://localhost:4321            # web GUI answers HTTP 200
-                                            # (bound to 127.0.0.1 only; on
-                                            # Windows use curl.exe or Invoke-WebRequest)
+  curl -sI http://localhost:4321            # web GUI answers HTTP 302
+                                            # (redirect to /login while
+                                            # unauthenticated; bound to
+                                            # 127.0.0.1 only; on Windows use
+                                            # curl.exe or Invoke-WebRequest)
   docker compose logs --tail 20 node-daemon # block height increasing = syncing
 
 First mainnet sync takes hours. Report the current height and move on;

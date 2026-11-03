@@ -5,7 +5,7 @@ import DelegationPanel from '@/components/DelegationPanel';
 import { CreatePoolModal, DecommissionButton } from '@/components/PoolActions';
 import {
   getStakingStatus, listPools, listCreatedBlocks, listDelegations,
-  newAddress, showAddresses, isWalletNotOpenError,
+  showAddresses, isWalletNotOpenError,
   type PoolInfo, type CreatedBlock, type DelegationInfo,
 } from '@/lib/wallet-rpc';
 
@@ -26,15 +26,21 @@ try {
   ]);
   const addresses = await showAddresses(0, false);
   const unusedAddr = addresses.find(a => a.purpose === 'Receive' && !a.used);
-  decommAddress = unusedAddr
-    ? unusedAddr.address
-    : (await newAddress(0)).address;
+  // Prefill ONLY an existing unused address: minting one here ran address_new
+  // on every page view once the wallet ran out of fresh receive addresses.
+  // When none is left the modal fetches lazily on open (PoolActions).
+  decommAddress = unusedAddr ? unusedAddr.address : '';
 } catch (err) {
   if (isWalletNotOpenError(err)) {
     return new Response(null, { status: 302, headers: { Location: '/' } });
   }
   loadError = (err as Error).message;
 }
+
+// staking_list_created_block_ids returns blocks in the wallet's internal
+// hash-key order, NOT height order (BTreeMap iteration upstream) - sort once
+// so the 'Latest' badge and the 'most recent' table actually are.
+createdBlocks.sort((a, b) => b.height - a.height);
 
 // Both staking_list_pools and staking_list_created_block_ids encode pool_id via
 // Address::new(chain_config, pool_id).to_string() - same bech32 format, safe to group.
@@ -44,9 +50,13 @@ const blocksByPool = createdBlocks.reduce<Record<string, typeof createdBlocks>>(
 }, {});
 
 const network     = (process.env.NETWORK ?? 'mainnet').toLowerCase();
-const explorerBase = network === 'testnet'
-  ? 'https://lovelace.explorer.mintlayer.org'
-  : 'https://explorer.mintlayer.org';
+const explorerBase = (process.env.ML_EXPLORER_URL ?? (
+  network === 'testnet'
+    ? 'https://lovelace.explorer.mintlayer.org'
+    : network === 'mainnet'
+      ? 'https://explorer.mintlayer.org'
+      : ''
+)).replace(/\/+$/, '');
 
 // Group delegations by pool_id
 const delegationsByPool = delegations.reduce<Record<string, DelegationInfo[]>>((acc, d) => {
@@ -82,7 +92,7 @@ const delegationsByPool = delegations.reduce<Record<string, DelegationInfo[]>>((
       <div class="space-y-4">
         {pools.map((pool) => {
           const poolBlocks  = blocksByPool[pool.pool_id] ?? [];
-          const latestBlock = poolBlocks.length > 0 ? poolBlocks[poolBlocks.length - 1] : null;
+          const latestBlock = poolBlocks.length > 0 ? poolBlocks[0] : null;
           const poolDelegs  = delegationsByPool[pool.pool_id] ?? [];
           const totalDelegs = poolDelegs.reduce((sum, d) => sum + parseFloat(d.balance.decimal), 0);
 
@@ -93,10 +103,14 @@ const delegationsByPool = delegations.reduce<Record<string, DelegationInfo[]>>((
                 <div class="min-w-0">
                   <p class="text-xs text-gray-500 uppercase tracking-wider mb-0.5">Pool ID</p>
                   <span class="inline-flex items-center gap-1 flex-wrap">
-                    <a href={`${explorerBase}/pool/${pool.pool_id}`} target="_blank" rel="noopener"
-                       class="font-mono text-xs text-mint-400 hover:text-mint-300 break-all transition-colors">
-                      {pool.pool_id}
-                    </a>
+                    {explorerBase ? (
+                      <a href={`${explorerBase}/pool/${pool.pool_id}`} target="_blank" rel="noopener"
+                         class="font-mono text-xs text-mint-400 hover:text-mint-300 break-all transition-colors">
+                        {pool.pool_id}
+                      </a>
+                    ) : (
+                      <span class="font-mono text-xs text-gray-400 break-all">{pool.pool_id}</span>
+                    )}
                     <button type="button"
                       class="ml-1.5 inline-flex items-center align-middle text-gray-600 hover:text-mint-400 transition-colors shrink-0"
                       data-copy-value={pool.pool_id} title="Copy pool ID">
@@ -123,7 +137,7 @@ const delegationsByPool = delegations.reduce<Record<string, DelegationInfo[]>>((
                 </div>
                 <div>
                   <p class="text-xs text-gray-500 mb-0.5">Margin</p>
-                  <p class="font-mono text-sm text-gray-200">{parseFloat(pool.margin_ratio_per_thousand).toFixed(1)}%</p>
+                  <p class="font-mono text-sm text-gray-200">{(parseFloat(pool.margin_ratio_per_thousand) / 10).toFixed(1)}%</p>
                 </div>
                 <div>
                   <p class="text-xs text-gray-500 mb-0.5">Cost / Block</p>
@@ -180,7 +194,7 @@ const delegationsByPool = delegations.reduce<Record<string, DelegationInfo[]>>((
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-800/60">
-            {[...createdBlocks].reverse().slice(0, 50).map(b => (
+            {createdBlocks.slice(0, 50).map(b => (
               <tr class="bg-gray-900 hover:bg-gray-800/60 transition-colors">
                 <td class="px-4 py-2.5 font-mono text-gray-300">#{b.height.toLocaleString()}</td>
                 <td class="px-4 py-2.5 font-mono text-xs text-gray-500 break-all">

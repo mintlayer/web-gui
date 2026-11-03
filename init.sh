@@ -91,7 +91,11 @@ rand_pass() {
   if command -v openssl &>/dev/null; then
     openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 32
   else
-    cat /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 32
+    # Bounded urandom read: an unbounded 'cat /dev/urandom | tr | head'
+    # SIGPIPEs under 'set -o pipefail' (head exits early, the producer
+    # dies mid-write, the script aborts). 512 bytes yield ~120 alnum
+    # chars, far more than needed, and small enough to fit a pipe buffer.
+    head -c 512 /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 32
   fi
 }
 
@@ -337,8 +341,9 @@ UI_TOTP_SECRET=$(node -e "
   process.stdout.write(result);
 ")
 
-# Generate session signing secret
-SESSION_SECRET=$(openssl rand -hex 32)
+# Generate session signing secret (urandom fallback: openssl can be
+# absent on minimal hosts and this runs after every question was answered)
+SESSION_SECRET=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
 
 # Construct the otpauth URI
 TOTP_URI="otpauth://totp/Mintlayer%20Nexus?secret=${UI_TOTP_SECRET}&issuer=Mintlayer"
@@ -477,7 +482,6 @@ hint ""
 ENABLE_INDEXER="yes"
 confirm ENABLE_INDEXER "Enable the indexer? (disable only if you don't need Token Management or Trading)" "Y"
 
-POSTGRES_PASSWORD=""
 API_WEB_SERVER_PORT="3000"
 if [[ "$ENABLE_INDEXER" == "yes" ]]; then
   if [[ "$USE_RANDOM_PASSWORDS" == "yes" ]]; then
@@ -494,6 +498,18 @@ if [[ "$ENABLE_INDEXER" == "yes" ]]; then
 
   ask "Port for the blockchain REST API"
   prompt API_WEB_SERVER_PORT "Port:" "3000"
+  # Same validation as the web GUI port: garbage here breaks the compose
+  # port mapping (127.0.0.1:${API_WEB_SERVER_PORT:-3000}:3000).
+  while ! [[ "$API_WEB_SERVER_PORT" =~ ^[0-9]+$ ]] || (( API_WEB_SERVER_PORT < 1 || API_WEB_SERVER_PORT > 65535 )); do
+    printf "${CYAN}│${RESET}  ${RED}Enter a valid port number (1-65535)${RESET}\n"
+    prompt API_WEB_SERVER_PORT "Port:" "3000"
+  done
+else
+  # Inert while the indexer profile is off, but pre-filled so a later manual
+  # `docker compose --profile indexer up -d` works instead of crash-looping
+  # postgres (it refuses an empty superuser password). Parity with the
+  # deploy flavors.
+  POSTGRES_PASSWORD=$(rand_pass)
 fi
 
 divider
@@ -716,7 +732,14 @@ divider
 # GIDs below 1000 are reserved system groups on Linux and may already exist
 # inside the container (e.g. macOS 'staff' GID 20 = Linux 'dialout' GID 20).
 # Use 1000 in that case - it's the standard unprivileged GID on Linux.
-ML_USER_ID=$(id -u 2>/dev/null || echo "1000")
+# The same floor applies to the UID: a sudo-run installer would otherwise
+# map the container's mintlayer user to uid 0 (root).
+_raw_uid=$(id -u 2>/dev/null || echo "1000")
+if (( _raw_uid < 1000 )); then
+  ML_USER_ID=1000
+else
+  ML_USER_ID=$_raw_uid
+fi
 _raw_gid=$(id -g 2>/dev/null || echo "1000")
 if (( _raw_gid < 1000 )); then
   ML_GROUP_ID=1000
@@ -862,24 +885,52 @@ PROJECT_DIR_HOST=$(pwd)
 EOF
 )
 chmod 600 .env 2>/dev/null || true
+
+# A checkout path with whitespace completes the install but breaks the
+# feature-enabler's POSIX-sh compose() helper (unquoted -f args) - every
+# Settings toggle would fail while the stack itself works. Fail loudly now.
+case "$PROJECT_DIR_HOST" in
+  *[[:space:]]*)
+    err "The repository path contains whitespace: $PROJECT_DIR_HOST"
+    err "Settings-page feature toggles will not work. Move this checkout to a path without spaces and re-run init.sh."
+    exit 1
+    ;;
+esac
 ok ".env written"
 
 # ── Write credentials to SQLite via temporary alpine container ───────────────
 # uploads/ is bind-mounted into web-gui; pre-create it here so it is owned by
 # this user (docker creates missing bind-mount dirs as root).
 mkdir -p mintlayer-data/prefs mintlayer-data/plugins mintlayer-data/uploads
-# Rootless docker maps the container uid to an unrelated host uid; the bind-
-# mounted prefs dir must stay world-writable or the app cannot open its sqlite.
+# Rootless docker maps the container uid to an unrelated host uid, so the
+# seeding container needs write access to this bind mount. 0777 applies to
+# the seeding window only - the alpine container tightens it to 0700 (and
+# chowns the DB to this user) a few lines down; do not 'fix' this to 0770,
+# rootless hosts have no shared group to grant it to.
 chmod 0777 mintlayer-data/prefs
+# sql_json VALUE -> stdout: VALUE as a JSON string literal, safe inside a
+# single-quoted SQL literal. The app JSON.parse()s every pref value, so the
+# DB must hold '"value"' - quotes included - or login breaks on a fresh
+# install. Order matters: backslashes first, then double quotes (both for
+# JSON), then single quotes (doubled for SQL).
+sql_json() {
+  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e "s/'/''/g"
+}
+
+# pref_sql KEY VALUE -> a complete INSERT statement storing VALUE as a
+# JSON string (quotes included) - getPref() JSON.parses every row.
+pref_sql() {
+  printf "INSERT OR REPLACE INTO prefs VALUES ('%s', '\"%s\"');\n" "$1" "$(sql_json "$2")"
+}
 {
   echo "CREATE TABLE IF NOT EXISTS prefs (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
-  echo "INSERT OR REPLACE INTO prefs VALUES ('auth.password_hash', '\"${UI_PASSWORD_HASH}\"');"
-  echo "INSERT OR REPLACE INTO prefs VALUES ('auth.totp_secret',   '\"${UI_TOTP_SECRET}\"');"
-  [ -n "$IPFS_PROVIDER"      ] && echo "INSERT OR REPLACE INTO prefs VALUES ('ipfs.provider',       '\"${IPFS_PROVIDER}\"');" || true
-  [ -n "$FILEBASE_TOKEN"     ] && echo "INSERT OR REPLACE INTO prefs VALUES ('ipfs.filebase_token', '\"${FILEBASE_TOKEN}\"');" || true
-  [ -n "$PINATA_JWT"         ] && echo "INSERT OR REPLACE INTO prefs VALUES ('ipfs.pinata_jwt',     '\"${PINATA_JWT}\"');" || true
-  [ -n "$TELEGRAM_BOT_TOKEN" ] && echo "INSERT OR REPLACE INTO prefs VALUES ('telegram.bot_token',  '\"${TELEGRAM_BOT_TOKEN}\"');" || true
-  [ -n "$TELEGRAM_CHAT_ID"   ] && echo "INSERT OR REPLACE INTO prefs VALUES ('telegram.chat_id',    '\"${TELEGRAM_CHAT_ID}\"');" || true
+  pref_sql 'auth.password_hash' "${UI_PASSWORD_HASH}"
+  pref_sql 'auth.totp_secret'   "${UI_TOTP_SECRET}"
+  [ -n "$IPFS_PROVIDER"      ] && pref_sql 'ipfs.provider'       "${IPFS_PROVIDER}" || true
+  [ -n "$FILEBASE_TOKEN"     ] && pref_sql 'ipfs.filebase_token' "${FILEBASE_TOKEN}" || true
+  [ -n "$PINATA_JWT"         ] && pref_sql 'ipfs.pinata_jwt'     "${PINATA_JWT}" || true
+  [ -n "$TELEGRAM_BOT_TOKEN" ] && pref_sql 'telegram.bot_token'  "${TELEGRAM_BOT_TOKEN}" || true
+  [ -n "$TELEGRAM_CHAT_ID"   ] && pref_sql 'telegram.chat_id'    "${TELEGRAM_CHAT_ID}" || true
 } | docker run --rm -i \
     -v "$(pwd)/mintlayer-data/prefs:/prefs" \
     alpine \
@@ -887,7 +938,7 @@ chmod 0777 mintlayer-data/prefs
 # The seeding container runs as root; tighten ownership of the prefs DB to the
 # invoking user so the app (and only it) can read the TOTP secret/hash.
 docker run --rm -v "$(pwd)/mintlayer-data/prefs:/prefs" alpine \
-  chown -R "$(id -u):$(id -g)" /prefs 2>/dev/null || true
+  chown -R "${ML_USER_ID}:${ML_GROUP_ID}" /prefs 2>/dev/null || true
 ok "Credentials written to mintlayer-data/prefs/mintlayer_prefs.sqlite"
 
 # ── Create data directories ──────────────────────────────────────────────────

@@ -10,6 +10,8 @@ import { getTokensInfoByIds } from '@/lib/token-info-client';
 import { stakeTrade } from '@/lib/stake-trade-client';
 import { TotpField } from '@/components/ui/TotpField';
 import { aggregateLevels, fmtQty } from '@/components/orderBookDepth';
+import { mulDecimal, divDecimal } from '@/lib/decimal';
+import { isValidAmount } from '@/lib/validation';
 
 // Raw shape returned by order_list_all_active (flat, no existing_order_data wrapper)
 interface ActiveOrderRaw {
@@ -75,6 +77,7 @@ function friendlyError(err: unknown): string {
     const gotMatch = raw.match(/got:\s*Amount\s*\{\s*atoms:\s*(\d+)\s*\}/i);
     const gotAtoms = gotMatch ? BigInt(gotMatch[1]) : null;
     const gotML = gotAtoms !== null
+      // ML carries 11 decimals (1 ML = 10^11 atoms, consensus conventions).
       ? (Number(gotAtoms) / 1e11).toLocaleString(undefined, { maximumFractionDigits: 8 }) + ' ML'
       : null;
     return gotML
@@ -124,13 +127,10 @@ function formatTimestamp(ts: number): string {
 
 /** Price in ML per token unit */
 function calcPrice(mlDecimal: string, tokenDecimal: string): string {
-  const ml = parseFloat(mlDecimal);
-  const tok = parseFloat(tokenDecimal);
-  if (!tok || !ml) return "-";
-  // Plain decimal formatting: toPrecision(6) switches to exponent notation
-  // for large prices ("1.50000e+6") and the trailing-zero strip turns
-  // 100000 into "1" - both mangled what the user can click "Fill" on.
-  return (ml / tok).toLocaleString("en-US", { maximumFractionDigits: 8 });
+  // Exact BigInt division (no float rounding, no exponent notation, and no
+  // thousands separators: a comma-grouped string pasted into the number
+  // input below would parseFloat-truncate at the comma - "1,234.5" -> 1).
+  return divDecimal(mlDecimal, tokenDecimal, 8) ?? "-";
 }
 
 // ── Buy / Sell panel ──────────────────────────────────────────────────────────
@@ -142,6 +142,7 @@ function BuySellPanel({
   pairBids,
   mlBalance,
   tokenBalance,
+  pairDecimals,
   onCreated,
   onPairRefresh,
   prefill,
@@ -152,6 +153,8 @@ function BuySellPanel({
   pairBids: OrderInfo[];
   mlBalance: string | null;
   tokenBalance: string | null;
+  /** Pair token's number_of_decimals (SSR-resolved) for pre-burn validation. */
+  pairDecimals: number;
   onCreated: () => void;
   onPairRefresh: () => void;
   /** Order-book rows never execute here - a click prefills this form. */
@@ -193,24 +196,39 @@ function BuySellPanel({
     ? calcPrice(bestBid.existing_order_data.give_balance.decimal, bestBid.existing_order_data.ask_balance.decimal)
     : null;
 
-  const totalML = amount && price
-    ? (parseFloat(amount) * parseFloat(price)).toPrecision(8).replace(/\.?0+$/, "")
-    : "";
+  // Exact decimal product: what this shows is what the order submits, so a
+  // user buying 1,000,000 tokens at price 10 sees 10000000 - not the "1"
+  // the old float-toPrecision+strip produced.
+  const totalML = amount && price ? mulDecimal(amount, price) : null;
 
   const estTokens = mlAmount && bestAskPrice && bestAskPrice !== "-"
-    ? (parseFloat(mlAmount) / parseFloat(bestAskPrice)).toPrecision(6).replace(/\.?0+$/, "")
+    ? divDecimal(mlAmount, bestAskPrice, 6)
     : null;
 
   const estML = amount && bestBidPrice && bestBidPrice !== "-"
-    ? (parseFloat(amount) * parseFloat(bestBidPrice)).toPrecision(6).replace(/\.?0+$/, "")
+    ? mulDecimal(amount, bestBidPrice)
     : null;
 
+  // Same exact-decimal rule the submit path enforces: a lenient
+  // parseFloat() here lets '1e5' reach the button and burn a TOTP code on
+  // a request the daemon is guaranteed to reject.
   const canSubmit = !loading && !!effectiveTokenId && totp.length === 6 && (
     type === "limit"
-      ? (!!amount && !!price && parseFloat(amount) > 0 && parseFloat(price) > 0)
+      ? (mulDecimal(amount, "1") !== null && Number(amount) > 0 &&
+         mulDecimal(price, "1") !== null && Number(price) > 0 &&
+         // Token legs (give on sell, ask on buy) honor the pair token's
+         // own precision - 18dp-generic gates let knowable rejections
+         // through to burn the code.
+         isValidAmount(amount, pairDecimals) &&
+         // The limit order's Coin leg is the ML total: the coin's own
+         // precision cap (11 dp) applies to the PRODUCT, not just the
+         // inputs - a 26-dp total would 400 after the code check.
+         isValidAmount(mulDecimal(amount, price) ?? "", 11))
       : side === "buy"
-        ? (!!mlAmount && parseFloat(mlAmount) > 0 && !!bestAsk)
-        : (!!amount && parseFloat(amount) > 0 && !!bestBid)
+        ? (mulDecimal(mlAmount, "1") !== null && Number(mlAmount) > 0 &&
+           isValidAmount(mlAmount, 11) && !!bestAsk)
+        : (mulDecimal(amount, "1") !== null && Number(amount) > 0 &&
+           isValidAmount(amount, pairDecimals) && !!bestBid)
   );
 
   const failTotp = () => {
@@ -227,7 +245,22 @@ function BuySellPanel({
     try {
       await submitWithToast(async () => {
         if (type === "limit") {
-          const total = (parseFloat(amount) * parseFloat(price)).toString();
+          // Exact product, no float artifacts: 0.1 * 0.3 is "0.03", not the
+          // "0.30000000000000004" the daemon rejects after a wasted TOTP code.
+          const total = mulDecimal(amount, price);
+          if (total === null) throw new Error("Invalid amount or price");
+          // Token legs honor the pair token's precision: a 3-dp amount on a
+          // 2-decimal token is a guaranteed daemon rejection after the
+          // code check (the API gate is 18dp-generic).
+          if (!isValidAmount(amount, pairDecimals)) {
+            throw new Error(`Amount supports up to ${pairDecimals} decimal places for ${ticker}`);
+          }
+          // Re-checked at submit: fields can change between the last
+          // render and this handler, and a >11-dp ML total is a
+          // guaranteed daemon rejection after the code check.
+          if (!isValidAmount(total, 11)) {
+            throw new Error("The ML total supports up to 11 decimal places - adjust the amount or price");
+          }
           // conclude_address is required - fetch a fresh receive address
           const addrRes = await rpc<{ address: string }>("address_new", { account: 0 });
           const r = await stakeTrade({
@@ -256,6 +289,27 @@ function BuySellPanel({
           // buy market → fill ask → provide ML (what the ask order asks for)
           // sell market → fill bid → provide Token (what the bid order asks for)
           const fillAmt = side === "buy" ? mlAmount : amount;
+          // Guard BEFORE the TOTP burn: a malformed amount ('1e5') must
+          // fail client-side, not server-side after the code is spent.
+          if (mulDecimal(fillAmt, "1") === null || !(Number(fillAmt) > 0)) {
+            throw new Error("Enter a plain decimal amount (e.g. 12.5)");
+          }
+          // Market sells exchange tokens - honor the pair token's decimals.
+          if (side === "sell" && !isValidAmount(fillAmt, pairDecimals)) {
+            throw new Error(`Amount supports up to ${pairDecimals} decimal places for ${ticker}`);
+          }
+          // Cap at the target order's remaining ask (both sides): the ask
+          // order's ask_balance is what it still wants (ML for a buy, tokens
+          // for a sell). Overfilling is a guaranteed chainstate rejection
+          // (OrderOverbid) after the code is spent.
+          const remaining = targetOrder.existing_order_data?.ask_balance.decimal;
+          if (
+            remaining !== undefined &&
+            mulDecimal(remaining, "1") !== null &&
+            Number(fillAmt) > Number(remaining)
+          ) {
+            throw new Error(`Order only has ${remaining} ${side === "buy" ? "ML" : ticker} remaining - reduce the amount`);
+          }
           const r = await stakeTrade({
             action: "order_fill",
             params: {
@@ -443,20 +497,25 @@ function MyOrderRow({ order, onAction, tickerMap, totp, onTotpChange, onTotpCons
   const [error, setError]     = useState<string | null>(null);
   const needsTotp = totp.length !== 6;
 
-  // Freeze is a wallet-local flag (no transaction, no funds move) - stays on
-  // the plain RPC allowlist.
+  // Freeze is an on-chain transaction (fee-burning, funds-affecting), so it
+  // goes through the TOTP-gated /api/stake-trade like every other tx
+  // action - the plain-RPC allowlist is for read-only calls only.
   const freeze = async () => {
     setLoading(true);
     setError(null);
     try {
       await submitWithToast(
         async () => {
-          const res = await rpc<{ tx_id?: string }>("order_freeze", {
-            account: 0,
-            order_id: order.order_id,
-            options: {},
-          });
-          return res.tx_id ?? "frozen";
+          const r = await stakeTrade(
+            { action: "order_freeze", params: { account: 0, order_id: order.order_id } },
+            totp,
+          );
+          if (!r.ok) {
+            if (r.code_consumed) onTotpConsumed();
+            throw new Error(r.error);
+          }
+          onTotpConsumed(); // burned - clear the field
+          return r.results[0]?.tx_id as string ?? "frozen";
         },
         watchTx,
       );
@@ -513,7 +572,8 @@ function MyOrderRow({ order, onAction, tickerMap, totp, onTotpChange, onTotpCons
         </div>
         <div className="flex gap-2 shrink-0">
           {!isConcluded && !isFrozen && (
-            <button onClick={freeze} disabled={loading}
+            <button onClick={freeze} disabled={loading || needsTotp}
+              title={needsTotp ? "Enter your 2FA code to freeze" : undefined}
               className="rounded-lg bg-gray-700 hover:bg-gray-600 border border-gray-600 px-3 py-1.5 text-xs
                          font-medium text-gray-300 transition-colors disabled:opacity-40">
               Freeze
@@ -751,7 +811,7 @@ function PairBookPanel({
 
 interface Props {
   initialOwnOrders: OrderInfo[];
-  balanceTokens?: { tokenId: string; ticker: string }[];
+  balanceTokens?: { tokenId: string; ticker: string; decimals: number }[];
   initialTokenId?: string | null;
 }
 
@@ -767,6 +827,11 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
   const [pairError, setPairError] = useState<string | null>(null);
   const [mlBalance, setMlBalance] = useState<string | null>(null);
   const [tokenBalance, setTokenBalance] = useState<string | null>(null);
+  // Client-resolved decimals for the SELECTED pair: the SSR balance lookup
+  // only covers held tokens, so a zero-balance pair would otherwise fall
+  // back to the 18-generic gate and let a knowable daemon rejection burn a
+  // TOTP code. Resolved on every pair load alongside the book.
+  const [pairDecimalsOverride, setPairDecimalsOverride] = useState<number | null>(null);
   // Incremented each time a new pair is selected; loadPairOrders checks it before
   // writing state so stale in-flight responses are silently discarded.
   const loadSeqRef = useRef(0);
@@ -907,7 +972,7 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
     setPairError(null);
     try {
       const tokenCurrency = { type: "Token", content: tokenId };
-      const [asksRaw, bidsRaw, balance] = await Promise.all([
+      const [asksRaw, bidsRaw, balance, infoMap] = await Promise.all([
         // Asks: give Token, ask ML - sorted by price ascending (cheapest ask first)
         rpc<ActiveOrderRaw[]>("order_list_all_active", {
           account: 0,
@@ -923,10 +988,20 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
         rpc<{ coins: { decimal: string }; tokens: Record<string, { decimal: string }> }>(
           "account_balance", { account: 0, utxo_states: ["Confirmed"], with_locked: "Unlocked" }
         ),
+        // Decimals come from token info, not the balance list: a zero-balance
+        // pair has no balance entry at all.
+        getTokensInfoByIds([tokenId]),
       ]);
 
       // Discard if a newer request was started while we were awaiting
       if (seq !== loadSeqRef.current) return;
+
+      const info = infoMap.get(tokenId) ?? null;
+      if (info?.type === "FungibleToken") {
+        setPairDecimalsOverride(info.content.number_of_decimals);
+      } else {
+        setPairDecimalsOverride(null);
+      }
 
       setMlBalance(balance.coins.decimal);
       setTokenBalance(balance.tokens[tokenId]?.decimal ?? "0");
@@ -934,17 +1009,28 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
       const asks = asksRaw.map(normalizeActiveOrder);
       const bids = bidsRaw.map(normalizeActiveOrder);
 
-      // Sort asks ascending by price (ML/token), bids descending
-      const priceOf = (o: OrderInfo, side: "ask" | "bid") => {
-        const d = o.existing_order_data;
-        if (!d) return 0;
-        const tok = parseFloat(side === "ask" ? d.give_balance.decimal : d.ask_balance.decimal);
-        const ml  = parseFloat(side === "ask" ? d.ask_balance.decimal  : d.give_balance.decimal);
-        return tok ? ml / tok : 0;
+      // Rank by EXACT decimal comparison (cross-multiplied atom integers):
+      // float division can collapse two distinct prices to the same double,
+      // and the tie then lets a market buy fill the wrong (more expensive)
+      // order. Display formatting elsewhere still uses floats.
+      const priceCmp = (a: OrderInfo, b: OrderInfo, side: "ask" | "bid") => {
+        const dec = (o: OrderInfo) => {
+          const d = o.existing_order_data;
+          if (!d) return { ml: "0", tok: "0" };
+          return side === "ask"
+            ? { ml: d.ask_balance.atoms, tok: d.give_balance.atoms }
+            : { ml: d.give_balance.atoms, tok: d.ask_balance.atoms };
+        };
+        const da = dec(a);
+        const db = dec(b);
+        // ml/tok compare: da.ml * db.tok vs db.ml * da.tok
+        const lhs = BigInt(da.ml) * BigInt(db.tok);
+        const rhs = BigInt(db.ml) * BigInt(da.tok);
+        return lhs === rhs ? 0 : lhs < rhs ? -1 : 1;
       };
 
-      setPairAsks(asks.sort((a, b) => priceOf(a, "ask") - priceOf(b, "ask")));
-      setPairBids(bids.sort((a, b) => priceOf(b, "bid") - priceOf(a, "bid")));
+      setPairAsks(asks.sort((a, b) => priceCmp(a, b, "ask")));
+      setPairBids(bids.sort((a, b) => priceCmp(b, a, "bid")));
     } catch (err) {
       if (seq !== loadSeqRef.current) return;
       setPairError(friendlyError(err));
@@ -958,6 +1044,16 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
     setSelectedTokenId(id);
     setPairAsks([]);
     setPairBids([]);
+    // Drop the previous pair's decimals NOW: deselection loads nothing, so
+    // the stale override would otherwise validate manual-token orders
+    // against the wrong precision (false rejections one way, a burned TOTP
+    // the other) until some future pair load replaced it.
+    setPairDecimalsOverride(null);
+    // A row-click prefill from the previous pair must not survive: the form
+    // would otherwise sit at the old pair's price and place a nonsense
+    // order on the new one. (Null is ignored by the panel effect, so typed
+    // values are kept.)
+    setBookPrefill(null);
     if (id) loadPairOrders(id);
   };
 
@@ -1100,6 +1196,7 @@ export default function OrderBook({ initialOwnOrders, balanceTokens = [], initia
             pairBids={pairBids}
             mlBalance={mlBalance}
             tokenBalance={tokenBalance}
+            pairDecimals={pairDecimalsOverride ?? balanceTokens.find(b => b.tokenId === selectedTokenId)?.decimals ?? 18}
             onCreated={refreshOwn}
             onPairRefresh={() => selectedTokenId && loadPairOrders(selectedTokenId)}
             prefill={bookPrefill}

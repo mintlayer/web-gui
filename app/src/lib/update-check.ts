@@ -150,12 +150,7 @@ async function fetchReleases(): Promise<ReleaseInfo[]> {
   if (!type.includes('application/json')) throw new Error('release check failed: unexpected content type');
   const body: unknown = await res.json();
   if (!Array.isArray(body)) throw new Error('release check failed: unexpected body');
-  return body
-    .map(asRelease)
-    .filter((r): r is ReleaseInfo => r !== null)
-    // Cap AFTER filtering: a burst of published pre-releases must not hide a
-    // newer final release that sits beyond the window.
-    .slice(0, MAX_RELEASES);
+  return body.map(asRelease).filter((r): r is ReleaseInfo => r !== null);
 }
 
 /**
@@ -169,7 +164,11 @@ export async function checkForUpdate(includePrereleases: boolean): Promise<Updat
     const releases = await fetchReleases();
     cache = { at: Date.now(), releases };
   }
-  const applicable = cache.releases.filter((r) => includePrereleases || !r.prerelease);
+  // The prerelease filter must run BEFORE the window cap: GitHub returns
+  // releases newest-first, so slicing a raw feed that opens with a long rc
+  // train would slice the newest final out of the window entirely and the
+  // UI would report up-to-date until the feed shifts.
+  const applicable = cache.releases.filter((r) => includePrereleases || !r.prerelease).slice(0, MAX_RELEASES);
   const newest = applicable.reduce<ReleaseInfo | null>((best, r) => {
     if (best === null || compareVersions(r.version, best.version) > 0) return r;
     return best;

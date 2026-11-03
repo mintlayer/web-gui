@@ -64,4 +64,42 @@ describe('GET /api/passkey/auth-options', () => {
       }),
     );
   });
+
+  it('omits the transport hint for legacy records without one', async () => {
+    vi.mocked(getCredentials).mockReturnValue([
+      { id: 'old1', publicKey: 'pk', counter: 0, name: 'old', createdAt: 1 },
+    ]);
+    await GET(makeCtx());
+    expect(generateAuthenticationOptions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allowCredentials: [{ id: 'old1' }],
+      }),
+    );
+  });
+
+  it('replays stored transports so hardware keys are discoverable', async () => {
+    vi.mocked(getCredentials).mockReturnValue([
+      {
+        id: 'usb1',
+        publicKey: 'pk',
+        counter: 0,
+        name: 'yubikey',
+        createdAt: 1,
+        transports: ['usb'],
+      },
+    ]);
+    await GET(makeCtx());
+    expect(generateAuthenticationOptions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allowCredentials: [{ id: 'usb1', transports: ['usb'] }],
+      }),
+    );
+  });
+
+  it('requires user verification to match the verifier default', async () => {
+    await GET(makeCtx());
+    expect(generateAuthenticationOptions).toHaveBeenCalledWith(
+      expect.objectContaining({ userVerification: 'required' }),
+    );
+  });
 });

@@ -3,6 +3,7 @@ import { json } from '@/lib/api-utils';
 import { rpcCall, WalletRpcError } from '@/lib/wallet-rpc';
 import { requireStepUp, totpFromBody } from '@/lib/step-up';
 import { isValidAmount } from '@/lib/validation';
+import { decode as bech32Decode, hrpForNetwork } from '@/lib/bech32';
 
 /**
  * POST /api/send - send ML coins or tokens (incl. NFTs).
@@ -53,6 +54,22 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
   if (assetType === 'token' && !tokenId) {
     return json({ ok: false, error: 'token_id is required for token sends' }, 400);
   }
+  // Knowable failures must not consume a code: decode the pasted address
+  // structurally and check its HRP against this deployment's network BEFORE
+  // step-up. The daemon stays authoritative for checksum and semantic checks
+  // (this only rejects strings that could never be valid here).
+  try {
+    const expectedHrp = hrpForNetwork('ml', (process.env.NETWORK ?? 'mainnet').toLowerCase());
+    const { prefix } = bech32Decode(address, 'bech32m');
+    if (expectedHrp && prefix !== expectedHrp) {
+      return json(
+        { ok: false, error: `Destination address looks like a "${prefix}" address - this network expects "${expectedHrp}" addresses` },
+        400,
+      );
+    }
+  } catch {
+    return json({ ok: false, error: 'Destination address is not a valid Mintlayer address' }, 400);
+  }
 
   const stepUp = requireStepUp(totpFromBody(body), request, clientAddress as string | undefined);
   if (!stepUp.ok) {
@@ -82,7 +99,20 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     // broadcast. Flag it so the UI can tell the user to enter a FRESH code
     // instead of silently retrying the dead one.
     if (err instanceof WalletRpcError) {
-      return json({ ok: false, error: err.message, code_consumed: true }, 502);
+      // Transport-class failures (-32000/-32001/5xx, and daemon HTTP status
+      // codes) carry the daemon URL in their message - never forward those
+      // to the browser (mirror of the rpc.ts proxy redaction). Daemon
+      // user-actionable messages (insufficient funds, amount too small)
+      // still pass through.
+      // Positive codes are daemon HTTP statuses (401/404 on bad credentials
+      // carry the daemon URL in the message) - redact them too, not just 5xx.
+      const transport = err.code === -32000 || err.code === -32001 || err.code >= 400;
+      if (transport) console.error('[send]', err.message);
+      return json({
+        ok: false,
+        error: transport ? 'The wallet service is unavailable. Check that all services are running.' : err.message,
+        code_consumed: true,
+      }, 502);
     }
     console.error('[send]', err);
     return json({ ok: false, error: 'Send failed', code_consumed: true }, 500);

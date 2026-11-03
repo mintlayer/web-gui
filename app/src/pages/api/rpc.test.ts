@@ -142,9 +142,25 @@ describe('allowlist enforcement - allowed methods', () => {
   });
 
   it.each(ALLOWED_METHODS)('allows method "%s"', async (method) => {
-    const { status, json } = await postRpc({ method, params: {} });
+    // wallet_set_lookahead_size is server-clamped to [0, 10000]; empty
+    // params would be rejected before the proxy call.
+    const params = method === 'wallet_set_lookahead_size' ? { lookahead_size: 100 } : {};
+    const { status, json } = await postRpc({ method, params });
     expect(status).toBe(200);
     expect(json).toMatchObject({ ok: true });
+  });
+
+  it('clamps wallet_set_lookahead_size to a sane maximum', async () => {
+    const tooBig = await postRpc({ method: 'wallet_set_lookahead_size', params: { lookahead_size: 999999 } });
+    expect(tooBig.status).toBe(400);
+    expect(rpcCall).not.toHaveBeenCalled();
+
+    const nonInt = await postRpc({ method: 'wallet_set_lookahead_size', params: { lookahead_size: 'big' } });
+    expect(nonInt.status).toBe(400);
+
+    const ok = await postRpc({ method: 'wallet_set_lookahead_size', params: { lookahead_size: 250 } });
+    expect(ok.status).toBe(200);
+    expect(rpcCall).toHaveBeenCalledWith('wallet_set_lookahead_size', { lookahead_size: 250 });
   });
 });
 
@@ -293,11 +309,30 @@ describe('error paths', () => {
     expect(errBody.message).toBe('The wallet service is unavailable. Check that all services are running.');
 
     vi.mocked(rpcCall).mockRejectedValueOnce(
-      new WalletRpcError('Not enough funds to cover transaction', -32005),
+      // The daemon maps all application errors (wallet closed, not enough
+      // funds, bad ids) to code -1 - the code real toasts depend on.
+      new WalletRpcError('Not enough funds to cover transaction', -1),
     );
     const forwarded = await postRpc({ method: 'wallet_info', params: {} });
-    const fwdBody = (forwarded.json as { error: { message: string } }).error;
+    const fwdBody = (forwarded.json as { error: { message: string; code: number } }).error;
     expect(fwdBody.message).toBe('Not enough funds to cover transaction');
+    expect(fwdBody.code).toBe(-1);
+  });
+
+  it('redacts the transport band and non-negative codes even when shaped as WalletRpcError', async () => {
+    vi.mocked(rpcCall).mockRejectedValueOnce(
+      new WalletRpcError('HTTP 401 Unauthorized from wallet-rpc-daemon', 401),
+    );
+    const auth = await postRpc({ method: 'wallet_info', params: {} });
+    expect((auth.json as { error: { message: string } }).error.message)
+      .toBe('The wallet service is unavailable. Check that all services are running.');
+
+    vi.mocked(rpcCall).mockRejectedValueOnce(
+      new WalletRpcError('No wallet opened', -32000),
+    );
+    const transport = await postRpc({ method: 'wallet_info', params: {} });
+    expect((transport.json as { error: { message: string } }).error.message)
+      .toBe('The wallet service is unavailable. Check that all services are running.');
   });
 
   it('returns Content-Type: application/json on error responses', async () => {

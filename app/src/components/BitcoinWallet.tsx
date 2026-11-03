@@ -28,15 +28,23 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: init?.body ? { 'Content-Type': 'application/json' } : undefined,
   });
-  // Auth expiry and proxy errors return the login HTML or a plain-text 403,
-  // never JSON - parsing those surfaces a raw SyntaxError instead of the cause.
+  // Auth expiry returns the login HTML (or a plain-text 403), never JSON.
+  // Only a REAL auth signal bounces to /login: a 5xx rendered as an Astro
+  // error page is a server outage, and telling the user their session
+  // expired masks it.
   const contentType = res.headers.get('content-type') ?? '';
-  if (res.redirected || res.status === 401 || !contentType.includes('application/json')) {
+  if (res.redirected || res.status === 401 || res.status === 403 || (!res.ok && !contentType.includes('application/json'))) {
     window.location.assign('/login');
     throw new Error('Your session expired - redirecting to login…');
   }
   const data = (await res.json()) as T & { ok?: boolean; error?: string };
-  if (!res.ok || data.ok === false) throw new Error(data.error ?? `Request failed (${res.status})`);
+  if (!res.ok || data.ok === false) {
+    // Carry the HTTP status: callers distinguish 409 "already exists"
+    // (recovery: refresh + show the wallet) from real failures.
+    const err = new Error(data.error ?? `Request failed (${res.status})`) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
   return data;
 }
 
@@ -70,13 +78,14 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
   const [noticeIsError, setNoticeIsError] = useState(false);
 
   const [newMnemonic, setNewMnemonic] = useState<string | null>(null);
+  const [seedVerified, setSeedVerified] = useState(false);
 
   // Create / restore (2FA-gated)
   const [setupTotp, setSetupTotp] = useState('');
   const [restoreOpen, setRestoreOpen] = useState(false);
   const [restoreSeed, setRestoreSeed] = useState('');
   // Destructive-action gate: the submit stays disabled until the user types
-  // the confirmation phrase - restoring replaces the current BTC wallet.
+  // the confirmation phrase - the wallet is then created from the typed seed.
   const [restoreConfirm, setRestoreConfirm] = useState('');
   const [setupError, setSetupError] = useState<string | null>(null);
 
@@ -92,6 +101,7 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
   const [sendError, setSendError] = useState<string | null>(null);
   const [sentTxid, setSentTxid] = useState<string | null>(null);
   const [feeSatVb, setFeeSatVb] = useState<number | null>(null);
+  const [feeUnavailable, setFeeUnavailable] = useState(false);
   const [addrSuggestion, setAddrSuggestion] = useState<{ corrected: string; fixedChars: number } | null>(null);
 
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -113,15 +123,36 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  // Best-effort fee hint for the send form.
+  // While a scan runs, the read endpoints fail fast (503) and the overview
+  // route serves nulls: poll through the scan so balance, history and the
+  // receive address fill in as progress lands instead of sitting empty
+  // until the user hits refresh manually.
   useEffect(() => {
-    api<{ satPerVb: Record<string, number> }>('/api/bitcoin/fee-estimate')
-      .then((r) => {
-        const fast = r.satPerVb?.['1'] ?? r.satPerVb?.['3'] ?? r.satPerVb?.['6'];
-        if (typeof fast === 'number') setFeeSatVb(fast);
-      })
-      .catch(() => { /* fee hint is optional */ });
+    if (!overview?.status?.syncing) return;
+    const t = setInterval(() => { void refresh(); }, 8000);
+    return () => clearInterval(t);
+  }, [overview?.status?.syncing, refresh]);
+
+  // Best-effort fee hint for the send form. Re-checked on mount and again
+  // right before a send when it is still missing: the node may simply not
+  // have been ready yet. When it never arrives, the send proceeds on the
+  // BDK default of 1 sat/vB and the form says so instead of doing it
+  // silently.
+  const fetchFeeEstimate = useCallback(async (): Promise<number | null> => {
+    try {
+      const r = await api<{ satPerVb: Record<string, number> }>('/api/bitcoin/fee-estimate');
+      const fast = r.satPerVb?.['1'] ?? r.satPerVb?.['3'] ?? r.satPerVb?.['6'];
+      if (typeof fast === 'number' && fast > 0) {
+        setFeeSatVb(fast);
+        setFeeUnavailable(false);
+        return fast;
+      }
+    } catch { /* fee hint is optional */ }
+    setFeeUnavailable(true);
+    return null;
   }, []);
+
+  useEffect(() => { void fetchFeeEstimate(); }, [fetchFeeEstimate]);
 
   const walletExists = overview?.status?.walletExists ?? false;
 
@@ -146,12 +177,22 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
       setRestoreConfirm('');
       // Restores return no mnemonic - only a fresh generate shows the backup step.
       setNewMnemonic(res.mnemonic ?? null);
+      setSeedVerified(false);
       await refresh();
     } catch (err) {
       // The code may already be burned by this attempt - never leave stale
       // six digits in the field for the user to blindly resubmit.
       setSetupTotp('');
-      setSetupError((err as Error).message);
+      const status = (err as { status?: number }).status;
+      // Only an "already exists" 409 proves the create landed (a dropped
+      // response after success). The pruned-node restore refusal ALSO
+      // 409s - treating that as success would hide a real refusal.
+      if (status === 409 && /already exists/i.test((err as Error).message)) {
+        setSetupError(null);
+        await refresh();
+      } else {
+        setSetupError((err as Error).message);
+      }
     } finally {
       setBusy(false);
     }
@@ -174,7 +215,16 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
       await refresh();
     } catch (err) {
       setLinkTotp('');
-      setLinkError((err as Error).message);
+      const status = (err as { status?: number }).status;
+      // Same as the create path: only "already exists" proves the link
+      // landed; the pruned-node refusal is a different 409 and must show.
+      if (status === 409 && /already exists/i.test((err as Error).message)) {
+        setLinkError(null);
+        showNotice('BTC wallet already linked - loading it.');
+        await refresh();
+      } else {
+        setLinkError((err as Error).message);
+      }
     } finally {
       setBusy(false);
     }
@@ -186,8 +236,10 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
     if (restoreConfirm !== 'I UNDERSTAND') return;
     const seed = cleanSeed(restoreSeed);
     const words = seed.split(/\s+/).filter(Boolean);
-    if (words.length !== 12 && words.length !== 24) {
-      setSetupError(`A seed phrase has 12 or 24 words - this one has ${words.length}.`);
+    // BIP39 defines 12/15/18/21/24-word mnemonics; the checksum verdict
+    // belongs to the sidecar (Mnemonic::parse_in).
+    if (![12, 15, 18, 21, 24].includes(words.length)) {
+      setSetupError(`A seed phrase has 12, 15, 18, 21 or 24 words - this one has ${words.length}.`);
       return;
     }
     createWallet(seed);
@@ -260,6 +312,10 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
       setSendError('Enter your 6-digit 2FA code to confirm the send.');
       return;
     }
+    // One fresh estimate right before signing - the mount-time fetch may
+    // predate a node that only became reachable.
+    let rate = feeSatVb;
+    if (typeof rate !== 'number') rate = await fetchFeeEstimate();
 
     // Typo recovery: checksum failure with a within-2-chars fix offers a
     // suggestion instead of sending. Never auto-replaces the input.
@@ -289,6 +345,10 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
           address: sendTo.trim(),
           amount_btc: sendAmount.trim(),
           totp_code: sendTotp.trim(),
+          // The fetched estimate is the real fee rate (fallback: the BDK
+          // default of 1 sat/vB, which can sit unconfirmed for days - the
+          // form shows a warning whenever this path is taken).
+          ...(typeof rate === 'number' ? { fee_rate_sat_vb: rate } : {}),
         }),
       });
       setSentTxid(res.txid);
@@ -296,6 +356,9 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
       setSendAmount('');
       setSendTotp('');
       setAddrSuggestion(null);
+      // The sidecar marks spent outputs right after broadcast; this
+      // catches the balance/history up fully.
+      api('/api/bitcoin/sync', { method: 'POST' }).catch(() => {});
       later(refresh, 4000);
     } catch (err) {
       setSendError((err as Error).message);
@@ -359,6 +422,22 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
         </span>
         {overview.status && (
           <span className="uppercase tracking-wider text-gray-500">{overview.status.network}</span>
+        )}
+        {overview.status?.syncing && (
+          <span
+            title="The wallet is scanning the chain - balances and history update as it progresses."
+            className="rounded border border-mint-700 px-1.5 py-0.5 text-[10px] text-mint-300"
+          >
+            scanning
+          </span>
+        )}
+        {overview.status?.lastSyncError && (
+          <span
+            title={overview.status.lastSyncError}
+            className="max-w-[26rem] truncate rounded border border-amber-700 px-1.5 py-0.5 text-[10px] text-amber-300"
+          >
+            sync problem: {overview.status.lastSyncError}
+          </span>
         )}
         {node?.reachable && node.pruned && (
           <span
@@ -458,7 +537,7 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
         <div className={card}>
           <h2 className="text-base font-semibold text-gray-100 mb-2">Or restore from a different seed</h2>
           <p className="text-sm text-gray-400 mb-4">
-            Use a <span className="text-gray-200 font-medium">different 12 or 24-word seed phrase</span> for the BTC wallet.
+            Use a <span className="text-gray-200 font-medium">different seed phrase</span> for the BTC wallet (12, 15, 18, 21 or 24 words).
             The words are then stored by the BTC sidecar on this machine.
           </p>
           <button onClick={() => { setRestoreOpen(true); setSetupError(null); setRestoreConfirm(''); }} disabled={busy} className={`${primaryBtn} mb-4`}>
@@ -487,9 +566,15 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
             mnemonic={newMnemonic}
             walletPath="Bitcoin hot wallet (bdk sidecar on this machine)"
             recoverHint="one-time-only"
+            onVerified={() => setSeedVerified(true)}
           />
-          <button onClick={() => { setNewMnemonic(null); refresh(); }} className={`${primaryBtn} mt-4`}>
-            Continue
+          <button
+            onClick={() => { setNewMnemonic(null); setSeedVerified(false); refresh(); }}
+            disabled={!seedVerified}
+            title={seedVerified ? undefined : 'Verify your phrase to continue - it is never shown again.'}
+            className={`${primaryBtn} mt-4 disabled:opacity-40 disabled:cursor-not-allowed`}
+          >
+            {seedVerified ? 'Continue' : 'Verify your phrase to continue'}
           </button>
         </div>
       )}
@@ -514,7 +599,7 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
           <div className={`${card} w-full max-w-lg max-h-[90vh] overflow-y-auto`}>
             <h2 className="text-base font-semibold text-gray-100 mb-2">Restore from seed phrase</h2>
             <p className="text-sm text-gray-400 mb-3">
-              Enter your 12 or 24-word seed phrase. It is stored by the BTC sidecar on this machine.
+              Enter your seed phrase (12, 15, 18, 21 or 24 words). It is stored by the BTC sidecar on this machine.
             </p>
             <form onSubmit={submitRestore} className="space-y-3">
               <div>
@@ -531,7 +616,7 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
                   className={`${input} resize-none`}
                 />
                 <p className="mt-1 text-xs text-gray-500">
-                  {restoreSeed.trim() ? restoreSeed.trim().split(/\s+/).length : 0} of 12 or 24 words
+                  {restoreSeed.trim() ? restoreSeed.trim().split(/\s+/).length : 0} words
                 </p>
               </div>
               <div>
@@ -548,7 +633,7 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
               </div>
               <div>
                 <label htmlFor="btc-restore-confirm" className="block text-xs text-gray-400 mb-1">
-                  Type <span className="font-mono font-semibold text-red-400">I UNDERSTAND</span> - restoring replaces the current BTC wallet
+                  Type <span className="font-mono font-semibold text-red-400">I UNDERSTAND</span> - this creates the BTC wallet from this seed phrase
                 </label>
                 <input
                   id="btc-restore-confirm"
@@ -629,9 +714,17 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
               ) : overview.status?.walletLoaded ? (
                 <p className="text-sm text-gray-500">Wallet is loading…</p>
               ) : (
-                <div className="text-sm text-yellow-300">
-                  Wallet file exists but could not be loaded. Try Sync, and if it persists restart
-                  the bitcoin wallet service (docker compose --profile bitcoin up -d).
+                <div className="text-sm text-yellow-300 space-y-2">
+                  <p>
+                    {overview.status?.loadError ??
+                      'Wallet file exists but could not be loaded.'}
+                  </p>
+                  {!overview.status?.loadError && (
+                    <p>
+                      Try Sync, and if it persists restart the bitcoin wallet service (docker
+                      compose --profile bitcoin up -d).
+                    </p>
+                  )}
                 </div>
               )}
             </div>
@@ -691,7 +784,12 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
                     required
                   />
                   {feeSatVb !== null && (
-                    <p className="mt-1 text-xs text-gray-500">Suggested fee: ~{feeSatVb} sat/vB</p>
+                    <p className="mt-1 text-xs text-gray-500">Fee rate: ~{feeSatVb} sat/vB (used for this send)</p>
+                  )}
+                  {feeUnavailable && (
+                    <p className="mt-1 text-xs text-amber-400" role="note">
+                      Fee estimate unavailable - the wallet default of 1 sat/vB will be used, which can confirm slowly.
+                    </p>
                   )}
                 </div>
                 <div>
@@ -707,8 +805,19 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
                     required
                   />
                 </div>
-                <button type="submit" disabled={busy} className={`${primaryBtn} w-full`}>
-                  {busy ? 'Signing…' : 'Review & send'}
+                <button
+                  type="submit"
+                  disabled={busy || overview.status?.syncing || offline}
+                  title={
+                    offline
+                      ? 'The bitcoin node is unreachable - start the bitcoin stack and retry.'
+                      : overview.status?.syncing
+                        ? 'A wallet scan is running - sending is paused until it finishes.'
+                        : undefined
+                  }
+                  className={`${primaryBtn} w-full disabled:opacity-40 disabled:cursor-not-allowed`}
+                >
+                  {overview.status?.syncing ? 'Scanning - sending paused' : busy ? 'Signing…' : 'Review & send'}
                 </button>
               </form>
             </div>
@@ -718,7 +827,11 @@ export default function BitcoinWallet({ explorerUrl, advancedUi = false }: { exp
           <div className={card}>
             <h2 className="text-base font-semibold text-gray-100 mb-4">Transactions</h2>
             {!overview.transactions || overview.transactions.length === 0 ? (
-              <p className="text-sm text-gray-500">No transactions yet.</p>
+              overview.status?.syncing ? (
+                <p className="text-sm text-gray-500">Wallet is scanning - history appears as the scan progresses.</p>
+              ) : (
+                <p className="text-sm text-gray-500">No transactions yet.</p>
+              )
             ) : (
               <div className="divide-y divide-gray-800">
                 {overview.transactions.map(tx => {

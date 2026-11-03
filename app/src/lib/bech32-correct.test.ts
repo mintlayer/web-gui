@@ -41,6 +41,43 @@ function toBech32mV1(hrp: string): string {
 }
 const BTC_V1 = toBech32mV1("bcrt");
 
+// bech32 v0 address with an explicit final 5-bit group (BIP-173 P2WSH
+// padding probe): 32-byte program -> 51 full groups + 1 leftover bit, so
+// the crafted final group's low 4 bits are pure padding and must be zero.
+function toBech32V0WithFinalGroup(hrp: string, finalGroup: number): string {
+  const CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+  const GEN = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+  const polymod = (values: number[]) => {
+    let chk = 1;
+    for (const v of values) {
+      const top = chk >> 25;
+      chk = ((chk & 0x1ffffff) << 5) ^ v;
+      for (let i = 0; i < 5; i++) if ((top >> i) & 1) chk ^= GEN[i];
+    }
+    return chk;
+  };
+  const hrpExpand = (hrp: string) => {
+    const r: number[] = [];
+    for (const c of hrp) r.push(c.charCodeAt(0) >> 5);
+    r.push(0);
+    for (const c of hrp) r.push(c.charCodeAt(0) & 31);
+    return r;
+  };
+  const program = Uint8Array.from(Buffer.alloc(32, 0xff));
+  const data5 = [0];
+  let acc = 0, bits = 0;
+  for (const b of program) {
+    acc = (acc << 8) | b; bits += 8;
+    while (bits >= 5) { data5.push((acc >> (bits - 5)) & 31); bits -= 5; }
+  }
+  data5.push(finalGroup & 31);
+  const values = hrpExpand(hrp).concat(data5);
+  const chk = polymod(values.concat([0, 0, 0, 0, 0, 0])) ^ 1;
+  const cs: number[] = [];
+  for (let i = 0; i < 6; i++) cs.push((chk >> (5 * (5 - i))) & 31);
+  return hrp + "1" + data5.concat(cs).map((d) => CHARSET[d]).join("");
+}
+
 describe("suggestAddressCorrection", () => {
   it("accepts valid addresses as-is", () => {
     expect(suggestAddressCorrection(ML, "tmt", "ml")).toEqual({ status: "valid" });
@@ -75,6 +112,19 @@ describe("suggestAddressCorrection", () => {
     const typo = BTC_V1.slice(0, 10) + (BTC_V1[10] === "p" ? "q" : "p") + BTC_V1.slice(11);
     const r = suggestAddressCorrection(typo, "bcrt", "btc");
     expect(r).toEqual({ status: "corrected", corrected: BTC_V1, fixedChars: 1 });
+  });
+
+  it("rejects a v0 P2WSH address with nonzero padding bits", () => {
+    // 0b10001: leftover bit 1 (correct), low 4 bits 1 (must be zero).
+    const bad = toBech32V0WithFinalGroup("bcrt", 0b10001);
+    const r = suggestAddressCorrection(bad, "bcrt", "btc");
+    expect(r.status).not.toBe("valid");
+  });
+
+  it("accepts a v0 P2WSH address with zero padding bits", () => {
+    // 0b10000: leftover bit 1, padding zero - what a real encoder emits.
+    const good = toBech32V0WithFinalGroup("bcrt", 0b10000);
+    expect(suggestAddressCorrection(good, "bcrt", "btc")).toEqual({ status: "valid" });
   });
 
   it("cannot correct 3 substitutions", () => {
@@ -148,7 +198,7 @@ describe("hrpForNetwork", () => {
     expect(hrpForNetwork("btc", "mainnet")).toBe("bc");
     expect(hrpForNetwork("btc", "testnet")).toBe("tb");
     expect(hrpForNetwork("btc", "regtest")).toBe("bcrt");
-    expect(hrpForNetwork("btc", "signet")).toBe("sb");
+    expect(hrpForNetwork("btc", "signet")).toBe("tb");
   });
 
   it("maps ML networks", () => {

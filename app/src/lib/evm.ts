@@ -11,6 +11,9 @@
  */
 import { BrowserProvider, Contract, formatUnits, parseUnits } from 'ethers';
 
+// Re-exported for components that must stay in integer base-unit land.
+export { formatUnits, parseUnits };
+
 export const ERC20_ABI = [
   'function balanceOf(address owner) view returns (uint256)',
   'function approve(address spender, uint256 amount) returns (bool)',
@@ -126,8 +129,11 @@ export async function switchChain(
     });
   } catch (err) {
     const code = (err as { code?: number }).code;
-    // 4902 = chain not added to the wallet
-    if (code === 4902 && chainParams) {
+    const msg = (err as { message?: string }).message ?? '';
+    // 4902 = chain not added to the wallet; some MetaMask versions
+    // (mobile especially) report -32603 "Unrecognized chain" instead.
+    const missing = code === 4902 || (code === -32603 && /unrecognized chain/i.test(msg));
+    if (missing && chainParams) {
       await eth().request({
         method: 'wallet_addEthereumChain',
         params: [{ chainId: chainIdHex, ...chainParams }],
@@ -142,12 +148,26 @@ export async function switchChain(
 export async function getTokenBalance(
   tokenAddress: string,
   userAddress: string,
-  decimals = 18,
 ): Promise<string> {
+  const b = await getTokenBalanceBase(tokenAddress, userAddress);
+  return formatUnits(b.raw, b.decimals);
+}
+
+/** Balance as exact base units + the token's own decimals: callers doing
+ * arithmetic (fraction buttons, caps) must not go through float strings -
+ * at 18 decimals 2^53 is only ~0.009 tokens and rounding lands above the
+ * real balance. */
+export async function getTokenBalanceBase(
+  tokenAddress: string,
+  userAddress: string,
+): Promise<{ raw: bigint; decimals: number }> {
   const p = provider();
   const token = new Contract(tokenAddress, ERC20_ABI, p);
-  const balance = await token.balanceOf(userAddress);
-  return formatUnits(balance, decimals);
+  // Read the decimals from the token itself: assuming 18 shows USDC/USDT
+  // (6 decimals) balances 10^12x too small and breaks the Max buttons.
+  const decimals = Number(await token.decimals());
+  const raw = (await token.balanceOf(userAddress)) as bigint;
+  return { raw, decimals };
 }
 
 /**
@@ -162,6 +182,7 @@ export async function depositToBridge(
   decimals: number,
   mintlayerAddress: string,
   onProgress?: (phase: 'approve' | 'deposit') => void,
+  expectedChainId?: number,
 ): Promise<string> {
   if (!bridgeContractAddress) {
     throw new Error('Bridge contract address is not configured.');
@@ -169,14 +190,29 @@ export async function depositToBridge(
   const p = provider();
   const signer = await p.getSigner();
 
+  // Signing happens against whatever chain the wallet currently has
+  // active (another tab or a mobile app can switch it): verify right
+  // before the money moves. A codeless address on the wrong chain would
+  // otherwise "mine" a deposit that never exists.
+  if (typeof expectedChainId === 'number') {
+    const { chainId } = await p.getNetwork();
+    if (chainId !== BigInt(expectedChainId)) {
+      throw new EvmError(
+        'Your wallet switched to a different network. Switch back to the bridge network and try again.',
+      );
+    }
+  }
+
   const token = new Contract(tokenAddress, ERC20_ABI, signer);
   // The chain is the source of truth for decimals - many bridgeable
   // tokens (USDC et al.) are not 18, and the config carries no value.
+  // ethers v6 decodes uint8 returns as bigint: convert before the
+  // integer check or the guard rejects every honest answer.
   let resolvedDecimals = decimals;
   try {
-    const onChain = await token.decimals();
-    if (Number.isInteger(onChain) && onChain >= 0 && onChain <= 36) {
-      resolvedDecimals = onChain;
+    const n = Number(await token.decimals());
+    if (Number.isInteger(n) && n >= 0 && n <= 36) {
+      resolvedDecimals = n;
     }
   } catch {
     /* keep the caller-provided fallback */
@@ -198,8 +234,30 @@ export async function depositToBridge(
   }
   if (needsApproval) {
     onProgress?.('approve');
-    const approveTx = await token.approve(bridgeContractAddress, amountWei);
-    await approveTx.wait();
+    try {
+      const approveTx = await token.approve(bridgeContractAddress, amountWei);
+      await approveTx.wait();
+    } catch (err) {
+      // USDT-class tokens revert on a non-zero -> non-zero approve; the
+      // fix is a zero-reset first, then the real allowance.
+      if (normalizeEvmRejection(err).code === 4001) throw err;
+      const resetTx = await token.approve(bridgeContractAddress, 0);
+      await resetTx.wait();
+      const approveTx = await token.approve(bridgeContractAddress, amountWei);
+      await approveTx.wait();
+    }
+  }
+
+  // Re-verify the chain right before the deposit: the approve can mine
+  // for minutes, and a chain switched during that window (other tab,
+  // mobile push) must not carry the deposit.
+  if (typeof expectedChainId === 'number') {
+    const { chainId } = await p.getNetwork();
+    if (chainId !== BigInt(expectedChainId)) {
+      throw new EvmError(
+        'Your wallet switched to a different network. Switch back to the bridge network and try again.',
+      );
+    }
   }
 
   const bridge = new Contract(bridgeContractAddress, BRIDGE_DEPOSIT_ABI, signer);

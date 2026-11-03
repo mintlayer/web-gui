@@ -12,7 +12,7 @@ import {
 } from '@/lib/passkey';
 import { generateSessionToken, makeSessionCookieHeader } from '@/lib/auth';
 import { getPref } from '@/lib/prefs-db';
-import { json } from '@/lib/api-utils';
+import { json, readJsonWithinLimit, PASSKEY_BODY_LIMIT } from '@/lib/api-utils';
 import { checkRpcRateLimit, getClientAddress } from '@/lib/auth';
 
 export const POST: APIRoute = async ({ request, clientAddress }) => {
@@ -21,8 +21,8 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     return json({ error: 'Too many requests. Please slow down.' }, 429);
   }
 
-  const rpId = getRpId(request.url);
-  const origin = getOrigin(request.url);
+  const rpId = getRpId(request);
+  const origin = getOrigin(request);
 
   if (!isValidRpId(rpId)) {
     return json({ error: 'Passkeys require a DNS hostname.' }, 400);
@@ -36,10 +36,16 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     });
   }
 
-  let body: AuthenticationResponseJSON;
-  try {
-    body = await request.json();
-  } catch {
+  // Capped before parse: this endpoint is public and request.json()
+  // buffers the whole body.
+  const parsed = await readJsonWithinLimit<AuthenticationResponseJSON>(request, PASSKEY_BODY_LIMIT);
+  if (!parsed || typeof parsed !== 'object') {
+    return json({ error: 'Invalid request body.' }, 400);
+  }
+  const body: AuthenticationResponseJSON = parsed;
+  // request.json() parses successfully for JSON literals like `null`; the
+  // property reads below need a real object.
+  if (body == null || typeof body !== 'object') {
     return json({ error: 'Invalid request body.' }, 400);
   }
 
@@ -63,7 +69,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
         id: storedCred.id,
         publicKey: Buffer.from(storedCred.publicKey, 'base64url'),
         counter: storedCred.counter,
-        transports: ['internal', 'hybrid'] as AuthenticatorTransport[],
+        ...(storedCred.transports ? { transports: storedCred.transports } : {}),
       },
     });
   } catch (err) {

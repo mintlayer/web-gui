@@ -3,6 +3,8 @@
  * Uses useSyncExternalStore-compatible subscribe/getSnapshot pattern.
  */
 
+import { explorerBase } from '@/lib/explorer-base';
+
 export type ToastStatus = 'pending' | 'confirmed' | 'failed' | 'untracked';
 
 export interface TxToast {
@@ -47,15 +49,6 @@ export const toastStore = {
     notify();
   },
 };
-
-function explorerBase(): string {
-  const network = typeof document !== 'undefined'
-    ? (document.body.dataset['network'] ?? 'mainnet')
-    : 'mainnet';
-  return network === 'testnet'
-    ? 'https://lovelace.explorer.mintlayer.org'
-    : 'https://explorer.mintlayer.org';
-}
 
 export function explorerTxUrl(txId: string): string {
   return `${explorerBase()}/tx/${txId}`;
@@ -106,7 +99,6 @@ export async function submitWithToast(
   const url  = explorerTxUrl(txId);
 
   toastStore.add({ id: txId, txId, explorerUrl: url, status: 'pending', pendingSince: Date.now() });
-
   // A pending toast must never spin forever without a reality check: if the
   // watcher hasn't resolved after 3 minutes, ask the indexer whether the tx
   // is actually still pending (1.4.1 mempool visibility) instead of guessing.

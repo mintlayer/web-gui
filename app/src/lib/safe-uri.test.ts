@@ -1,5 +1,35 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { safeExternalUri, safeImageUri, getIpfsGateway } from '@/lib/safe-uri';
+import { safeExternalUri, safeImageUri, getIpfsGateway, safeRelativePath } from '@/lib/safe-uri';
+
+describe('safeRelativePath (login next= redirect)', () => {
+  it('keeps same-origin relative paths', () => {
+    expect(safeRelativePath('/balances')).toBe('/balances');
+    expect(safeRelativePath('/management/transactions?tab=history')).toBe('/management/transactions?tab=history');
+  });
+
+  it('rejects protocol-relative and backslash forms', () => {
+    expect(safeRelativePath('//evil.com')).toBe('/');
+    expect(safeRelativePath('/\\evil.com')).toBe('/');
+    expect(safeRelativePath('https://evil.com')).toBe('/');
+  });
+
+  it('rejects control characters that undici refuses in header values', () => {
+    // A crafted ?next= with CR/LF used to reach the Location header and
+    // crash the login POST with an unhandled 500 after session minting.
+    expect(safeRelativePath('/foo\r\nbar')).toBe('/');
+    expect(safeRelativePath('/foo\nbar')).toBe('/');
+    expect(safeRelativePath('/foo\x00bar')).toBe('/');
+    expect(safeRelativePath('/foo\x7fbar')).toBe('/');
+  });
+
+  it('rejects non-ASCII code points that undici refuses in header values', () => {
+    // undici rejects any ByteString above U+00FF, so U+2028 (survives URL
+    // encoding as %E2%80%A8) crashed the redirect after irreversible side
+    // effects - guard is printable-ASCII only, which subsumes the controls.
+    expect(safeRelativePath('/foo\u2028bar')).toBe('/');
+    expect(safeRelativePath('/foo\u00e9bar')).toBe('/');
+  });
+});
 
 describe('safeExternalUri (javascript: URI sink)', () => {
   it('allows https: URLs through unchanged', () => {

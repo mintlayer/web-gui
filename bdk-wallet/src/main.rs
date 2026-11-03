@@ -10,7 +10,7 @@ use axum::{
 use bdk::blockchain::rpc::{Auth, RpcBlockchain, RpcConfig, RpcSyncParams};
 use bdk::blockchain::{Blockchain, ConfigurableBlockchain};
 use bdk::database::any::SqliteDbConfiguration;
-use bdk::database::{AnyDatabase, AnyDatabaseConfig, ConfigurableDatabase};
+use bdk::database::{AnyDatabase, AnyDatabaseConfig, ConfigurableDatabase, Database};
 use bdk::wallet::AddressIndex;
 use bdk::{FeeRate, SignOptions, SyncOptions, TransactionDetails, Wallet};
 use bdk::bitcoin::{bip32::ExtendedPrivKey, Address, Network};
@@ -43,11 +43,21 @@ struct Config {
 
 impl Config {
     fn from_env() -> Result<Self> {
+        // Whitelist exactly the four Bitcoin networks: a typo ("Testnet",
+        // "test-net") must not silently become a MAINNET wallet that derives
+        // mainnet keys and can spend real coins.
         let network = match std::env::var("BITCOIN_NETWORK").unwrap_or_default().as_str() {
+            "" | "mainnet" => Network::Bitcoin,
             "testnet" => Network::Testnet,
             "regtest" => Network::Regtest,
             "signet" => Network::Signet,
-            _ => Network::Bitcoin,
+            other => {
+                // Fail closed: a typo must not silently become a MAINNET
+                // wallet. Key-holding misconfigurations abort the start.
+                return Err(anyhow::anyhow!(
+                    "BITCOIN_NETWORK='{other}' is not one of mainnet|testnet|regtest|signet"
+                ));
+            }
         };
         Ok(Self {
             network,
@@ -74,7 +84,7 @@ impl Config {
                 password: self.rpc_pass.clone(),
             },
             network: self.network,
-            wallet_name: "bdk-sidecar".to_string(),
+            wallet_name: WALLET_NAME.to_string(),
             sync_params: Some(RpcSyncParams {
                 start_time: sync_start_time,
                 // Matches INITIAL_SCRIPT_CACHE below: the initial importdescriptors
@@ -99,6 +109,31 @@ fn require_env(name: &str) -> Result<String> {
 
 type BdkWallet = Wallet<AnyDatabase>;
 
+/// The wallet bitcoind loads for this sidecar. Wallet-scoped RPC calls
+/// (getwalletinfo for the rescan probe) must target /wallet/<name>: on the
+/// bare endpoint bitcoind only answers when exactly one wallet is loaded,
+/// so the scan-retry probe would silently no-op on any other setup.
+const WALLET_NAME: &str = "bdk-sidecar";
+
+/// Error marker for "a wallet sync holds the lock": the send endpoint maps
+/// it to the same 503 the read endpoints return, instead of parking the
+/// request (and still broadcasting after the client timed out).
+const SYNC_BUSY: &str = "wallet sync in progress";
+
+/// True when a sync horizon may be scanned on a pruned node. `cutoff` is
+/// the unix time of the oldest block bitcoind still serves (its prune
+/// window start); a horizon at or after that can never miss coins. With 24h
+/// of slack, a wallet created right now always passes, while restores aimed
+/// inside the pruned range are refused. `cutoff` unknown (stats RPC
+/// unavailable): only a just-created wallet is considered safe.
+fn horizon_safe_on_pruned(horizon: u64, cutoff: Option<i64>, now: u64) -> bool {
+    if horizon == 0 {
+        return false;
+    }
+    let cutoff = cutoff.map(|t| t.max(0) as u64).unwrap_or(now);
+    horizon.saturating_add(24 * 3600) >= cutoff
+}
+
 /// How many addresses per keychain to derive and cache up front. Keep this
 /// small - see the comment on `start_script_count` in `Config::rpc_config`.
 const INITIAL_SCRIPT_CACHE: usize = 20;
@@ -108,7 +143,21 @@ struct AppState {
     wallet: AsyncMutex<Option<BdkWallet>>,
     /// Wallet creation unix time - sync horizon for freshly created wallets.
     sync_start_time: Mutex<u64>,
+    /// Unix time of the last SUCCESSFUL sync. After the first sync bdk
+    /// rescans from this point (its recorded db sync time), not from the
+    /// creation horizon - the pruned-mode guard must use the same origin or
+    /// a healthy wallet freezes once it ages out of the prune window.
+    last_sync_time: Mutex<Option<u64>>,
     syncing: AtomicBool,
+    /// Why the persisted wallet is NOT loaded (network mismatch, corrupt db,
+    /// unreadable seed). Surfaced via /status so the UI shows the actual
+    /// cause instead of offering the dead "Try Sync" remedy (a sync can
+    /// never load a wallet - only create/link can).
+    load_error: Mutex<Option<String>>,
+    /// Human-readable failure from the most recent sync attempt (cleared on
+    /// success). Surfaced via /status so a silently-refused or failing scan
+    /// is visible to the client instead of a permanent 0.00 balance.
+    last_sync_error: Mutex<Option<String>>,
     node: reqwest::Client,
 }
 
@@ -233,9 +282,34 @@ async fn node_rpc(
     method: &str,
     params: serde_json::Value,
 ) -> Result<serde_json::Value> {
+    post_rpc(state, &state.config.rpc_url, method, params).await
+}
+
+/// Same as `node_rpc` but scoped to this sidecar's wallet. Calls like
+/// getwalletinfo only answer on /wallet/<name> when bitcoind serves more
+/// than one wallet (or none).
+async fn node_wallet_rpc(
+    state: &AppState,
+    method: &str,
+    params: serde_json::Value,
+) -> Result<serde_json::Value> {
+    let url = format!(
+        "{}/wallet/{}",
+        state.config.rpc_url.trim_end_matches('/'),
+        WALLET_NAME
+    );
+    post_rpc(state, &url, method, params).await
+}
+
+async fn post_rpc(
+    state: &AppState,
+    url: &str,
+    method: &str,
+    params: serde_json::Value,
+) -> Result<serde_json::Value> {
     let res = state
         .node
-        .post(&state.config.rpc_url)
+        .post(url)
         .basic_auth(&state.config.rpc_user, Some(&state.config.rpc_pass))
         .json(&json!({ "jsonrpc": "1.0", "id": "bdk", "method": method, "params": params }))
         .send()
@@ -365,10 +439,37 @@ fn classify_send_error(msg: &str) -> Option<(axum::http::StatusCode, String)> {
     let lower = msg.to_lowercase();
     if lower.contains("insufficient") || lower.contains("not enough") {
         Some((axum::http::StatusCode::BAD_REQUEST, "insufficient funds".into()))
+    } else if lower.contains("dust") {
+        // bdk: "Output below the dust limit: N" - a user-fixable amount
+        // problem, not an internal error.
+        Some((
+            axum::http::StatusCode::BAD_REQUEST,
+            "amount is below the dust limit - send a larger amount".into(),
+        ))
     } else if lower.contains("signing failed") || lower.contains("could not finalize") {
         Some((axum::http::StatusCode::BAD_REQUEST, "transaction signing failed".into()))
     } else if lower.contains("wallet not created yet") {
         Some((axum::http::StatusCode::CONFLICT, "wallet not created yet - POST /wallet first".into()))
+    } else if lower.contains("unreachable")
+        || lower.contains("connection refused")
+        || lower.contains("connection closed")
+        || lower.contains("timed out")
+        || lower.contains("timeout")
+        || lower.contains("lookup address information")
+        || lower.contains("name resolution")
+        || lower.contains("name or service not known")
+    {
+        // jsonrpc/reqwest transport failures while talking to bitcoind: a
+        // start-the-node state the UI already knows about, not an internal
+        // error - and the TOTP code the user just typed should not be burned
+        // on a condition it cannot fix. Checked BEFORE the broadcast arm so
+        // "broadcast failed: connection refused" reads as a node problem.
+        // The DNS substrings cover a STOPPED container (docker's embedded
+        // DNS stops answering for it), the most common down presentation.
+        Some((
+            axum::http::StatusCode::BAD_GATEWAY,
+            "bitcoin node is unreachable - start the bitcoin stack and retry".into(),
+        ))
     } else if lower.contains("broadcast") || lower.contains("bitcoind rpc error") {
         Some((axum::http::StatusCode::BAD_GATEWAY, "bitcoin node refused the transaction".into()))
     } else if lower.contains("fee rate") || lower.contains("feerate") {
@@ -395,10 +496,30 @@ fn internal_error(e: anyhow::Error) -> Response {
 /// Load the wallet in a blocking task and store it in the shared state.
 async fn open_wallet(state: &Arc<AppState>, mnemonic: &str, created_at: u64) -> Result<()> {    let config = Arc::clone(&state.config);
     let mnemonic = mnemonic.to_string();
-    let wallet = spawn_blocking(move || build_wallet(&config, &mnemonic))
-        .await
-        .map_err(|e| anyhow!("join error: {e}"))??;
+    let loaded = spawn_blocking(move || {
+        let wallet = build_wallet(&config, &mnemonic)?;
+        // Seed the in-memory horizon from bdk's own PERSISTED sync record
+        // (wallet.sqlite's SyncTime, written at the end of every sync). The
+        // prune guard must evaluate the same origin bdk scans from - which
+        // across a restart is the db record, not the seed's created_at.
+        // Without this, a healthy wallet whose created_at aged past the
+        // prune window is refused forever on a pruned node: the refusal
+        // precedes any sync, so the in-memory time could never advance.
+        let db_sync_time = wallet
+            .database()
+            .get_sync_time()
+            .ok()
+            .flatten()
+            .map(|st| st.block_time.timestamp);
+        Ok::<(BdkWallet, Option<u64>), anyhow::Error>((wallet, db_sync_time))
+    })
+    .await
+    .map_err(|e| anyhow!("join error: {e}"))??;
+    let (wallet, db_sync_time) = loaded;
     *state.sync_start_time.lock().unwrap_or_else(|p| p.into_inner()) = created_at;
+    // A different wallet invalidates the previous one's sync-time knowledge;
+    // a persisted bdk sync record supersedes it (see above).
+    *state.last_sync_time.lock().unwrap_or_else(|p| p.into_inner()) = db_sync_time;
     *state.wallet.lock().await = Some(wallet);
     Ok(())
 }
@@ -472,16 +593,46 @@ async fn create_wallet(
                         .into_response();
                 }
             }
-            Err(_) => { /* unreachable node: let the sync attempt surface it */ }
+            Err(_) => {
+                // Fail closed: an unreachable node makes the prune state
+                // UNKNOWABLE. Committing a full-history restore here would
+                // freeze it permanently once a pruned node returns (the
+                // sync-time guard refuses every scan, so last_sync_time
+                // could never advance past created_at = 0). Generated
+                // wallets (created_at = now) keep the lenient path because
+                // they are horizon-safe by construction.
+                return (
+                    axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                    Json(json!({
+                        "ok": false,
+                        "error": "Cannot verify the node's prune status - the bitcoin node is unreachable. Start the bitcoin stack and retry the restore.",
+                    })),
+                )
+                    .into_response();
+            }
         }
     }
 
     if let Err(e) = save_seed(&state.seed_path(), &mnemonic, state.config.network, created_at) {
+        // A failed write can leave a truncated seed.json behind; without
+        // this cleanup every retry 409s on "wallet already exists" and the
+        // wallet is unrecoverable through the API (shell-only fix).
+        // BUT a "file already exists" failure proves a CONCURRENT create
+        // won the race and owns that file - removing it would delete the
+        // winner's only seed record (link-seed seeds are never shown to
+        // anyone). Only clean up when we were the creator.
+        if !e.downcast_ref::<std::io::Error>().map_or(false, |io| io.kind() == std::io::ErrorKind::AlreadyExists) {
+            let _ = tokio::fs::remove_file(&state.seed_path()).await;
+        }
         return internal_error(e.context("persisting seed"));
     }
 
     match open_wallet(&state, &mnemonic, created_at).await {
         Ok(()) => {
+            // Scan immediately: a restore that reads 0.00 until the user
+            // finds the sync button looks exactly like "your coins are
+            // gone". Fire-and-forget - the /status endpoint reports progress.
+            spawn_sync(&state);
             // Echo the mnemonic ONLY when we generated it. For restores the
             // user already knows their seed - never serve it back.
             let mut body = json!({
@@ -494,50 +645,163 @@ async fn create_wallet(
             }
             Json(body).into_response()
         }
-        Err(e) => internal_error(e.context("opening wallet after creation")),
+        Err(e) => {
+            // The seed file now exists but the wallet is unusable (sqlite
+            // open/write error, disk full): every later POST /wallet would
+            // 409 "already exists" and a generated mnemonic is lost. Remove
+            // the failed wallet files so the user can simply retry.
+            let seed_path = state.seed_path();
+            if let Err(cleanup) = fs::remove_file(&seed_path) {
+                error!(
+                    "wallet open failed ({e:#}) and removing the failed seed file {} failed: {cleanup:#}",
+                    seed_path.display()
+                );
+            }
+            let _ = fs::remove_file(state.config.data_dir.join("wallet.sqlite"));
+            // Sqlite keeps write-ahead log / journal sidecars next to the db;
+            // a stale one could be replayed into the retried wallet's fresh
+            // database and resurrect rows from the failed attempt.
+            let _ = fs::remove_file(state.config.data_dir.join("wallet.sqlite-wal"));
+            let _ = fs::remove_file(state.config.data_dir.join("wallet.sqlite-shm"));
+            let _ = fs::remove_file(state.config.data_dir.join("wallet.sqlite-journal"));
+            internal_error(anyhow!(
+                "wallet file could not be opened after creation ({e:#}); the failed wallet files were removed so you can retry"
+            ))
+        }
     }
+}
+
+/// After a failed sync, check whether bitcoind is still rescanning the
+/// wallet (a restore/link seeds importdescriptors with an old timestamp,
+/// and Core scans in the background for a long time). While it is, every
+/// immediate retry would hit the RPC read timeout again - re-arm the sync
+/// so restores converge without the user nudging POST /sync. Stops as soon
+/// as Core reports the scan finished and a retry still fails.
+async fn schedule_scan_retry(st: Arc<AppState>) {
+    // Wallet-scoped on purpose: getwalletinfo on the bare endpoint only
+    // answers when bitcoind has exactly one wallet loaded.
+    let scanning = node_wallet_rpc(&st, "getwalletinfo", json!([]))
+        .await
+        .ok()
+        .and_then(|v| v.get("scanning").cloned())
+        .map(|s| s.is_object() || s.as_bool().unwrap_or(false))
+        .unwrap_or(false);
+    if !scanning {
+        return;
+    }
+    info!("bitcoind is rescanning the wallet - retrying sync in 30s");
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        spawn_sync(&st);
+    });
+}
+
+/// Kick off a background sync unless one is already running. Returns false
+/// when a sync is in flight. Shared by POST /sync, wallet creation and boot
+/// so no entry point leaves the wallet stale at 0.00.
+fn spawn_sync(state: &Arc<AppState>) -> bool {
+    if state.syncing.swap(true, Ordering::SeqCst) {
+        return false;
+    }
+    let st = Arc::clone(state);
+    tokio::spawn(async move {
+        // bdk's next scan starts from the last recorded sync time once one
+        // exists (only a FIRST sync still uses the creation horizon), so the
+        // prune guard evaluates the same origin bdk will actually scan from.
+        let horizon = st
+            .last_sync_time
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or(*st.sync_start_time.lock().unwrap_or_else(|p| p.into_inner()));
+        // A scan horizon older than the node's prune window would silently
+        // miss coins: refuse instead (covers full-history restores AND
+        // narrowed horizons that still fall inside the pruned range).
+        let mut refused = false;
+        if let Ok(info) = node_rpc(&st, "getblockchaininfo", json!([])).await {
+            let pruned = info.get("pruned").and_then(|b| b.as_bool()).unwrap_or(false);
+            let prune_height = info.get("pruneheight").and_then(|b| b.as_u64()).unwrap_or(0);
+            if pruned {
+                // bitcoind's pruneheight is a BLOCK HEIGHT while the horizon
+                // is a unix timestamp - comparing them directly is always
+                // false and silently disabled the guard. Convert the prune
+                // window to time via getblockstats so restores aimed inside
+                // the pruned range are actually refused.
+                let cutoff = node_rpc(&st, "getblockstats", json!([prune_height, ["time"]]))
+                    .await
+                    .ok()
+                    .and_then(|v| v.get("time").and_then(|t| t.as_i64()));
+                if !horizon_safe_on_pruned(horizon, cutoff, now_unix()) {
+                    error!(
+                        "wallet sync horizon {horizon} reaches inside the prune window (pruneheight {prune_height}) - sync refused; switch to a full node (BITCOIN_PRUNE=0, BITCOIN_TXINDEX=1) and resync"
+                    );
+                    *st.last_sync_error.lock().unwrap_or_else(|p| p.into_inner()) =
+                        Some(format!(
+                            "sync refused: the node is pruned to block {prune_height}, newer than this wallet's sync horizon"
+                        ));
+                    refused = true;
+                }
+            }
+        }
+        if !refused {
+            let sb = Arc::clone(&st);
+            let res = spawn_blocking(move || -> Result<()> {
+                let start_time = *sb.sync_start_time.lock().unwrap_or_else(|p| p.into_inner());
+                let chain = RpcBlockchain::from_config(&sb.config.rpc_config(start_time))?;
+                let mut guard = sb.wallet.blocking_lock();
+                match guard.as_mut() {
+                    Some(w) => w.sync(&chain, SyncOptions::default())?,
+                    // Lost a race with a failed load after the route-level
+                    // check: fail loudly instead of reporting success (a
+                    // success would clear last_sync_error and fake progress).
+                    None => return Err(anyhow!("no wallet loaded")),
+                }
+                Ok(())
+            })
+            .await;
+            match res {
+                Ok(Ok(())) => {
+                    info!("wallet sync complete");
+                    *st.last_sync_error.lock().unwrap_or_else(|p| p.into_inner()) = None;
+                    // Advance the prune-guard horizon: the NEXT scan starts
+                    // from here (bdk's recorded sync time), not from the
+                    // creation horizon, so a wallet kept in sync never ages
+                    // out of the prune window.
+                    *st.last_sync_time.lock().unwrap_or_else(|p| p.into_inner()) = Some(now_unix());
+                }
+                Ok(Err(e)) => {
+                    warn!("wallet sync failed: {e:#}");
+                    *st.last_sync_error.lock().unwrap_or_else(|p| p.into_inner()) =
+                        Some(format!("last sync failed: {e}"));
+                    schedule_scan_retry(Arc::clone(&st)).await;
+                }
+                Err(e) => {
+                    warn!("sync task join error: {e}");
+                    *st.last_sync_error.lock().unwrap_or_else(|p| p.into_inner()) =
+                        Some(format!("last sync failed: {e}"));
+                    schedule_scan_retry(Arc::clone(&st)).await;
+                }
+            }
+        }
+        st.syncing.store(false, Ordering::SeqCst);
+    });
+    true
 }
 
 /// POST /sync - sync the wallet against bitcoind (no-op while one runs).
 async fn sync(State(state): State<Arc<AppState>>) -> Response {
-    if state.syncing.swap(true, Ordering::SeqCst) {
-        return Json(json!({ "ok": true, "syncStarted": false })).into_response();
+    // A sync can never LOAD a wallet - only create/link/open can - so with
+    // no wallet loaded this is a knowable failure, not a success: 409 keeps
+    // the UI from recommending a dead remedy and leaves last_sync_error
+    // (e.g. the boot load failure) intact.
+    if state.wallet.lock().await.is_none() {
+        return (
+            axum::http::StatusCode::CONFLICT,
+            Json(json!({ "ok": false, "error": "no wallet loaded" })),
+        )
+            .into_response();
     }
-    let st = Arc::clone(&state);
-    tokio::spawn(async move {
-        // A full-history restore (sync horizon 0) on a pruned node would
-        // silently miss coins. Better no balance than a wrong one: refuse
-        // the scan until the node can actually serve the whole history.
-        let horizon = *st.sync_start_time.lock().unwrap_or_else(|p| p.into_inner());
-        if horizon == 0 {
-            if let Ok(info) = node_rpc(&st, "getblockchaininfo", json!([])).await {
-                if info.get("pruned").and_then(|b| b.as_bool()).unwrap_or(false) {
-                    error!(
-                        "wallet restore needs the full chain but the node is pruned - sync refused; switch to a full node (BITCOIN_PRUNE=0, BITCOIN_TXINDEX=1) and resync"
-                    );
-                    st.syncing.store(false, Ordering::SeqCst);
-                    return;
-                }
-            }
-        }
-        let res = spawn_blocking(move || -> Result<()> {
-            let start_time = *st.sync_start_time.lock().unwrap_or_else(|p| p.into_inner());
-            let chain = RpcBlockchain::from_config(&st.config.rpc_config(start_time))?;
-            let mut guard = st.wallet.blocking_lock();
-            if let Some(w) = guard.as_mut() {
-                w.sync(&chain, SyncOptions::default())?;
-            }
-            Ok(())
-        })
-        .await;
-        match res {
-            Ok(Ok(())) => info!("wallet sync complete"),
-            Ok(Err(e)) => warn!("wallet sync failed: {e:#}"),
-            Err(e) => warn!("sync task join error: {e}"),
-        }
-        state.syncing.store(false, Ordering::SeqCst);
-    });
-    Json(json!({ "ok": true, "syncStarted": true })).into_response()
+    let started = spawn_sync(&state);
+    Json(json!({ "ok": true, "syncStarted": started })).into_response()
 }
 
 /// GET /status - node + wallet overview for the Settings page.
@@ -546,17 +810,34 @@ async fn status(State(state): State<Arc<AppState>>) -> Response {
     let node_json = chain_node_json(chain.as_ref().ok());
 
     let wallet_exists = state.seed_path().exists();
-    let wallet = state.wallet.lock().await;
-    let (wallet_loaded, balance) = match wallet.as_ref() {
-        Some(w) => match w.get_balance() {
-            Ok(b) => (true, Some(balance_json(&b))),
-            Err(e) => {
-                warn!("get_balance failed: {e}");
-                (true, None)
-            }
+    let syncing = state.syncing.load(Ordering::SeqCst);
+    let last_sync_error = state
+        .last_sync_error
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
+    // A scan holds the wallet mutex for the whole background rescan, which
+    // can run for hours on a restore. Never make the polling client wait on
+    // it: answer from the scan state instead (the wallet must be loaded for
+    // a sync to be running at all), so status chips keep updating.
+    let (wallet_loaded, balance) = match state.wallet.try_lock() {
+        Ok(wallet) => match wallet.as_ref() {
+            Some(w) => match w.get_balance() {
+                Ok(b) => (true, Some(balance_json(&b))),
+                Err(e) => {
+                    warn!("get_balance failed: {e}");
+                    (true, None)
+                }
+            },
+            None => (false, None),
         },
-        None => (false, None),
+        Err(_) => (true, None),
     };
+    let load_error = state
+        .load_error
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
 
     Json(json!({
         "ok": true,
@@ -565,6 +846,9 @@ async fn status(State(state): State<Arc<AppState>>) -> Response {
         "walletLoaded": wallet_loaded,
         "node": node_json,
         "balance": balance,
+        "syncing": syncing,
+        "lastSyncError": last_sync_error,
+        "loadError": load_error,
     }))
     .into_response()
 }
@@ -598,7 +882,12 @@ fn chain_node_json(chain: Option<&serde_json::Value>) -> serde_json::Value {
 
 /// GET /balance - totals in satoshis (strings).
 async fn balance(State(state): State<Arc<AppState>>) -> Response {
-    let wallet = state.wallet.lock().await;
+    // Contended (a scan owns the wallet): fail fast instead of pinning the
+    // caller until its client timeout - the UI keeps polling and shows the
+    // scanning state until the lock frees up.
+    let Ok(wallet) = state.wallet.try_lock() else {
+        return sync_busy_response();
+    };
     let Some(w) = wallet.as_ref() else {
         return wallet_not_created();
     };
@@ -615,7 +904,12 @@ async fn balance(State(state): State<Arc<AppState>>) -> Response {
 
 /// POST /address/new - derive a fresh receive address.
 async fn new_address(State(state): State<Arc<AppState>>) -> Response {
-    let mut wallet = state.wallet.lock().await;
+    // Same contention rule as /balance: during a scan the overview route
+    // still polls this endpoint, and parking here stalls every page load
+    // for the full client timeout even though only the lock is busy.
+    let Ok(mut wallet) = state.wallet.try_lock() else {
+        return sync_busy_response();
+    };
     match wallet.as_mut() {
         Some(w) => match w.get_address(AddressIndex::New) {
             Ok(info) => Json(json!({ "ok": true, "address": info.address.to_string() })).into_response(),
@@ -627,7 +921,9 @@ async fn new_address(State(state): State<Arc<AppState>>) -> Response {
 
 /// GET /address/current - last unused address (for the Receive view).
 async fn current_address(State(state): State<Arc<AppState>>) -> Response {
-    let mut wallet = state.wallet.lock().await;
+    let Ok(mut wallet) = state.wallet.try_lock() else {
+        return sync_busy_response();
+    };
     match wallet.as_mut() {
         Some(w) => match w.get_address(AddressIndex::LastUnused) {
             Ok(info) => Json(json!({ "ok": true, "address": info.address.to_string() })).into_response(),
@@ -647,7 +943,9 @@ async fn txs(
     State(state): State<Arc<AppState>>,
     axum::extract::Query(q): axum::extract::Query<TxsQuery>,
 ) -> Response {
-    let wallet = state.wallet.lock().await;
+    let Ok(wallet) = state.wallet.try_lock() else {
+        return sync_busy_response();
+    };
     let Some(w) = wallet.as_ref() else {
         return wallet_not_created();
     };
@@ -729,7 +1027,13 @@ async fn send(State(state): State<Arc<AppState>>, Json(req): Json<SendReq>) -> R
     let res = spawn_blocking(move || -> Result<String> {
         let start_time = *st.sync_start_time.lock().unwrap_or_else(|p| p.into_inner());
         let chain = RpcBlockchain::from_config(&st.config.rpc_config(start_time))?;
-        let mut guard = st.wallet.blocking_lock();
+        // Never park behind a scan: a request that parks here outlives the
+        // client's 60s timeout, the user sees "may or may not have been
+        // broadcast" and a retry then queues a SECOND spend behind the same
+        // lock - the textbook path to paying twice. Fail fast with the same
+        // 503 the read endpoints use; the UI disables the form while a scan
+        // runs so this is rarely surfaced raw.
+        let mut guard = st.wallet.try_lock().map_err(|_| anyhow!(SYNC_BUSY))?;
         let Some(w) = guard.as_mut() else {
             bail!("wallet not created yet - POST /wallet first");
         };
@@ -753,7 +1057,16 @@ async fn send(State(state): State<Arc<AppState>>, Json(req): Json<SendReq>) -> R
     .await;
 
     match res {
-        Ok(Ok(txid)) => Json(json!({ "ok": true, "txid": txid })).into_response(),
+        Ok(Ok(txid)) => {
+            // Mark the spent outputs in the background: doing the catch-up
+            // inline after broadcast can exceed the client timeout and make
+            // an already-broadcast transaction look failed. The UI refreshes
+            // on its own; a failed or skipped sync only leaves the balance
+            // stale until the next one.
+            spawn_sync(&state);
+            Json(json!({ "ok": true, "txid": txid })).into_response()
+        }
+        Ok(Err(e)) if e.to_string().contains(SYNC_BUSY) => sync_busy_response(),
         Ok(Err(e)) => internal_error(e),
         Err(e) => internal_error(anyhow!("join error: {e}")),
     }
@@ -767,10 +1080,16 @@ async fn fee_estimate(State(state): State<Arc<AppState>>) -> Response {
             Ok(v) => {
                 // btc/kB -> sat/vB = btc * 1e8 / 1000
                 if let Some(btc_per_kb) = v.get("feerate").and_then(|f| f.as_f64()) {
-                    estimates.insert(
-                        target.to_string(),
-                        json!((btc_per_kb * 100_000_000f64 / 1000f64).ceil() as u64),
-                    );
+                    // estimatesmartfee answers -1 when it lacks data (fresh
+                    // or restarting node): the ceil conversion saturates to
+                    // 0 sat/vB, which the UI would present as a real
+                    // estimate. Skip instead.
+                    if btc_per_kb > 0.0 {
+                        estimates.insert(
+                            target.to_string(),
+                            json!((btc_per_kb * 100_000_000f64 / 1000f64).ceil() as u64),
+                        );
+                    }
                 }
             }
             Err(e) => warn!("estimatesmartfee({target}) failed: {e:#}"),
@@ -781,6 +1100,16 @@ async fn fee_estimate(State(state): State<Arc<AppState>>) -> Response {
 
 async fn health() -> &'static str {
     "ok"
+}
+
+/// 503 used by read endpoints when a wallet sync holds the lock: callers
+/// poll again shortly; nothing is wrong with the node itself.
+fn sync_busy_response() -> Response {
+    (
+        axum::http::StatusCode::SERVICE_UNAVAILABLE,
+        Json(json!({ "ok": false, "error": "wallet sync in progress - try again shortly", "syncing": true })),
+    )
+        .into_response()
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────────
@@ -806,7 +1135,10 @@ async fn main() -> Result<()> {
         config,
         wallet: AsyncMutex::new(None),
         sync_start_time: Mutex::new(now_unix()),
+        last_sync_time: Mutex::new(None),
         syncing: AtomicBool::new(false),
+        load_error: Mutex::new(None),
+        last_sync_error: Mutex::new(None),
         // Bounded timeouts on the bitcoind client: without them a hung/rpc-
         // wedged node pins sync/send handlers until the HTTP client gives up
         // (which, with no timeout, is never).
@@ -820,11 +1152,48 @@ async fn main() -> Result<()> {
     // Auto-load the wallet if a seed was previously persisted.
     match fs::read_to_string(state.seed_path()) {
         Ok(raw) => match serde_json::from_str::<SeedFile>(&raw) {
-            Ok(file) => match open_wallet(&state, &file.mnemonic, file.created_at).await {
-                Ok(()) => info!("wallet loaded from persisted seed"),
-                Err(e) => error!("failed to load persisted wallet: {e:#}"),
-            },
-            Err(e) => error!("seed file unreadable: {e}"),
+            Ok(file) => {
+                if file.network != network_name(state.config.network) {
+                    // seed.json records the network it was created on: opening
+                    // the same seed under another network would silently
+                    // re-derive the other coin path (84'/1'/... vs 84'/0'/...)
+                    // over the same address cache - a wallet that shows 0.00
+                    // forever. Refuse to load and say how to recover.
+                    error!(
+                        "seed.json was created for network '{}' but BITCOIN_NETWORK is '{}' - not loading; restore the previous network or delete the bitcoin-wallet-data dir to start over",
+                        file.network,
+                        network_name(state.config.network)
+                    );
+                    *state
+                        .load_error
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner()) = Some(format!(
+                        "seed.json was created for network '{}' but BITCOIN_NETWORK is '{}' - switch back or delete the bitcoin-wallet-data dir to start over",
+                        file.network,
+                        network_name(state.config.network)
+                    ));
+                } else {
+                    match open_wallet(&state, &file.mnemonic, file.created_at).await {
+                        Ok(()) => {
+                            info!("wallet loaded from persisted seed");
+                            *state.load_error.lock().unwrap_or_else(|p| p.into_inner()) = None;
+                            // Boot-time scan so balances and history are current
+                            // without manual action after a restart.
+                            spawn_sync(&state);
+                        }
+                        Err(e) => {
+                            error!("failed to load persisted wallet: {e:#}");
+                            *state.load_error.lock().unwrap_or_else(|p| p.into_inner()) =
+                                Some(format!("persisted wallet failed to load: {e:#}"));
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                error!("seed file unreadable: {e}");
+                *state.load_error.lock().unwrap_or_else(|p| p.into_inner()) =
+                    Some(format!("seed file unreadable: {e}"));
+            }
         },
         Err(_) => info!("no seed found - POST /wallet to create or restore"),
     }
@@ -948,5 +1317,32 @@ mod chain_info_tests {
         assert_eq!(node["reachable"], false);
         assert_eq!(node["pruned"], false);
         assert_eq!(node["synced"], false);
+    }
+}
+
+#[cfg(test)]
+mod prune_guard_tests {
+    use super::horizon_safe_on_pruned;
+
+    #[test]
+    fn refuses_full_history_restores() {
+        assert!(!horizon_safe_on_pruned(0, Some(1_799_900_000), 1_800_000_000));
+    }
+
+    #[test]
+    fn accepts_wallets_created_now() {
+        // created_at within the 24h slack of the prune-window start
+        assert!(horizon_safe_on_pruned(1_799_950_000, Some(1_799_900_000), 1_800_000_000));
+        // and when the stats RPC is unavailable the cutoff is "now"
+        assert!(horizon_safe_on_pruned(1_799_990_000, None, 1_800_000_000));
+    }
+
+    #[test]
+    fn refuses_restores_inside_the_pruned_range() {
+        // a timestamp years old: the old `horizon < prune_height` compare
+        // (1.7e9 < 8.4e5) could never fire and the guard was dead code
+        assert!(!horizon_safe_on_pruned(1_000_000_000, Some(1_799_900_000), 1_800_000_000));
+        // stats unavailable: conservative cutoff = now, old restore refused
+        assert!(!horizon_safe_on_pruned(1_000_000_000, None, 1_800_000_000));
     }
 }

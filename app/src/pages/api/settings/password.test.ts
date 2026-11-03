@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('@/lib/auth', () => ({
   verifyPassword: vi.fn(),
   hashPassword: vi.fn(),
+  getClientAddress: vi.fn(() => '127.0.0.1'),
 }));
 
 vi.mock('@/lib/prefs-db', () => ({

@@ -16,6 +16,9 @@ import type { APIRoute } from 'astro';
 import { getStringPref } from '@/lib/prefs-db';
 import { json } from '@/lib/api-utils';
 
+/** Hard cap for a single pinning-provider upload. */
+const UPLOAD_TIMEOUT_MS = 120_000;
+
 export const POST: APIRoute = async ({ request }) => {
   // Read per-request so settings changes take effect without restart
   const provider = getStringPref('ipfs.provider');
@@ -64,12 +67,18 @@ async function uploadToFilebase(file: File, token: string): Promise<Response> {
 
   let res: Response;
   try {
+    // A stalled upload must not hold the request (and its 50MB body)
+    // open forever.
     res = await fetch('https://rpc.filebase.io/api/v0/add', {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
       body: form,
+      signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
     });
   } catch (err) {
+    if (err instanceof Error && err.name === 'TimeoutError') {
+      return json({ ok: false, error: { message: 'Filebase upload timed out.' } }, 504);
+    }
     return json({ ok: false, error: { message: `Filebase unreachable: ${String(err)}` } }, 502);
   }
 
@@ -110,8 +119,12 @@ async function uploadToPinata(file: File, jwt: string): Promise<Response> {
       method: 'POST',
       headers: { Authorization: `Bearer ${jwt}` },
       body: pinataForm,
+      signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
     });
   } catch (err) {
+    if (err instanceof Error && err.name === 'TimeoutError') {
+      return json({ ok: false, error: { message: 'Pinata upload timed out.' } }, 504);
+    }
     return json({ ok: false, error: { message: `Pinata unreachable: ${String(err)}` } }, 502);
   }
 

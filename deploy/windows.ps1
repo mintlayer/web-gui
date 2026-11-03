@@ -352,7 +352,7 @@ services:
     # Images update via Watchtower (opt-in, profile "watchtower") or manual pulls.
     # For strict supply-chain pinning, set ML_*_IMAGE env overrides to a
     # digest-pinned ref, e.g. ML_NODE_DAEMON_IMAGE=mintlayer/node-daemon@sha256:<digest>.
-    image: "${ML_NODE_DAEMON_IMAGE:-mintlayer/node-daemon:latest}"
+    image: "${ML_NODE_DAEMON_IMAGE:-ghcr.io/mintlayer/web-gui/node-daemon:latest}"
     command: "node-daemon ${NETWORK:-mainnet}"
     environment:
       <<: [*common-env, *node-rpc-env]
@@ -368,7 +368,7 @@ services:
   # ─────────────────────────────────────────
   wallet-rpc-daemon:
     <<: *common
-    image: "${ML_WALLET_RPC_DAEMON_IMAGE:-mintlayer/wallet-rpc-daemon:latest}"
+    image: "${ML_WALLET_RPC_DAEMON_IMAGE:-ghcr.io/mintlayer/web-gui/wallet-rpc-daemon:latest}"
     command: "${WALLET_RPC_CMD:-wallet-rpc-daemon mainnet}"
     depends_on:
       - node-daemon
@@ -435,6 +435,10 @@ services:
       BITCOIN_WALLET_PASSWORD: "${BITCOIN_WALLET_HTTP_PASSWORD:-}"
       BITCOIN_EXPLORER_URL: "${BITCOIN_EXPLORER_URL:-}"
       HOST: "0.0.0.0"
+      # caddy terminates TLS in the HTTPS flavors, so the app must trust
+      # its X-Forwarded-Proto/Host or every form POST fails the CSRF
+      # origin check (browser says https, raw socket says http).
+      TRUST_PROXY: "true"
       PORT: "4321"
     restart: unless-stopped
 
@@ -474,7 +478,9 @@ services:
 
   api-blockchain-scanner-daemon:
     <<: *common
-    image: "${ML_API_SCANNER_IMAGE:-mintlayer/api-blockchain-scanner-daemon:latest}"
+    image: "${ML_API_SCANNER_IMAGE:-ghcr.io/mintlayer/web-gui/api-blockchain-scanner-daemon:latest}"
+    # No baked-in CMD in the runtime image - pass the binary explicitly.
+    command: "/usr/bin/api-blockchain-scanner-daemon"
     depends_on:
       - node-daemon
       - postgres
@@ -494,7 +500,9 @@ services:
     restart: unless-stopped
 
   api-web-server:
-    image: "${ML_API_WEB_SERVER_IMAGE:-mintlayer/api-web-server:latest}"
+    image: "${ML_API_WEB_SERVER_IMAGE:-ghcr.io/mintlayer/web-gui/api-web-server:latest}"
+    # No baked-in CMD in the runtime image - pass the binary explicitly.
+    command: "/usr/bin/api-web-server"
     depends_on:
       - postgres
       - node-daemon
@@ -560,7 +568,7 @@ services:
       - "./bitcoin-data:/home/bitcoin/.bitcoin"
     command:
       - "-printtoconsole=1"
-      - "-chain=${BITCOIN_CORE_CHAIN:-${BITCOIN_NETWORK:-mainnet}}"
+      - "-chain=${BITCOIN_CORE_CHAIN:-main}"
       - "-rpcbind=0.0.0.0:8332"
       - "-rpcallowip=0.0.0.0/0"
       - "-rpcuser=${BITCOIN_RPC_USERNAME}"
@@ -573,11 +581,14 @@ services:
     restart: unless-stopped
 
   btc-explorer:
-    image: "${BTC_EXPLORER_IMAGE:-mintlayer/web-gui/btc-explorer:latest}"
+    image: "${BTC_EXPLORER_IMAGE:-ghcr.io/mintlayer/web-gui/btc-explorer:latest}"
     depends_on:
       - bitcoind
     environment:
-      BTCEXP_BITCOIND_URI: "bitcoin://${BITCOIN_RPC_USERNAME}:${BITCOIN_RPC_PASSWORD}@bitcoind:8332?timeout=15000"
+      BTCEXP_BITCOIND_USER: "${BITCOIN_RPC_USERNAME}"
+      BTCEXP_BITCOIND_PASSWORD: "${BITCOIN_RPC_PASSWORD}"
+      BTCEXP_BITCOIND_HOST: "bitcoind"
+      BTCEXP_BITCOIND_PORT: "8332"
       BTCEXP_HOST: "0.0.0.0"
       BTCEXP_PORT: "3002"
       BTCEXP_ADDRESS_API: "none"
@@ -588,7 +599,7 @@ services:
     restart: unless-stopped
 
   bdk-wallet:
-    image: "${BDK_WALLET_IMAGE:-mintlayer/web-gui/bdk-wallet:latest}"
+    image: "${BDK_WALLET_IMAGE:-ghcr.io/mintlayer/web-gui/bdk-wallet:latest}"
     user: "${ML_USER_ID:-1000}:${ML_GROUP_ID:-1000}"
     depends_on:
       - bitcoind
@@ -734,7 +745,7 @@ if ($script:NonInteractive) {
     Ok-ML "Password hashed"
     $UiTotpSecret  = New-TotpSecret
     $SessionSecret = New-SessionSecret
-    $TotpUri       = "otpauth://totp/Mintlayer%20GUI-X?secret=${UiTotpSecret}&issuer=Mintlayer"
+    $TotpUri       = "otpauth://totp/Mintlayer%20Nexus?secret=${UiTotpSecret}&issuer=Mintlayer"
     Ok-ML "TOTP secret generated"
     Hint-ML "TOTP secret will be written to mintlayer-totp.txt (not shown on screen)"
     Divider-ML
@@ -762,7 +773,7 @@ if ($script:NonInteractive) {
 
     $UiTotpSecret  = New-TotpSecret
     $SessionSecret = New-SessionSecret
-    $TotpUri       = "otpauth://totp/Mintlayer%20GUI-X?secret=${UiTotpSecret}&issuer=Mintlayer"
+    $TotpUri       = "otpauth://totp/Mintlayer%20Nexus?secret=${UiTotpSecret}&issuer=Mintlayer"
 
     Write-Host "${CYAN}│${RESET}"
     Ok-ML "TOTP secret generated"
@@ -816,7 +827,8 @@ if ($script:NonInteractive) {
         if ($domainType -like "*domain name*") {
             Ask-ML "Domain name"
             Hint-ML "e.g. wallet.example.com - DNS must already resolve to this server"
-            do { $Domain = Prompt-ML "Domain:" } while ([string]::IsNullOrEmpty($Domain))
+            # Whitespace here breaks the caddy --from argument and the .env line.
+            do { $Domain = Prompt-ML "Domain:" } while ([string]::IsNullOrEmpty($Domain) -or ($Domain -notmatch '^[A-Za-z0-9.-]+$'))
             Ok-ML "Domain: $Domain"
         } else {
             Ask-ML "DuckDNS setup"
@@ -863,6 +875,12 @@ if ($script:NonInteractive) {
                 if ($PostgresPassword.Length -lt 8) { Write-Host "${CYAN}│${RESET}  ${RED}Password must be at least 8 characters${RESET}" }
             } while ($PostgresPassword.Length -lt 8)
         }
+    }
+    else {
+        # Inert while the indexer profile is off, but pre-filled so a later
+        # manual `docker compose --profile indexer up -d` works instead of
+        # crash-looping postgres (it refuses an empty superuser password).
+        $PostgresPassword = New-RandomPassword
     }
     Divider-ML
 }
@@ -1061,7 +1079,10 @@ DUCKDNS_TOKEN=$DuckdnsToken
 #   docker compose --profile bitcoin up -d
 BITCOIN_ENABLED=false
 BITCOIN_NETWORK=$Network
-BITCOIN_CORE_CHAIN=
+# Core's -chain wants "main"/"test" (never "mainnet") - derived here so a
+# later manual bitcoin enable cannot pair a mainnet bitcoind with a testnet
+# bdk wallet (genesis mismatch crash-loop).
+BITCOIN_CORE_CHAIN=$(if ($Network -eq 'mainnet') { 'main' } else { 'test' })
 BITCOIN_RPC_USERNAME=bitcoin_user
 BITCOIN_RPC_PASSWORD=
 BITCOIN_WALLET_HTTP_USERNAME=
@@ -1073,7 +1094,14 @@ BITCOIN_EXPLORER_URL=
 # Active compose profiles
 COMPOSE_PROFILES=$($composeProfiles -join ',')
 "@
-Write-Utf8 (Join-Path $script:InstallDir '.env') $envContent
+$envPath = Join-Path $script:InstallDir '.env'
+if (Test-Path $envPath) {
+    $envBackup = "$envPath.bak.$(Get-Date -Format yyyyMMdd-HHmmss)"
+    Copy-Item $envPath $envBackup
+    Warn-ML "Existing .env backed up to $envBackup."
+    Warn-ML "Re-running setup REGENERATES the password, 2FA secret and RPC credentials; you will be logged out and must re-scan TOTP."
+}
+Write-Utf8 $envPath $envContent
 Ok-ML ".env written"
 
 # ── Non-interactive: persist TOTP secret to a file instead of stdout ─────────
@@ -1112,14 +1140,22 @@ New-Item -ItemType Directory -Force -Path (Join-Path $script:InstallDir 'mintlay
 New-Item -ItemType Directory -Force -Path (Join-Path $script:InstallDir 'mintlayer-data\plugins') | Out-Null
 
 $sqlLines = [System.Collections.Generic.List[string]]::new()
+# sql_lit: escape a value for use inside a JSON-string row stored as an SQL
+# literal. JSON strings need backslash and double-quote escaped FIRST (a
+# trailing " or \ would otherwise corrupt the row the app JSON.parses),
+# then the SQL literal doubles single quotes - same order as init.sh's
+# sql_json; diverging produced rows that silently vanished on read.
+function sql_lit([string]$v) { return $v.Replace('\', '\\').Replace('"', '\"').Replace("'", "''") }
 $sqlLines.Add("CREATE TABLE IF NOT EXISTS prefs (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
-$sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('auth.password_hash', '`"$UiPasswordHash`"');")
-$sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('auth.totp_secret',   '`"$UiTotpSecret`"');")
-if ($IpfsProvider)     { $sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('ipfs.provider',       '`"$IpfsProvider`"');") }
-if ($FilebaseToken)    { $sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('ipfs.filebase_token', '`"$FilebaseToken`"');") }
-if ($PinataJwt)        { $sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('ipfs.pinata_jwt',     '`"$PinataJwt`"');") }
-if ($TelegramBotToken) { $sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('telegram.bot_token',  '`"$TelegramBotToken`"');") }
-if ($TelegramChatId)   { $sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('telegram.chat_id',    '`"$TelegramChatId`"');") }
+$sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('auth.password_hash', '`"$(sql_lit $UiPasswordHash)`"');")
+$sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('auth.totp_secret',   '`"$(sql_lit $UiTotpSecret)`"');")
+if ($IpfsProvider)     { $sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('ipfs.provider',       '`"$(sql_lit $IpfsProvider)`"');") }
+if ($FilebaseToken)    { $sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('ipfs.filebase_token', '`"$(sql_lit $FilebaseToken)`"');") }
+if ($PinataJwt)        { $sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('ipfs.pinata_jwt',     '`"$(sql_lit $PinataJwt)`"');") }
+if ($TelegramBotToken) { $sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('telegram.bot_token',  '`"$(sql_lit $TelegramBotToken)`"');") }
+if ($TelegramChatId)   { $sqlLines.Add("INSERT OR REPLACE INTO prefs VALUES ('telegram.chat_id',    '`"$(sql_lit $TelegramChatId)`"');") }
+# (The real $LASTEXITCODE check lives after the docker-run seeding step
+# below - checking before the command would read a stale status.)
 
 $sql     = $sqlLines -join "`n"
 $sqlFile = [System.IO.Path]::GetTempFileName()
@@ -1132,6 +1168,7 @@ docker run --rm `
     -v "${prefsDirDocker}:/prefs" `
     -v "${sqlFileDocker}:/init.sql:ro" `
     alpine sh -c 'apk add -q --no-progress sqlite >/dev/null 2>&1 && sqlite3 /prefs/mintlayer_prefs.sqlite < /init.sql'
+if ($LASTEXITCODE -ne 0) { throw "prefs seeding failed (sqlite3 exit $LASTEXITCODE)" }
 
 Remove-Item $sqlFile -ErrorAction SilentlyContinue
 
@@ -1171,8 +1208,13 @@ if ($start -eq 'yes') {
     if ($httpsSetup -eq 'yes')           { $profiles += '--profile', 'https' }
     if ($DuckdnsSubdomain)               { $profiles += '--profile', 'duckdns' }
 
+    # A failed pull must not abort: .env + prefs are already seeded, and
+    # dying here leaves a half-installed system whose rerun regenerates all
+    # secrets. Warn and let 'up' surface the real per-service error.
     docker compose pull --quiet
+    if ($LASTEXITCODE -ne 0) { Write-Host "${YELLOW}Image pull failed - continuing with 'up'; check the registry if services fail to start${RESET}" }
     & docker compose @($profiles + @('up', '-d'))
+    if ($LASTEXITCODE -ne 0) { throw "stack start failed (docker compose up exit $LASTEXITCODE)" }
     Ok-ML "Services started"
 }
 

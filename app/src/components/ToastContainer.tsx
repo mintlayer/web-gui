@@ -50,14 +50,20 @@ function TxToastItem({ toast }: { toast: TxToast }) {
           {isFailed    && `Failed: ${toast.errorMessage ?? "unknown error"}`}
           {isUntracked && (toast.errorMessage ?? "Confirmation not tracked - check the explorer.")}
         </p>
-        <a
-          href={toast.explorerUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="font-mono text-xs text-gray-500 hover:text-mint-400 underline underline-offset-2 transition-colors block truncate"
-        >
-          {toast.txId.slice(0, 16)}…{toast.txId.slice(-8)}
-        </a>
+        {toast.explorerUrl ? (
+          <a
+            href={toast.explorerUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-mono text-xs text-gray-500 hover:text-mint-400 underline underline-offset-2 transition-colors block truncate"
+          >
+            {toast.txId.slice(0, 16)}…{toast.txId.slice(-8)}
+          </a>
+        ) : (
+          <span className="font-mono text-xs text-gray-500 block truncate">
+            {toast.txId.slice(0, 16)}…{toast.txId.slice(-8)}
+          </span>
+        )}
       </div>
 
       {/* Dismiss */}
