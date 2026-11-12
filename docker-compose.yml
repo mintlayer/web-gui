@@ -131,10 +131,15 @@ services:
       HOST: "0.0.0.0"
       # Settings -> HTTPS section renders only when the gateway is enabled
       WEB_GUI_TLS: "${WEB_GUI_TLS:-false}"
-      # Gate for proxy-derived headers (client IP + Origin): set true ONLY when
-      # traffic arrives through the shipped caddy gateway, which overwrites
-      # X-Forwarded-For with the real client IP. Direct/LAN exposure must keep
-      # it unset - X-Forwarded-* is attacker-controllable then.
+      # Gate for proxy-derived headers (client IP + Origin): set true ONLY
+      # when traffic arrives through a shipped proxy that overwrites
+      # X-Forwarded-For with the real client IP: the caddy gateway
+      # (header_up XFF {client_ip}, see caddy/Caddyfile) or the tailscale
+      # sidecar (tailscale serve Set()s XFF from the WireGuard peer address -
+      # addProxyForwardedHeaders in tailscale's ipn/ipnlocal/serve.go, which
+      # also clears client-supplied Tailscale-* identity headers). Direct/LAN
+      # exposure must keep it unset - X-Forwarded-* is attacker-controllable
+      # then.
       TRUST_PROXY: "${TRUST_PROXY:-}"
       # WebAuthn: init.sh writes these into .env; without the passthrough
       # compose never injects them and passkeys silently fail on TLS setups.
@@ -435,9 +440,83 @@ services:
       - web
     restart: unless-stopped
 
+  # ─────────────────────────────────────────
+  # Remote access via Tailscale  (profile: tailscale)
+  #
+  # Joins the node to your Tailscale network and serves the web GUI over it:
+  #   https://<TAILSCALE_HOSTNAME>.<tailnet>.ts.net
+  # valid HTTPS (certificate provisioned by Tailscale, no CA import), with no
+  # ports published to the host LAN or the internet. Requires MagicDNS + HTTPS
+  # certificates to be enabled for the tailnet (admin console, one-time).
+  #
+  # Threat model: only the web GUI is reachable through the sidecar. Node RPC
+  # (3030), wallet RPC (3034), Postgres and the indexer stay on the internal
+  # compose network, and the app's password + TOTP login still applies (it
+  # matters on shared tailnets). Funnel (public internet exposure) is
+  # deliberately not wired up - a wallet GUI must not get a public URL.
+  #
+  # Kernel-mode networking (/dev/net/tun + NET_ADMIN). Hosts without a TUN
+  # device (unprivileged LXC, rootless Docker, some NAS) cannot run this
+  # service; Tailscale's own userspace networking mode is the upstream escape
+  # hatch (tailscale.com/kb - userspace networking) but is not shipped here.
+  #
+  # First start without TS_AUTHKEY prints a login URL in this container's
+  # logs: docker compose logs -f tailscale
+  # ─────────────────────────────────────────
+  tailscale:
+    image: "${TAILSCALE_IMAGE:-tailscale/tailscale:stable}"
+    hostname: "${TAILSCALE_HOSTNAME:-nexus}"
+    # Deliberately NOT watchtower-managed (watchtower runs --label-enable):
+    # this sidecar sits on the trust path - TRUST_PROXY=true depends on its
+    # XFF-overwriting behavior - so upgrade it deliberately
+    # (docker compose pull tailscale). Default tag :stable tracks the
+    # Tailscale stable channel (not :latest); override via TAILSCALE_IMAGE.
+    depends_on:
+      - web-gui
+    environment:
+      # State must persist, or the node re-authenticates (new tailnet
+      # identity) on every restart.
+      TS_STATE_DIR: "/state"
+      TS_HOSTNAME: "${TAILSCALE_HOSTNAME:-nexus}"
+      # Empty = interactive login URL in the logs. A tskey-auth-... here
+      # joins headlessly (init.sh stores it in .env, 0600 + gitignored).
+      TS_AUTHKEY: "${TS_AUTHKEY:-}"
+      # Keep existing state across restarts even when TS_AUTHKEY is rotated.
+      TS_AUTH_ONCE: "true"
+      # Never adopt tailnet DNS settings: compose service names (web-gui,
+      # wallet-rpc-daemon, ...) must keep resolving via Docker's DNS.
+      TS_ACCEPT_DNS: "false"
+      TS_USERSPACE: "false"
+      # Serves the GUI on the tailnet at ${TS_CERT_DOMAIN}:443 - see
+      # ./tailscale/serve-config.json.
+      TS_SERVE_CONFIG: "/config/serve-config.json"
+      # Optional 'tailscale up' extras, e.g. --advertise-tags=tag:nexus
+      # (recommended so a tailnet ACL can scope this device).
+      TS_EXTRA_ARGS: "${TS_EXTRA_ARGS:-}"
+    volumes:
+      - "tailscale-state:/state"
+      - "./tailscale:/config:ro"
+    devices:
+      - "/dev/net/tun:/dev/net/tun"
+    cap_add:
+      - NET_ADMIN
+    healthcheck:
+      # --json exits 0 whenever tailscaled answers, including NeedsLogin;
+      # plain status exits 1 ("Logged out.") and would mark the sidecar
+      # unhealthy for the whole login-approval window.
+      test: ["CMD", "tailscale", "status", "--peers=false", "--json"]
+      interval: "30s"
+      timeout: "10s"
+      retries: "5"
+      start_period: "30s"
+    profiles:
+      - tailscale
+    restart: unless-stopped
+
 volumes:
   postgres-data:
   caddy-data:
   caddy-config:
   ca-public:
   feature-requests:
+  tailscale-state:
