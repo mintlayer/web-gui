@@ -135,7 +135,68 @@ After creating your wallet at <http://localhost:4321/setup>, the dashboard at <h
 > plain-HTTP LAN hostname (e.g. `http://192.168.1.50:4321`) will silently fail.
 > By default the GUI also binds to `127.0.0.1` only - set `WEB_GUI_BIND=0.0.0.0`
 > in `.env` to expose it, and put a TLS reverse proxy in front for real remote
-> access.
+> access - or skip port publishing entirely with the
+> [Tailscale profile](#remote-access-via-tailscale).
+
+### Remote access via Tailscale
+
+Run `./init.sh` and pick **Tailnet (Tailscale)** as the access mode: it joins
+the stack to your tailnet, captures the assigned `https://<name>.<tailnet>.ts.net`
+name, and derives the passkey (WebAuthn) settings from it. Manual setup:
+
+```bash
+# .env - keep comments on their own line (inline '#' handling varies by
+# compose version and would corrupt the values)
+TAILSCALE_HOSTNAME=nexus
+# empty: first start prints a login URL in the logs
+TS_AUTHKEY=
+# REQUIRED for manual setup: login POSTs 403 behind the sidecar without it
+TRUST_PROXY=true
+# TS_EXTRA_ARGS=--advertise-tags=tag:nexus
+
+docker compose --profile tailscale up -d
+docker compose logs -f tailscale   # login URL on first start (no key set)
+```
+
+After approving the login URL, wire the assigned name into `.env` (this is
+what init.sh automates):
+
+```bash
+docker compose exec tailscale tailscale status --json   # Self.DNSName = your ts.net name
+```
+
+```bash
+# .env - WEB_GUI_HOST and PASSKEY_RP_ID take the BARE name (no https://);
+# only PASSKEY_ORIGIN carries the scheme. Then restart web-gui:
+WEB_GUI_HOST=nexus.<tailnet>.ts.net
+PASSKEY_RP_ID=nexus.<tailnet>.ts.net
+PASSKEY_ORIGIN=https://nexus.<tailnet>.ts.net
+```
+
+```bash
+docker compose up -d web-gui
+```
+
+What you get:
+
+| | |
+|---|---|
+| URL | `https://nexus.<tailnet>.ts.net` - valid Let's Encrypt certificate, no CA import like the Caddy mode |
+| Exposure | none on the host - only tailnet devices reach the sidecar; the LAN and the internet see nothing |
+| Auth | the app's password + TOTP login still applies (matters on shared tailnets) |
+| Scope | web UI only - node RPC (3030), wallet RPC (3034), Postgres and the indexer stay on the internal compose network |
+
+Prerequisites (one-time, Tailscale admin console): **MagicDNS** and **HTTPS
+certificates** enabled. The Docker host needs `/dev/net/tun` (kernel-mode
+networking; Docker Desktop VMs provide it, unprivileged LXC and rootless
+Docker may not). Local access on the host keeps working at
+`http://localhost:4321`.
+
+Optional hardening: tag the node (`TS_EXTRA_ARGS=--advertise-tags=tag:nexus`)
+and add a tailnet ACL rule scoping reachability to it (`dst: tag:nexus:443`).
+
+> Tailscale **Funnel** (a public internet URL) is deliberately not wired up -
+> a wallet GUI must not get a public link.
 
 > **Sync time:** balance and transaction history only appear once the node has fully synced. On first run this takes several hours for mainnet. The dashboard shows the current block height so you can track progress.
 
@@ -385,3 +446,4 @@ docker compose restart web-gui
 - Wallet RPC credentials are never sent to the browser - all calls are proxied server-side by the Astro app.
 - Only a fixed allowlist of RPC methods is callable through the `/api/rpc` endpoint.
 - The wallet RPC (3034) and node RPC (3030) ports are not exposed to the host by default.
+- The optional Tailscale sidecar (profile: `tailscale`) serves only the web UI over your tailnet - RPC ports stay on the internal compose network, and Funnel (public URLs) is not shipped.

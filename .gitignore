@@ -1,15 +1,20 @@
 
 # documentation
-wiki/
-TODO.md
+/wiki/
+/TODO.md
 
-# Environment
+# Environment / credentials - init.sh writes .env, env_set() rewrites via
+# temp files (.env.tmp.<pid>, credentials mid-rewrite) and pre-rewrite
+# backups (.env.bak.*). Enumerated (not .env*) so unrelated files like
+# direnv's .envrc stay trackable. .env.example is the only tracked env file
+# - placeholders only, never real credentials. Note: .gitignore comments
+# must start the line; no inline '#'s.
 .env
-.env.dev
+.env.*
+!.env*.example
 
 # Node
 node_modules/
-app/node_modules/
 
 # Astro build output
 app/dist/
@@ -19,17 +24,17 @@ app/.astro/
 app/coverage/
 
 # Mintlayer data directory (node + wallet files)
-mintlayer-data/
+/mintlayer-data/
 
 # Docker volumes
-postgres-data/
+/postgres-data/
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Tauri
-/windows/src-tauri
+# Windows/Tauri experiment (reverted in 4903559); re-ignore if it returns
+/windows/src-tauri/
 
 # Editor
 .vscode/
@@ -40,7 +45,7 @@ Thumbs.db
 *.swo
 
 # Bitcoin (optional, profile: bitcoin)
-bitcoin-data/
-bitcoin-wallet-data*/
+/bitcoin-data/
+/bitcoin-wallet-data*/
 bdk-wallet/target/
 .ecc/
